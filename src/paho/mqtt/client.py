@@ -44,6 +44,8 @@ try:
 except ImportError:
     HAVE_DNS = False
 
+from .matcher import MQTTMatcher
+
 if platform.system() == 'Windows':
     EAGAIN = errno.WSAEWOULDBLOCK
 else:
@@ -191,9 +193,6 @@ def connack_string(connack_code):
         return "Connection Refused: not authorised."
     else:
         return "Connection Refused: unknown reason."
-
-
-def topic_matches_sub(sub, topic):
     """Check whether a topic matches a subscription.
 
     For example:
@@ -525,7 +524,7 @@ class Client(object):
         self._will_payload = None
         self._will_qos = 0
         self._will_retain = False
-        self.on_message_filtered = []
+        self._on_message_filtered = MQTTMatcher()
         self._host = ""
         self._port = 1883
         self._bind_address = ""
@@ -1613,14 +1612,7 @@ class Client(object):
             raise ValueError("sub and callback must both be defined.")
 
         self._callback_mutex.acquire()
-
-        for i in range(0, len(self.on_message_filtered)):
-            if self.on_message_filtered[i][0] == sub:
-                self.on_message_filtered[i] = (sub, callback)
-                self._callback_mutex.release()
-                return
-
-        self.on_message_filtered.append((sub, callback))
+        self._on_message_filtered[sub] = callback
         self._callback_mutex.release()
 
     def message_callback_remove(self, sub):
@@ -1630,11 +1622,10 @@ class Client(object):
             raise ValueError("sub must defined.")
 
         self._callback_mutex.acquire()
-        for i in range(0, len(self.on_message_filtered)):
-            if self.on_message_filtered[i][0] == sub:
-                self.on_message_filtered.pop(i)
-                self._callback_mutex.release()
-                return
+        try:
+            del self._on_message_filtered[sub]
+        except:  # no such subscription
+            pass
         self._callback_mutex.release()
 
     # ============================================================
@@ -2549,12 +2540,11 @@ class Client(object):
     def _handle_on_message(self, message):
         self._callback_mutex.acquire()
         matched = False
-        for t in self.on_message_filtered:
-            if topic_matches_sub(t[0], message.topic):
-                self._in_callback = True
-                t[1](self, self._userdata, message)
-                self._in_callback = False
-                matched = True
+        for callback in self._on_message_filtered.subscribers(message.topic):
+            self._in_callback = True
+            callback(self, self._userdata, message)
+            self._in_callback = False
+            matched = True
 
         if matched == False and self.on_message:
             self._in_callback = True
