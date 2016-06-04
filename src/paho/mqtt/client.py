@@ -193,68 +193,6 @@ def connack_string(connack_code):
         return "Connection Refused: not authorised."
     else:
         return "Connection Refused: unknown reason."
-    """Check whether a topic matches a subscription.
-
-    For example:
-
-    foo/bar would match the subscription foo/# or +/bar
-    non/matching would not match the subscription non/+/+
-    """
-    result = True
-    multilevel_wildcard = False
-
-    slen = len(sub)
-    tlen = len(topic)
-
-    if slen > 0 and tlen > 0:
-        if (sub[0] == '$' and topic[0] != '$') or (topic[0] == '$' and sub[0] != '$'):
-            return False
-
-    spos = 0
-    tpos = 0
-
-    while spos < slen and tpos < tlen:
-        if sub[spos] == topic[tpos]:
-            if tpos == tlen-1:
-                # Check for e.g. foo matching foo/#
-                if spos == slen-3 and sub[spos+1] == '/' and sub[spos+2] == '#':
-                    result = True
-                    multilevel_wildcard = True
-                    break
-
-            spos += 1
-            tpos += 1
-
-            if tpos == tlen and spos == slen-1 and sub[spos] == '+':
-                spos += 1
-                result = True
-                break
-        else:
-            if sub[spos] == '+':
-                spos += 1
-                while tpos < tlen and topic[tpos] != '/':
-                    tpos += 1
-                if tpos == tlen and spos == slen:
-                    result = True
-                    break
-
-            elif sub[spos] == '#':
-                multilevel_wildcard = True
-                if spos+1 != slen:
-                    result = False
-                    break
-                else:
-                    result = True
-                    break
-
-            else:
-                result = False
-                break
-
-    if not multilevel_wildcard and (tpos < tlen or spos < slen):
-        result = False
-
-    return result
 
 
 def _socketpair_compat():
