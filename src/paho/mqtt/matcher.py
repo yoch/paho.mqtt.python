@@ -20,7 +20,7 @@ class MQTTMatcher(object):
         try:
             node = self._root
             for sym in key.split('/'):
-                node = node[sym]
+                node = node._children[sym]
             if node._content is None:
                 raise KeyError(key)
             return node._content
@@ -32,7 +32,7 @@ class MQTTMatcher(object):
         try:
             parent, node = None, self._root
             for k in key.split('/'):
-                 parent, node = node, node[k]
+                 parent, node = node, node._children[k]
                  lst.append((parent, k, node))
             # TODO
             node._content = None
@@ -40,9 +40,9 @@ class MQTTMatcher(object):
             raise KeyError(key)
         else:  # cleanup
             for parent, k, node in reversed(lst):
-                if node or node._content is not None:
+                if node._children or node._content is not None:
                      break
-                del parent[k]
+                del parent._children[k]
 
     def subscribers(self, topic):
         lst = topic.split('/')
