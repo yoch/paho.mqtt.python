@@ -37,6 +37,7 @@ import time
 import uuid
 import base64
 import hashlib
+import collections
 
 HAVE_DNS = True
 try:
@@ -452,8 +453,8 @@ class Client(object):
         self._ping_t = 0
         self._last_mid = 0
         self._state = mqtt_cs_new
-        self._out_messages = []
-        self._in_messages = []
+        self._out_messages = collections.OrderedDict()
+        self._in_messages = collections.OrderedDict()
         self._max_inflight_messages = 20
         self._inflight_messages = 0
         self._max_queued_messages = 0
@@ -927,9 +928,9 @@ class Client(object):
                 self._out_message_mutex.release()
                 return (MQTT_ERR_QUEUE_SIZE, local_mid)
 
-            self._out_messages.append(message)
+            self._out_messages[message.mid] = message
             if self._max_inflight_messages == 0 or self._inflight_messages < self._max_inflight_messages:
-                self._inflight_messages = self._inflight_messages+1
+                self._inflight_messages += 1
                 if qos == 1:
                     message.state = mqtt_ms_wait_for_puback
                 elif qos == 2:
@@ -947,7 +948,7 @@ class Client(object):
                 message.info.rc = rc
                 return message.info
             else:
-                message.state = mqtt_ms_queued;
+                message.state = mqtt_ms_queued
                 self._out_message_mutex.release()
                 message.info.rc = MQTT_ERR_SUCCESS
                 return message.info
@@ -2066,13 +2067,13 @@ class Client(object):
         mutex.release()
 
     def _message_retry_check(self):
-        self._message_retry_check_actual(self._out_messages, self._out_message_mutex)
-        self._message_retry_check_actual(self._in_messages, self._in_message_mutex)
+        self._message_retry_check_actual(self._out_messages.values(), self._out_message_mutex)
+        self._message_retry_check_actual(self._in_messages.values(), self._in_message_mutex)
 
     def _messages_reconnect_reset_out(self):
         self._out_message_mutex.acquire()
         self._inflight_messages = 0
-        for m in self._out_messages:
+        for m in self._out_messages.values():
             m.timestamp = 0
             if self._max_inflight_messages == 0 or self._inflight_messages < self._max_inflight_messages:
                 if m.qos == 0:
@@ -2097,10 +2098,10 @@ class Client(object):
 
     def _messages_reconnect_reset_in(self):
         self._in_message_mutex.acquire()
-        for m in self._in_messages:
+        for m in self._in_messages.values():
             m.timestamp = 0
             if m.qos != 2:
-                self._in_messages.pop(self._in_messages.index(m))
+                self._in_messages.pop(m.mid)
             else:
                 # Preserve current state
                 pass
@@ -2225,7 +2226,7 @@ class Client(object):
         if result == 0:
             rc = 0
             self._out_message_mutex.acquire()
-            for m in self._out_messages:
+            for m in self._out_messages.values():
                 m.timestamp = time.time()
                 if m.state == mqtt_ms_queued:
                     self.loop_write() # Process outgoing messages that have just been queued up
@@ -2251,7 +2252,7 @@ class Client(object):
                             return rc
                 elif m.qos == 2:
                     if m.state == mqtt_ms_publish:
-                        self._inflight_messages = self._inflight_messages + 1
+                        self._inflight_messages += 1
                         m.state = mqtt_ms_wait_for_pubrec
                         self._in_callback = True # Don't call loop_write after _send_publish()
                         rc = self._send_publish(m.mid, m.topic, m.payload, m.qos, m.retain, m.dup)
@@ -2337,7 +2338,7 @@ class Client(object):
             rc = self._send_pubrec(message.mid)
             message.state = mqtt_ms_wait_for_pubrel
             self._in_message_mutex.acquire()
-            self._in_messages.append(message)
+            self._in_messages[message.mid] = message
             self._in_message_mutex.release()
             return rc
         else:
@@ -2356,21 +2357,19 @@ class Client(object):
         self._easy_log(MQTT_LOG_DEBUG, "Received PUBREL (Mid: "+str(mid)+")")
 
         self._in_message_mutex.acquire()
-        for i in range(len(self._in_messages)):
-            if self._in_messages[i].mid == mid:
-
-                # Only pass the message on if we have removed it from the queue - this
-                # prevents multiple callbacks for the same message.
-                self._handle_on_message(self._in_messages[i])
-                self._in_messages.pop(i)
-                self._inflight_messages = self._inflight_messages - 1
-                if self._max_inflight_messages > 0:
-                    self._out_message_mutex.acquire()
-                    rc = self._update_inflight()
-                    self._out_message_mutex.release()
-                    if rc != MQTT_ERR_SUCCESS:
-                        self._in_message_mutex.release()
-                        return rc
+        if mid in self._in_messages:
+            # Only pass the message on if we have removed it from the queue - this
+            # prevents multiple callbacks for the same message.
+            message = self._in_messages.pop(mid)
+            self._handle_on_message(message)
+            self._inflight_messages -= 1
+            if self._max_inflight_messages > 0:
+                self._out_message_mutex.acquire()
+                rc = self._update_inflight()
+                self._out_message_mutex.release()
+                if rc != MQTT_ERR_SUCCESS:
+                    self._in_message_mutex.release()
+                    return rc
 
                 self._in_message_mutex.release()
                 return self._send_pubcomp(mid)
@@ -2380,10 +2379,10 @@ class Client(object):
 
     def _update_inflight(self):
         # Dont lock message_mutex here
-        for m in self._out_messages:
+        for m in self._out_messages.values():
             if self._inflight_messages < self._max_inflight_messages:
                 if m.qos > 0 and m.state == mqtt_ms_queued:
-                    self._inflight_messages = self._inflight_messages + 1
+                    self._inflight_messages += 1
                     if m.qos == 1:
                         m.state = mqtt_ms_wait_for_puback
                     elif m.qos == 2:
@@ -2405,12 +2404,12 @@ class Client(object):
         self._easy_log(MQTT_LOG_DEBUG, "Received PUBREC (Mid: "+str(mid)+")")
 
         self._out_message_mutex.acquire()
-        for m in self._out_messages:
-            if m.mid == mid:
-                m.state = mqtt_ms_wait_for_pubcomp
-                m.timestamp = time.time()
-                self._out_message_mutex.release()
-                return self._send_pubrel(mid, False)
+        if mid in self._out_messages:
+            msg = self._out_messages[mid]
+            msg.state = mqtt_ms_wait_for_pubcomp
+            msg.timestamp = time.time()
+            self._out_message_mutex.release()
+            return self._send_pubrel(mid, False)
 
         self._out_message_mutex.release()
         return MQTT_ERR_SUCCESS
@@ -2431,7 +2430,7 @@ class Client(object):
         self._callback_mutex.release()
         return MQTT_ERR_SUCCESS
 
-    def _do_on_publish(self, idx, mid):
+    def _do_on_publish(self, mid):
         with self._callback_mutex:
             if self.on_publish:
                 self._out_message_mutex.release()
@@ -2440,9 +2439,9 @@ class Client(object):
                 self._in_callback = False
                 self._out_message_mutex.acquire()
 
-        msg = self._out_messages.pop(idx)
+        msg = self._out_messages.pop(mid)
         if msg.qos > 0:
-            self._inflight_messages = self._inflight_messages - 1
+            self._inflight_messages -= 1
             if self._max_inflight_messages > 0:
                 rc = self._update_inflight()
                 if rc != MQTT_ERR_SUCCESS:
@@ -2460,17 +2459,11 @@ class Client(object):
         self._easy_log(MQTT_LOG_DEBUG, "Received "+cmd+" (Mid: "+str(mid)+")")
 
         self._out_message_mutex.acquire()
-        for i in range(len(self._out_messages)):
-            try:
-                if self._out_messages[i].mid == mid:
-                    # Only inform the client the message has been sent once.
-                    rc = self._do_on_publish(i, mid)
-                    self._out_message_mutex.release()
-                    return rc
-            except IndexError:
-                # Have removed item so i>count.
-                # Not really an error.
-                pass
+        if mid in self._out_messages:
+            # Only inform the client the message has been sent once.
+            rc = self._do_on_publish(mid)
+            self._out_message_mutex.release()
+            return rc
 
         self._out_message_mutex.release()
         return MQTT_ERR_SUCCESS
