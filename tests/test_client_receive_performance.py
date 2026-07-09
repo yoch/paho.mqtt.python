@@ -2,6 +2,20 @@ import paho.mqtt.client as client
 from paho.mqtt.enums import CallbackAPIVersion
 
 
+def test_message_topic_string_is_cached_and_invalidated():
+    message = client.MQTTMessage(create_info=False)
+    message.topic = b"sensors/1"
+
+    assert message._topic_str is None
+    assert message.topic == "sensors/1"
+    assert message._topic_str == "sensors/1"
+    assert message.topic == "sensors/1"
+
+    message.topic = b"sensors/2"
+    assert message._topic_str is None
+    assert message.topic == "sensors/2"
+
+
 def test_incoming_message_info_is_created_lazily():
     message = client.MQTTMessage(create_info=False)
 

@@ -21,8 +21,22 @@ from harness import Scenario
 
 TOPIC = b"devices/device-0001/telemetry"
 TOPIC_TEXT = TOPIC.decode("utf-8")
+# Representative Zigbee2MQTT device topic (mqtt_zigbee_listener hot path).
+Z2M_TOPIC = b"gw1/zigbee2mqtt/0x00158d0001234567"
+Z2M_TOPIC_TEXT = Z2M_TOPIC.decode("utf-8")
 PAYLOAD_SMALL = b'{"temperature":21.5,"humidity":44}'
 PACK_U16 = struct.Struct("!H")
+
+# Filters registered via @topic_callback in mqtt_zigbee_listener.py
+Z2M_LISTENER_FILTERS = (
+    "$SYS/broker/connection/+/state",
+    "+/zigbee2mqtt/bridge/response/+",
+    "+/zigbee2mqtt/bridge/+",
+    "+/zigbee2mqtt/+",
+    "+/modpoll/+/data",
+    "+/terenergy/info",
+    "+/terenergy/wifi",
+)
 
 
 def _encode_varint(value):
@@ -41,10 +55,10 @@ def _pack_utf8(data):
     return PACK_U16.pack(len(data)) + data
 
 
-def _publish_packet(protocol, payload, properties=None, qos=0, mid=1):
+def _publish_packet(protocol, payload, properties=None, qos=0, mid=1, topic=TOPIC):
     command = int(mqtt.PUBLISH) | (qos << 1)
     variable_header = bytearray()
-    variable_header.extend(_pack_utf8(TOPIC))
+    variable_header.extend(_pack_utf8(topic))
     if qos:
         variable_header.extend(PACK_U16.pack(mid))
     if protocol == mqtt.MQTTv5:
@@ -55,6 +69,10 @@ def _publish_packet(protocol, payload, properties=None, qos=0, mid=1):
     remaining_length = len(variable_header) + len(payload)
     return bytes([command]) + _encode_varint(remaining_length) + bytes(variable_header) + payload
 
+
+def _pubrel_packet(mid=1):
+    # MQTT 3.1.1 PUBREL: command 0x62, remaining length 2, mid.
+    return struct.pack("!BBH", int(mqtt.PUBREL) | 2, 2, mid)
 
 def _common_properties():
     props = Properties(PacketTypes.PUBLISH)
@@ -77,6 +95,13 @@ PACKED_USER_PROPERTIES = _user_properties().pack()
 PUBLISH_V3_QOS0_SMALL = _publish_packet(mqtt.MQTTv311, PAYLOAD_SMALL)
 PUBLISH_V5_QOS0_EMPTY_PROPS = _publish_packet(mqtt.MQTTv5, PAYLOAD_SMALL)
 PUBLISH_V5_QOS0_USER_PROPS = _publish_packet(mqtt.MQTTv5, PAYLOAD_SMALL, _user_properties())
+PUBLISH_V3_QOS2_SMALL = _publish_packet(mqtt.MQTTv311, PAYLOAD_SMALL, qos=2, mid=1)
+PUBLISH_V3_QOS2_Z2M = _publish_packet(
+    mqtt.MQTTv311, PAYLOAD_SMALL, qos=2, mid=1, topic=Z2M_TOPIC
+)
+PUBREL_MID1 = _pubrel_packet(1)
+QOS2_CYCLE_SMALL = PUBLISH_V3_QOS2_SMALL + PUBREL_MID1
+QOS2_CYCLE_Z2M = PUBLISH_V3_QOS2_Z2M + PUBREL_MID1
 
 
 def _new_client(protocol=mqtt.MQTTv311):
@@ -87,6 +112,13 @@ def _new_client(protocol=mqtt.MQTTv311):
     client.on_message = lambda client, userdata, message: None
     return client
 
+
+def _new_recv_send_client(protocol=mqtt.MQTTv311):
+    """Client with a socket that accepts both injected reads and ACK writes."""
+    client = _new_client(protocol)
+    # Placeholder; callers replace _sock with FakeRecvSocket(data).
+    client._sock = FakeSendSocket()
+    return client
 
 def properties_pack_empty(iterations):
     props = Properties(PacketTypes.PUBLISH)
@@ -151,6 +183,35 @@ def publish_parse_v5_qos0_empty_props(iterations):
 
 def publish_parse_v5_qos0_user_props(iterations):
     _parse_publish(iterations, mqtt.MQTTv5, PUBLISH_V5_QOS0_USER_PROPS)
+
+
+def _parse_qos2_cycle(iterations, packet_cycle, register_z2m_filters=False):
+    """PUBLISH QoS2 + PUBREL inbound cycle (PUBREC/PUBCOMP written to fake sock)."""
+    client = _new_recv_send_client(mqtt.MQTTv311)
+    if register_z2m_filters:
+        for topic_filter in Z2M_LISTENER_FILTERS:
+            client.message_callback_add(topic_filter, lambda *args: None)
+    client._sock = FakeRecvSocket(packet_cycle * iterations)
+    for _ in range(iterations):
+        # PUBLISH qos2 -> store + PUBREC
+        rc = client._packet_read()
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("qos2 publish read failed: {}".format(rc))
+        # PUBREL -> dispatch + PUBCOMP
+        rc = client._packet_read()
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("qos2 pubrel read failed: {}".format(rc))
+    if client._in_messages:
+        raise RuntimeError("expected empty _in_messages, got {}".format(len(client._in_messages)))
+
+
+def publish_parse_v3_qos2_small(iterations):
+    _parse_qos2_cycle(iterations, QOS2_CYCLE_SMALL)
+
+
+def publish_parse_v3_qos2_z2m_filters(iterations):
+    """Closest brokerless stand-in for mqtt_zigbee_listener receive path."""
+    _parse_qos2_cycle(iterations, QOS2_CYCLE_Z2M, register_z2m_filters=True)
 
 
 def publish_pack_qos0_v3_small(iterations):
@@ -364,6 +425,33 @@ def dispatch_many_filters(iterations):
         client._handle_on_message(message)
 
 
+def _dispatch_z2m_message():
+    message = mqtt.MQTTMessage(create_info=False)
+    message.topic = Z2M_TOPIC
+    message.payload = PAYLOAD_SMALL
+    return message
+
+
+def dispatch_z2m_seven_filters(iterations):
+    """Dispatch with the 7 topic_callback filters from mqtt_zigbee_listener.
+
+    Callback reads message.topic (as the real listener does before Queue.put).
+    """
+    client = _new_client(mqtt.MQTTv311)
+
+    def _cb(client, userdata, message):
+        _ = message.topic
+
+    for topic_filter in Z2M_LISTENER_FILTERS:
+        client.message_callback_add(topic_filter, _cb)
+    message = _dispatch_z2m_message()
+    for _ in range(iterations):
+        # Clear cache so each iteration pays first-access cost like a new message.
+        if hasattr(message, "_topic_str"):
+            message._topic_str = None
+        client._handle_on_message(message)
+
+
 def logging_disabled(iterations):
     client = _new_client(mqtt.MQTTv311)
     client.logger = logging.getLogger("paho.benchmark.disabled")
@@ -383,6 +471,14 @@ SCENARIOS = [
     Scenario("publish_parse_v3_qos0_small", "packet-read", "message", 5000, publish_parse_v3_qos0_small),
     Scenario("publish_parse_v5_qos0_empty_props", "packet-read", "message", 5000, publish_parse_v5_qos0_empty_props),
     Scenario("publish_parse_v5_qos0_user_props", "packet-read", "message", 1000, publish_parse_v5_qos0_user_props),
+    Scenario("publish_parse_v3_qos2_small", "packet-read", "message", 3000, publish_parse_v3_qos2_small),
+    Scenario(
+        "publish_parse_v3_qos2_z2m_filters",
+        "packet-read",
+        "message",
+        3000,
+        publish_parse_v3_qos2_z2m_filters,
+    ),
     Scenario("publish_pack_qos0_v3_small", "packet-write", "message", 5000, publish_pack_qos0_v3_small),
     Scenario("publish_pack_qos1_v3_small", "packet-write", "message", 5000, publish_pack_qos1_v3_small),
     Scenario("publish_threaded_qos0_v3_small", "packet-write", "message", 3000, publish_threaded_qos0_v3_small),
@@ -393,5 +489,6 @@ SCENARIOS = [
     Scenario("dispatch_no_filters", "callback-dispatch", "message", 10000, dispatch_no_filters),
     Scenario("dispatch_one_filter", "callback-dispatch", "message", 5000, dispatch_one_filter),
     Scenario("dispatch_many_filters", "callback-dispatch", "message", 3000, dispatch_many_filters),
+    Scenario("dispatch_z2m_seven_filters", "callback-dispatch", "message", 5000, dispatch_z2m_seven_filters),
     Scenario("logging_disabled", "supporting", "log-call", 20000, logging_disabled),
 ]

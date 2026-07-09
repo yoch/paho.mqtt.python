@@ -174,5 +174,15 @@ path, not total filter count.
 
 | Idea | Notes |
 | --- | --- |
-| Cache decoded topic / split segments on `MQTTMessage` | Only if filtered dispatch still dominates. |
 | Avoid list materialization when invoking a single callback | Needs care around mutation-during-dispatch. |
+
+### Follow-up (2026-07-09) — Z2M listener (7 filters)
+
+Harness: `dispatch_z2m_seven_filters`, `publish_parse_v3_qos2_z2m_filters`.
+
+| Track | Verdict | Evidence |
+| --- | --- | --- |
+| Matcher / avoid `list(iter_match)` for 7 filters | **NO GO** | Same-process dispatch A/B with topic access in callback: cache alone ≈ **+2.5%** (below 5% GO). Matcher cost dominates; no further trie/list change. |
+| `_topic_str` cache on `MQTTMessage` | **Kept (small)** | Companion to plan 01/C: decode once for filtered match + user callback (`msg.topic.split`). Double-access micro ≈ **+24%**; not enough alone to reopen matcher work. |
+
+API unchanged; setter invalidates `_topic_str`.

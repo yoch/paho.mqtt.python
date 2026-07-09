@@ -194,5 +194,15 @@ scenario is added).
 ### Deferred / out of scope here
 
 - Batched socket reads for command + remaining length (TLS `pending()` risk).
-- Avoiding topic UTF-8 decode when logging is disabled (touches 08).
 - Matcher / inflight work (04 / 05).
+
+### Follow-up (2026-07-09) — receive path for `mqtt_zigbee_listener`
+
+Workload: `loop_forever`, inbound QoS2, 7 `topic_callback` filters, no paho logger.
+
+| Track | Verdict | Evidence |
+| --- | --- | --- |
+| **A QoS2 inbound bookkeeping** | **NO GO** | New harness `publish_parse_v3_qos2_*` shows QoS2 cycle cost is dominated by inevitable copies + PUBREC/PUBREL/PUBCOMP; no localized bookkeeping win ≥5%. |
+| **C skip `print_topic` decode when no log sink** | **GO** | Same-process: parse QoS0 no-log vs `on_log` set ≈ **+9.5%** ops/s when logging disabled (listener default). |
+
+Landed with C: `_handle_publish` only decodes/formats the DEBUG PUBLISH log when `on_log` or `_logger` is set. See also 04 for `_topic_str` cache companion.

@@ -37,6 +37,14 @@ Landed on branch `benchmarks` (representative commits):
 
 This PR scope: plans **01–06** and **08** harness. Plan **07** (WebSocket) is explicitly deferred.
 
+Receive follow-up for `mqtt_zigbee_listener` (2026-07-09):
+
+- Harness: `publish_parse_v3_qos2_small`, `publish_parse_v3_qos2_z2m_filters`, `dispatch_z2m_seven_filters`.
+- **GO**: skip PUBLISH `print_topic` UTF-8 decode when no log sink (~+9.5% parse, logger off).
+- **Kept**: `MQTTMessage._topic_str` cache (match + callback share one decode).
+- **NO GO**: further QoS2 `_in_messages` bookkeeping; further matcher/`list()` work for 7 filters (~+2.5%).
+- Remaining listener CPU is largely **outside paho** (SQLAlchemy workers / `orjson` / app logging).
+
 Recommended follow-ups (future PRs):
 
 1. **07 WebSocket** if WS transport users are in scope.

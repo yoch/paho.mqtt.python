@@ -140,5 +140,9 @@ Commit: `238eee8` (`perf: add standalone benchmark harness and audit plans`).
 
 - Result template checked into docs for PR authors.
 - Optional local-broker scenario scripts (explicitly optional).
-- Guard expensive log argument construction only if a profile shows cost with
-  logging disabled (not observed as a priority).
+
+### Follow-up (2026-07-09)
+
+`_handle_publish` now skips UTF-8 topic decode / DEBUG format when neither
+`on_log` nor `_logger` is set (~+9.5% parse QoS0, same-process). Documented in
+`01-packet-read-parser.md`.

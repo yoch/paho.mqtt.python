@@ -643,7 +643,10 @@ class MQTTMessage:
     """ This is a class that describes an incoming message. It is
     passed to the `on_message` callback as the message parameter.
     """
-    __slots__ = 'timestamp', 'state', 'dup', 'mid', '_topic', 'payload', 'qos', 'retain', '_info', 'properties'
+    __slots__ = (
+        'timestamp', 'state', 'dup', 'mid', '_topic', '_topic_str',
+        'payload', 'qos', 'retain', '_info', 'properties',
+    )
 
     def __init__(self, mid: int = 0, topic: bytes = b"", *, create_info: bool = True):
         self.timestamp = 0.0
@@ -652,6 +655,7 @@ class MQTTMessage:
         self.mid = mid
         """ The message id (int)."""
         self._topic = topic
+        self._topic_str: str | None = None
         self.payload: bytes | bytearray = b""
         """the message payload (bytes)"""
         self.qos = 0
@@ -678,11 +682,17 @@ class MQTTMessage:
 
         This property is read-only.
         """
-        return self._topic.decode('utf-8')
+        topic_str = self._topic_str
+        if topic_str is not None:
+            return topic_str
+        topic_str = self._topic.decode('utf-8')
+        self._topic_str = topic_str
+        return topic_str
 
     @topic.setter
     def topic(self, value: bytes) -> None:
         self._topic = value
+        self._topic_str = None
 
     @property
     def info(self) -> MQTTMessageInfo:
@@ -4198,15 +4208,6 @@ class Client:
         if self._protocol != MQTTv5 and slen == 0:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
-        # Handle topics with invalid UTF-8
-        # This replaces an invalid topic with a message and the hex
-        # representation of the topic for logging. When the user attempts to
-        # access message.topic in the callback, an exception will be raised.
-        try:
-            print_topic = topic.decode('utf-8')
-        except UnicodeDecodeError:
-            print_topic = f"TOPIC WITH INVALID UTF-8: {topic!r}"
-
         message.topic = topic
 
         if message.qos > 0:
@@ -4227,20 +4228,30 @@ class Client:
         # Copy out before _in_packet.reset() clears the reusable buffer.
         message.payload = view[pos:].tobytes()
 
-        if self._protocol == MQTTv5:
-            self._easy_log(
-                MQTT_LOG_DEBUG,
-                "Received PUBLISH (d%d, q%d, r%d, m%d), '%s', properties=%s, ...  (%d bytes)",
-                message.dup, message.qos, message.retain, message.mid,
-                print_topic, message.properties, len(message.payload)
-            )
-        else:
-            self._easy_log(
-                MQTT_LOG_DEBUG,
-                "Received PUBLISH (d%d, q%d, r%d, m%d), '%s', ...  (%d bytes)",
-                message.dup, message.qos, message.retain, message.mid,
-                print_topic, len(message.payload)
-            )
+        # Skip UTF-8 decode + format work when no log sink is configured
+        # (common for production listeners). When logging, decode via
+        # message.topic so the string is cached for filtered dispatch / callbacks.
+        if self.on_log is not None or self._logger is not None:
+            # Handle topics with invalid UTF-8: log a placeholder; accessing
+            # message.topic in the callback still raises UnicodeDecodeError.
+            try:
+                print_topic = message.topic
+            except UnicodeDecodeError:
+                print_topic = f"TOPIC WITH INVALID UTF-8: {topic!r}"
+            if self._protocol == MQTTv5:
+                self._easy_log(
+                    MQTT_LOG_DEBUG,
+                    "Received PUBLISH (d%d, q%d, r%d, m%d), '%s', properties=%s, ...  (%d bytes)",
+                    message.dup, message.qos, message.retain, message.mid,
+                    print_topic, message.properties, len(message.payload)
+                )
+            else:
+                self._easy_log(
+                    MQTT_LOG_DEBUG,
+                    "Received PUBLISH (d%d, q%d, r%d, m%d), '%s', ...  (%d bytes)",
+                    message.dup, message.qos, message.retain, message.mid,
+                    print_topic, len(message.payload)
+                )
 
         message.timestamp = time_func()
         if message.qos == 0:

@@ -181,6 +181,30 @@ def test_handle_publish_qos1_mid_and_invalid_utf8_topic():
         _ = messages[0].topic
 
 
+def test_handle_publish_skips_topic_decode_when_logging_disabled():
+    mqttc = _new_client()
+    messages = []
+    mqttc.on_message = lambda mqttc, userdata, message: messages.append(message)
+    packet = _publish_packet(client.MQTTv311, topic=b"sensors/1", payload=b"x")
+    mqttc._sock = PartialRecvSocket(packet, available=len(packet))
+
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert messages[0]._topic_str is None
+    assert messages[0].topic == "sensors/1"
+
+
+def test_handle_publish_decodes_topic_when_on_log_set():
+    mqttc = _new_client()
+    logs = []
+    mqttc.on_log = lambda mqttc, userdata, level, buf: logs.append(buf)
+    mqttc.on_message = lambda *args: None
+    packet = _publish_packet(client.MQTTv311, topic=b"sensors/1", payload=b"x")
+    mqttc._sock = PartialRecvSocket(packet, available=len(packet))
+
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert any("sensors/1" in entry for entry in logs)
+
+
 def test_in_packet_reset_clears_fields():
     mqttc = _new_client()
     state = mqttc._in_packet
