@@ -257,3 +257,40 @@ def test_loop_start_clears_stale_sockpair_wakeup_pending(monkeypatch):
     assert mqttc._sockpairR is sock_r
     assert mqttc._sockpairW is sock_w
     mqttc.loop_stop()
+
+
+def test_loop_start_does_not_lose_wakeup_to_concurrent_packet_queue(monkeypatch):
+    """Publish during sockpair swap must not leave pending=True on an empty pair."""
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    old_r = CountingSockpair()
+    old_w = CountingSockpair()
+    new_r = CountingSockpair()
+    new_w = CountingSockpair()
+    mqttc._sockpairR = old_r
+    mqttc._sockpairW = old_w
+    # Avoid immediate loop_write() while _thread is still None during loop_start.
+    mqttc.on_socket_register_write = lambda *args: None
+
+    release = threading.Event()
+
+    def slow_socketpair():
+        release.wait(1.0)
+        return new_r, new_w
+
+    monkeypatch.setattr(client, "_socketpair_compat", slow_socketpair)
+    monkeypatch.setattr(mqttc, "_thread_main", lambda: None)
+
+    starter = threading.Thread(target=mqttc.loop_start)
+    starter.start()
+    time.sleep(0.01)
+    for mid in range(20):
+        mqttc._packet_queue(client.PUBLISH, b"x", mid, 0)
+    release.set()
+    starter.join(2.0)
+
+    assert mqttc._sockpairR is new_r
+    assert mqttc._sockpairW is new_w
+    assert len(mqttc._out_packet) == 20
+    assert new_w.sends == 1
+    assert mqttc._sockpair_wakeup_pending is True
+    mqttc.loop_stop()

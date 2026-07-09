@@ -2393,9 +2393,26 @@ class Client:
         if self._thread is not None:
             return MQTTErrorCode.MQTT_ERR_INVAL
 
-        # New sockpair; clear any stale wakeup flag from a previous loop_start().
-        self._sockpair_wakeup_pending = False
-        self._sockpairR, self._sockpairW = _socketpair_compat()
+        # Install a fresh sockpair under the wakeup lock so a concurrent
+        # _packet_queue() cannot mark pending=True against a socket that is
+        # about to be replaced (missed wakeup until select timeout).
+        new_r, new_w = _socketpair_compat()
+        with self._sockpair_wakeup_mutex:
+            old_r, old_w = self._sockpairR, self._sockpairW
+            self._sockpairR, self._sockpairW = new_r, new_w
+            self._sockpair_wakeup_pending = False
+            # Packets may have been queued while we created the pair; wake once.
+            if self._out_packet:
+                try:
+                    self._sockpairW.send(sockpair_data)
+                except BlockingIOError:
+                    pass
+                self._sockpair_wakeup_pending = True
+        if old_r is not None:
+            old_r.close()
+        if old_w is not None:
+            old_w.close()
+
         self._thread_terminate = False
         self._thread = threading.Thread(target=self._thread_main, name=f"paho-mqtt-client-{self._client_id.decode()}")
         self._thread.daemon = True
