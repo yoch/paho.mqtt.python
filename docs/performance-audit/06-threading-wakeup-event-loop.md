@@ -127,3 +127,27 @@ GO with conditions.
 Justification: wakeup coalescing can deliver meaningful CPU savings in real
 producer workloads, but lost-wakeup risk is serious. Implement only with focused
 threaded and external-loop tests.
+
+## Progress (2026-07-09)
+
+Status: **Partial — core coalesce done via project 02**.
+
+### Implemented (in write-path commits)
+
+- `_sockpair_wakeup_pending` + `_sockpair_wakeup_mutex`.
+- Coalesced `_packet_queue()` wakeup send.
+- Drain clears pending under the same mutex in `_loop()`.
+- `loop_start()` sockpair swap under mutex + re-wake if queue non-empty.
+- Tests: coalesce, concurrent `loop_start` vs queue, external-loop register.
+
+### Acceptance already met from 02
+
+- ≥ 50% fewer sockpair writes on burst: **PASS** (typically 10000 → 1).
+
+### Still open
+
+- Document wakeup state machine more formally for external/asyncio loops.
+- Broader publish-from-callback coverage if gaps remain outside existing tests.
+- System-CPU threaded burst measurement with a real broker (optional).
+
+Treat further 06 work as opportunistic polish, not a blocker before 01.

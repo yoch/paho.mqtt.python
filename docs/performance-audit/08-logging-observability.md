@@ -119,3 +119,26 @@ GO.
 Justification: benchmark and profiling discipline is required before accepting
 or rejecting the other optimization projects. Runtime logging changes should be
 small and evidence-driven, but the observability plan should proceed.
+
+## Progress (2026-07-09)
+
+Status: **Done for harness / measurement workflow**. Runtime `_easy_log`
+micro-optimizations not pursued (disabled path already cheap enough).
+
+Commit: `238eee8` (`perf: add standalone benchmark harness and audit plans`).
+
+### Implemented
+
+- Brokerless harness under `benchmarks/` (`run.py`, `compare.py`, `scenarios.py`,
+  `fakes.py`, `README.md`).
+- Scenarios covering properties, reason codes, publish parse/pack, packet drain,
+  sockpair coalesce, threaded publish, matcher, disabled logging.
+- `compare.py` gain / regression thresholds aligned with audit practice.
+- This `docs/performance-audit/` plan set.
+
+### Residual (optional)
+
+- Result template checked into docs for PR authors.
+- Optional local-broker scenario scripts (explicitly optional).
+- Guard expensive log argument construction only if a profile shows cost with
+  logging disabled (not observed as a priority).

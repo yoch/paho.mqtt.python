@@ -5,22 +5,41 @@ Python client. It is written as a set of independent project files so each
 suspected bottleneck can be profiled, prototyped, accepted, or rejected without
 coupling it to unrelated work.
 
-The audit is intentionally compatible with the current project baseline
-(`python >=3.7`). Python 3.12+ implementation ideas may be recorded as optional
+The audit is intentionally compatible with the current CI/tox baseline
+(`python >=3.9`). Python 3.12+ implementation ideas may be recorded as optional
 future notes, but they are not acceptance requirements for these projects.
 
 ## Project Index
 
-| Project | Priority | Main code paths | Expected outcome |
-| --- | --- | --- | --- |
-| [01 - Packet Read Parser](01-packet-read-parser.md) | P0 | `Client._packet_read()`, `Client._handle_publish()` | Reduce receive-side copies, allocations, and dictionary lookups. |
-| [02 - Packet Write Queue](02-packet-write-queue.md) | P0 | `Client._send_publish()`, `Client._packet_queue()`, `Client._packet_write()` | Improve publish throughput and reduce wakeup/write overhead. |
-| [03 - MQTT v5 Properties and Reason Codes](03-mqttv5-properties-reasoncodes.md) | P0 | `Properties`, `ReasonCode`, MQTT v5 handlers | Remove repeated metadata construction and linear lookups. |
-| [04 - Callback Dispatch and Topic Matching](04-callback-dispatch-topic-matching.md) | P1 | `Client._handle_on_message()`, `MQTTMatcher` | Bound callback filtering overhead under many subscriptions. |
-| [05 - Inflight Message State](05-inflight-message-state.md) | P1 | `_out_messages`, `_in_messages`, `_update_inflight()` | Reduce linear scans and QoS bookkeeping cost. |
-| [06 - Threading Wakeup and Event Loop](06-threading-wakeup-event-loop.md) | P1 | socketpair wakeups, locks, loop integration | Reduce cross-thread wakeups and lock contention. |
-| [07 - WebSocket Transport](07-websocket-transport.md) | P2 | `_WebsocketWrapper` | Reduce pure-Python masking and buffering overhead. |
-| [08 - Logging and Observability](08-logging-observability.md) | P1 | `_easy_log()`, benchmark/profiling workflow | Add low-noise measurement and regression guardrails. |
+| Project | Priority | Status | Main code paths | Expected outcome |
+| --- | --- | --- | --- | --- |
+| [01 - Packet Read Parser](01-packet-read-parser.md) | P0 | **Next** | `Client._packet_read()`, `Client._handle_publish()` | Reduce receive-side copies, allocations, and dictionary lookups. |
+| [02 - Packet Write Queue](02-packet-write-queue.md) | P0 | **Done (this round)** | `Client._send_publish()`, `Client._packet_queue()`, `Client._packet_write()` | Improve publish throughput and reduce wakeup/write overhead. |
+| [03 - MQTT v5 Properties and Reason Codes](03-mqttv5-properties-reasoncodes.md) | P0 | **Done** | `Properties`, `ReasonCode`, MQTT v5 handlers | Remove repeated metadata construction and linear lookups. |
+| [04 - Callback Dispatch and Topic Matching](04-callback-dispatch-topic-matching.md) | P1 | **Partial** | `Client._handle_on_message()`, `MQTTMatcher` | Bound callback filtering overhead under many subscriptions. |
+| [05 - Inflight Message State](05-inflight-message-state.md) | P1 | Not started | `_out_messages`, `_in_messages`, `_update_inflight()` | Reduce linear scans and QoS bookkeeping cost. |
+| [06 - Threading Wakeup and Event Loop](06-threading-wakeup-event-loop.md) | P1 | **Partial** (wakeup coalesce landed via 02) | socketpair wakeups, locks, loop integration | Reduce cross-thread wakeups and lock contention. |
+| [07 - WebSocket Transport](07-websocket-transport.md) | P2 | Not started | `_WebsocketWrapper` | Reduce pure-Python masking and buffering overhead. |
+| [08 - Logging and Observability](08-logging-observability.md) | P1 | **Done (harness)** | `_easy_log()`, benchmark/profiling workflow | Add low-noise measurement and regression guardrails. |
+
+## Progress Snapshot (2026-07-09)
+
+Landed on branch `benchmarks` (representative commits):
+
+- `238eee8` harness + audit plans (08)
+- `f2aaa76` MQTT v5 properties / reason-code metadata cache (03)
+- `92008c1` receive dispatch: lazy `MQTTMessageInfo`, filtered-callback fast path (04 partial)
+- `6f6869c` / `65e1671` / `6bb33c5` write path + wakeup coalesce + remaining-length fast path (02, 06 partial)
+
+Recommended order for the next round:
+
+1. **01 Packet Read Parser** — last open P0; receive path still uses dict `_in_packet` and copy-heavy unpack.
+2. Finish **04** only if profiles show matcher cost after 01 (trie iteration / list materialization).
+3. **05 Inflight** after a QoS1-saturated profile proves `_update_inflight` scans dominate.
+4. Keep **06** residual work (external-loop / asyncio docs+tests) opportunistic; core coalesce is done.
+5. **07 WebSocket** only if WS users are in scope.
+
+Do not reopen rejected 02 tracks (`_OutPacket` slots shim, PUBLISH prealloc, fire-and-forget `MQTTMessageInfo`) unless a new profile contradicts the earlier NO GO evidence.
 
 ## Measurement Method
 

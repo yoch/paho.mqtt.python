@@ -150,3 +150,32 @@ Justification: this path is central to every receiving client, and the current
 implementation shows multiple interpreter-level costs in the hot loop. Proceed
 only with a staged prototype and strict partial-read tests because correctness
 risk is high.
+
+## Progress (2026-07-09)
+
+Status: **Not started — recommended next P0**.
+
+Related landings that help receive CPU but are **not** this project:
+
+- 03: cheaper MQTT v5 property unpack on empty/common sets.
+- 04 partial: cheaper `_handle_on_message` when no filtered callbacks; lazy
+  inbound `MQTTMessageInfo`.
+
+### Still the hot receive structure
+
+- `_in_packet` remains a per-packet dict reset.
+- `_packet_read()` still grows `packet` with `+=` and uses dynamic
+  `struct.unpack` format strings in `_handle_publish()`.
+- Topic / mid / payload slicing still copies.
+
+### Proposed next steps (staged)
+
+1. Baseline + cProfile on `publish_parse_v3_qos0_small` /
+   `publish_parse_v5_qos0_empty_props` (harness already present).
+2. Prototype reusable `_InPacket` slots/object reset (no public API change).
+3. Cached `Struct("!H")` (reuse module `_PACK_U16`) for topic length / mid.
+4. Fast-path MQTT v3 PUBLISH and MQTT v5 empty properties.
+5. Partial-read / invalid remaining-length tests before accepting any buffer
+   lifetime change.
+
+Do not combine with matcher (04) or inflight (05) refactors in the same change.

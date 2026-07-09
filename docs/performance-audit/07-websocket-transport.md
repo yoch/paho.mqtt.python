@@ -116,3 +116,7 @@ GO with conditions.
 Justification: the optimization target is clear, but WebSocket affects a subset
 of users and protocol edge cases are easy to break. Proceed after P0/P1 work or
 when WebSocket-heavy users provide profiles.
+
+## Progress (2026-07-09)
+
+Status: **Not started**. Keep P2 until WS workloads are in scope.

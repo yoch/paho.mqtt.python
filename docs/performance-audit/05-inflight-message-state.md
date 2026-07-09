@@ -121,3 +121,9 @@ GO with conditions.
 Justification: this project has high upside for saturated QoS workloads but
 adds state-management risk. It should proceed only after a benchmark proves
 linear scans dominate and after state invariants are documented.
+
+## Progress (2026-07-09)
+
+Status: **Not started**. Schedule after 01 (and after a QoS1-saturated profile).
+Note: upstream #884 already adjusted PUBREL inflight accounting; any 05 work
+must preserve that contract.

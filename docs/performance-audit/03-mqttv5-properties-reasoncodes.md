@@ -131,3 +131,30 @@ GO.
 Justification: this is a high-confidence optimization area with fixed protocol
 metadata and low conceptual risk when covered by MQTT v5 tests. It should be one
 of the first projects attempted.
+
+## Progress (2026-07-09)
+
+Status: **Done**.
+
+Commit: `f2aaa76` (`perf: cache MQTT v5 property metadata lookups`).
+
+### Implemented
+
+- Move immutable property / reason-code tables to class-level
+  `MappingProxyType` (and related precomputed maps) instead of rebuilding per
+  instance.
+- Keep public `Properties` / `ReasonCode` behavior; extend unit coverage in
+  `tests/test_properties.py`.
+
+### Measured (brokerless, earlier session)
+
+| Scenario | Approx delta vs pre-03 baseline |
+| --- | --- |
+| `properties_pack_empty` | multi-thousand percent (metadata no longer rebuilt) |
+| `properties_unpack_empty` | about +1000%+ |
+| `reasoncode_create_puback_success` | about +280% to +700% depending on run |
+| `publish_parse_v5_qos0_empty_props` | about +100% (collateral) |
+
+Acceptance thresholds for empty pack/unpack and allocation reduction were met.
+No further work planned unless a new MQTT v5 profile shows packing of heavy
+`UserProperty` sets dominating end-to-end.

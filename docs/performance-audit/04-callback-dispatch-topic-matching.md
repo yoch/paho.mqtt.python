@@ -126,3 +126,27 @@ GO with conditions.
 Justification: topic matching is algorithmically sound but likely has avoidable
 constant overhead. Proceed after P0 parser/codec work unless profiling shows
 callback routing dominates a target workload.
+
+## Progress (2026-07-09)
+
+Status: **Partial**.
+
+Commit: `92008c1` (`perf: reduce receive message dispatch overhead`).
+
+### Implemented (accepted)
+
+- Fast path in `_handle_on_message()` when `_on_message_filtered_count == 0`
+  (skip topic decode + matcher).
+- Count maintained under `_callback_mutex` on add/replace/remove.
+- Lazy `MQTTMessage.info` for inbound messages (`create_info=False` in
+  `_handle_publish`).
+- Tests in `tests/test_client_receive_performance.py`.
+
+### Still open (only if profiles justify)
+
+- Avoid `list(iter_match(...))` allocation when a single callback matches.
+- Iterative trie walk instead of recursive generator.
+- Cache decoded topic / split segments per message carefully.
+
+Do not start these until after **01 Packet Read Parser**, unless a workload with
+many filtered callbacks is the primary target.

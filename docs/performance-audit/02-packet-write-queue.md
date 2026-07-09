@@ -140,6 +140,8 @@ behavior, because batching bugs can create subtle latency regressions.
 
 Status: **GO — project complete for this round**.
 
+Commits: `6f6869c`, `65e1671`, `6bb33c5` (plus write scenarios from the harness era).
+
 ### Implemented (accepted)
 
 1. Shared `_PACK_U16 = struct.Struct("!H")` for topic length / mid packing.
@@ -148,44 +150,42 @@ Status: **GO — project complete for this round**.
 4. Lazy `threading.Condition` on `MQTTMessageInfo`. Hot-path
    `_set_as_published()` is lock-free when no waiter exists; waiters create the
    Condition under `_message_info_condition_lock` and re-check `_published`
-   under the Condition. Covered by a 200-iteration concurrent race test.
+   under the Condition. Covered by a concurrent race test.
 5. Socketpair wakeup coalescing via `_sockpair_wakeup_pending`, guarded by
    `_sockpair_wakeup_mutex` shared by `_packet_queue()` send and `_loop()` drain.
-6. Avoid full-buffer slice copy in `_packet_write()` when `pos == 0`.
-7. Safe `info is None` handling in QoS 0 completion path.
-8. Harness: `sockpair_wakeup_coalesce_10000`, `publish_threaded_qos0_v3_small`.
-9. Tests in `tests/test_client_write_performance.py`: lazy Condition, race,
-   wakeup coalesce, partial writes, QoS 0 `on_publish` ordering, external-loop
-   `on_socket_register_write`.
+6. `loop_start()` installs the new sockpair under that mutex and re-wakes if
+   packets were queued during the swap (missed-wakeup fix).
+7. Avoid full-buffer slice copy in `_packet_write()` when `pos == 0`.
+8. Safe `info is None` handling in QoS 0 completion path.
+9. Fast-path `_pack_remaining_length` for `RL < 128` while preserving the
+   upstream `ValueError("Packet too large")` contract for `RL > 2^28-1`.
+10. Harness: `sockpair_wakeup_coalesce_10000`, `publish_threaded_qos0_v3_small`.
+11. Tests in `tests/test_client_write_performance.py`.
 
 ### Acceptance criteria
 
 | Criterion | Result |
 | --- | --- |
-| Threaded QoS 0 small-payload ≥ +10% | **PASS** — about +51% vs HEAD (`publish` + drain thread / sockpair) |
-| ≥ 50% fewer sockpair writes when loop already awake | **PASS** — 3000 → 6 wakeups on 3000 publishes; 10000 → 1 in coalesce scenario |
-| No >2% single-message latency regression (non-threaded) | **PASS** — p50 improved (~−57% vs HEAD in same harness) |
+| Threaded QoS 0 small-payload ≥ +10% | **PASS** — about +51% vs pre-write HEAD |
+| ≥ 50% fewer sockpair writes when loop already awake | **PASS** — 10000 → 1 in coalesce scenario |
+| No >2% single-message latency regression (non-threaded) | **PASS** — p50 improved |
 | Functional tests for coalesce / partial write / on_publish / external loop | **PASS** |
-| Existing `tests/test_client.py` | **PASS** |
 
-Brokerless deltas vs original Codex write baseline / HEAD:
+Representative brokerless deltas (small IoT payloads):
 
 | Scenario | Delta |
 | --- | --- |
-| `publish_pack_qos0_v3_small` | about +77% vs early baseline |
-| `packet_write_drain_100` | about +200% vs packing-only baseline |
-| threaded QoS 0 (HEAD vs candidate) | about +51% |
+| `publish_pack_qos0_v3_small` | about +55% to +77% vs early baseline |
+| `publish_pack_qos1_v3_small` | about +8% vs early baseline after RL fast-path (upstream size check kept) |
+| `packet_write_drain_100` | about +140% to +200% |
+| threaded QoS 0 | about +51% |
 | sockpair wakeups / burst | −99%+ |
-
-Gain sources: fewer Condition allocations (main QoS 0 win), fewer sockpair
-syscalls (threaded win), slightly faster packing, fewer buffer copies on full
-sends.
 
 ### Evaluated and rejected / deferred
 
 | Track | Verdict | Evidence |
 | --- | --- | --- |
-| `_OutPacket` `__slots__` class with dict-compatible `__getitem__` | **NO GO** | Construction-only microbench ~+17%, but publish E2E with attribute shim ~−15%. Would need a full `_packet_write` rewrite to attributes; risk > reward after current wins. |
-| Skip allocating `MQTTMessageInfo` for fire-and-forget QoS 0 | **NO GO for now** | `_send_publish(..., info=None)` ~+9% isolated, but `publish()` must still return a public `MQTTMessageInfo`. Skipping allocation needs an API-preserving sentinel or lazy object; defer unless a later profile still shows it hot. |
-| Preallocate PUBLISH `bytearray` + `pack_into` | **NO GO** | Earlier experiment: QoS 0 regressed vs simple extend packing; code uglier. |
-| Unconditional no-copy without `pos == 0` guard | n/a | Kept the safe `pos == 0` form only. |
+| `_OutPacket` `__slots__` class with dict-compatible `__getitem__` | **NO GO** | E2E with attribute shim ~−15%. |
+| Skip allocating `MQTTMessageInfo` for fire-and-forget QoS 0 | **NO GO for now** | Public API must return `MQTTMessageInfo`. |
+| Preallocate PUBLISH `bytearray` + `pack_into` | **NO GO** | QoS 0 regressed vs simple extend packing. |
+| Remove upstream remaining-length size check | **NO GO** | Required by synced #901; use `<128` fast-path instead. |
