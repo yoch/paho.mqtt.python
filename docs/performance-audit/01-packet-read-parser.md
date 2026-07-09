@@ -153,29 +153,46 @@ risk is high.
 
 ## Progress (2026-07-09)
 
-Status: **Not started — recommended next P0**.
+Status: **Done (this round)**.
 
-Related landings that help receive CPU but are **not** this project:
+### Landed
+
+- `_InPacketState` (`__slots__`) reused across packets via `reset()` instead of
+  allocating a new dict + `bytearray` per message.
+- `remaining_count` is an int counter (was a list used only for length checks).
+- Payload accumulation uses `bytearray.extend` on the reusable buffer.
+- `_handle_publish()` parses topic length / mid with `_PACK_U16.unpack_from`,
+  index-based slicing via `memoryview`, and copies topic/payload out before
+  reset (public payload remains immutable `bytes`).
+- MQTT v5 empty property length (`0` VBI) skips `Properties.unpack()`.
+
+Tests: `tests/test_client_read_performance.py` (partial header / remaining
+length / payload, illegal 5-byte remaining length, v5 empty + user props,
+invalid UTF-8 topic, state reuse).
+
+### Before / after (brokerless harness)
+
+Environment: Python 3.12.3, `PYTHONPATH=src`,
+`python benchmarks/run.py --scenario … --runs 15 --no-tracemalloc`.
+
+| Scenario | Before (ops/s) | After (ops/s) | Delta |
+| --- | ---: | ---: | ---: |
+| `publish_parse_v3_qos0_small` | 74504 | 81924 | **+10.0%** |
+| `publish_parse_v5_qos0_empty_props` | 58507 | 75934 | **+29.8%** |
+| `publish_parse_v5_qos0_user_props` | 11086 | 13105 | **+18.2%** |
+
+Large 64 KiB payload smoke after change: ~7.8k msg/s (no obvious regression
+signal vs small-message focus; keep watching if a dedicated large-payload
+scenario is added).
+
+### Related prior landings (not this project)
 
 - 03: cheaper MQTT v5 property unpack on empty/common sets.
 - 04 partial: cheaper `_handle_on_message` when no filtered callbacks; lazy
   inbound `MQTTMessageInfo`.
 
-### Still the hot receive structure
+### Deferred / out of scope here
 
-- `_in_packet` remains a per-packet dict reset.
-- `_packet_read()` still grows `packet` with `+=` and uses dynamic
-  `struct.unpack` format strings in `_handle_publish()`.
-- Topic / mid / payload slicing still copies.
-
-### Proposed next steps (staged)
-
-1. Baseline + cProfile on `publish_parse_v3_qos0_small` /
-   `publish_parse_v5_qos0_empty_props` (harness already present).
-2. Prototype reusable `_InPacket` slots/object reset (no public API change).
-3. Cached `Struct("!H")` (reuse module `_PACK_U16`) for topic length / mid.
-4. Fast-path MQTT v3 PUBLISH and MQTT v5 empty properties.
-5. Partial-read / invalid remaining-length tests before accepting any buffer
-   lifetime change.
-
-Do not combine with matcher (04) or inflight (05) refactors in the same change.
+- Batched socket reads for command + remaining length (TLS `pending()` risk).
+- Avoiding topic UTF-8 decode when logging is disabled (touches 08).
+- Matcher / inflight work (04 / 05).

@@ -61,17 +61,6 @@ if TYPE_CHECKING:
     except ImportError:
         from typing_extensions import Protocol  # type: ignore
 
-    class _InPacket(TypedDict):
-        command: int
-        have_remaining: int
-        remaining_count: list[int]
-        remaining_mult: int
-        remaining_length: int
-        packet: bytearray
-        to_process: int
-        pos: int
-
-
     class _OutPacket(TypedDict):
         command: int
         mid: int
@@ -159,6 +148,42 @@ LOGGING_LEVEL = {
     LogLevel.MQTT_LOG_ERR: logging.ERROR,
 }
 _PACK_U16 = struct.Struct("!H")
+
+
+class _InPacketState:
+    """Reusable inbound packet parse state (hot receive path)."""
+
+    __slots__ = (
+        "command",
+        "have_remaining",
+        "remaining_count",
+        "remaining_mult",
+        "remaining_length",
+        "packet",
+        "to_process",
+        "pos",
+    )
+
+    def __init__(self) -> None:
+        self.command = 0
+        self.have_remaining = 0
+        self.remaining_count = 0
+        self.remaining_mult = 1
+        self.remaining_length = 0
+        self.packet = bytearray()
+        self.to_process = 0
+        self.pos = 0
+
+    def reset(self) -> None:
+        self.command = 0
+        self.have_remaining = 0
+        self.remaining_count = 0
+        self.remaining_mult = 1
+        self.remaining_length = 0
+        self.packet.clear()
+        self.to_process = 0
+        self.pos = 0
+
 
 # CONNACK codes
 CONNACK_ACCEPTED = ConnackCode.CONNACK_ACCEPTED
@@ -846,16 +871,7 @@ class Client:
 
         self._username: bytes | None = None
         self._password: bytes | None = None
-        self._in_packet: _InPacket = {
-            "command": 0,
-            "have_remaining": 0,
-            "remaining_count": [],
-            "remaining_mult": 1,
-            "remaining_length": 0,
-            "packet": bytearray(b""),
-            "to_process": 0,
-            "pos": 0,
-        }
+        self._in_packet = _InPacketState()
         self._out_packet: collections.deque[_OutPacket] = collections.deque()
         self._last_msg_in = time_func()
         self._last_msg_out = time_func()
@@ -1601,16 +1617,7 @@ class Client:
         if self._port <= 0:
             raise ValueError('Invalid port number.')
 
-        self._in_packet = {
-            "command": 0,
-            "have_remaining": 0,
-            "remaining_count": [],
-            "remaining_mult": 1,
-            "remaining_length": 0,
-            "packet": bytearray(b""),
-            "to_process": 0,
-            "pos": 0,
-        }
+        self._in_packet.reset()
 
         self._ping_t = 0.0
         self._state = _ConnectionState.MQTT_CS_CONNECTING
@@ -3143,7 +3150,7 @@ class Client:
         # fail due to longer length, so save current data and current position.
         # After all data is read, send to _mqtt_handle_packet() to deal with.
         # Finally, free the memory and reset everything to starting conditions.
-        if self._in_packet['command'] == 0:
+        if self._in_packet.command == 0:
             try:
                 command = self._sock_recv(1)
             except BlockingIOError:
@@ -3159,9 +3166,9 @@ class Client:
             else:
                 if len(command) == 0:
                     return MQTTErrorCode.MQTT_ERR_CONN_LOST
-                self._in_packet['command'] = command[0]
+                self._in_packet.command = command[0]
 
-        if self._in_packet['have_remaining'] == 0:
+        if self._in_packet.have_remaining == 0:
             # Read remaining
             # Algorithm for decoding taken from pseudo code at
             # http://publib.boulder.ibm.com/infocenter/wmbhelp/v6r0m0/topic/com.ibm.etools.mft.doc/ac10870_.htm
@@ -3178,26 +3185,26 @@ class Client:
                     if len(byte) == 0:
                         return MQTTErrorCode.MQTT_ERR_CONN_LOST
                     byte_value = byte[0]
-                    self._in_packet['remaining_count'].append(byte_value)
+                    self._in_packet.remaining_count += 1
                     # Max 4 bytes length for remaining length as defined by protocol.
                     # Anything more likely means a broken/malicious client.
-                    if len(self._in_packet['remaining_count']) > 4:
+                    if self._in_packet.remaining_count > 4:
                         return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
-                    self._in_packet['remaining_length'] += (
-                        byte_value & 127) * self._in_packet['remaining_mult']
-                    self._in_packet['remaining_mult'] = self._in_packet['remaining_mult'] * 128
+                    self._in_packet.remaining_length += (
+                        byte_value & 127) * self._in_packet.remaining_mult
+                    self._in_packet.remaining_mult = self._in_packet.remaining_mult * 128
 
                 if (byte_value & 128) == 0:
                     break
 
-            self._in_packet['have_remaining'] = 1
-            self._in_packet['to_process'] = self._in_packet['remaining_length']
+            self._in_packet.have_remaining = 1
+            self._in_packet.to_process = self._in_packet.remaining_length
 
         count = 100 # Don't get stuck in this loop if we have a huge message.
-        while self._in_packet['to_process'] > 0:
+        while self._in_packet.to_process > 0:
             try:
-                data = self._sock_recv(self._in_packet['to_process'])
+                data = self._sock_recv(self._in_packet.to_process)
             except BlockingIOError:
                 return MQTTErrorCode.MQTT_ERR_AGAIN
             except OSError as err:
@@ -3207,8 +3214,8 @@ class Client:
             else:
                 if len(data) == 0:
                     return MQTTErrorCode.MQTT_ERR_CONN_LOST
-                self._in_packet['to_process'] -= len(data)
-                self._in_packet['packet'] += data
+                self._in_packet.to_process -= len(data)
+                self._in_packet.packet.extend(data)
             count -= 1
             if count == 0:
                 with self._msgtime_mutex:
@@ -3216,20 +3223,11 @@ class Client:
                 return MQTTErrorCode.MQTT_ERR_AGAIN
 
         # All data for this packet is read.
-        self._in_packet['pos'] = 0
+        self._in_packet.pos = 0
         rc = self._packet_handle()
 
-        # Free data and reset values
-        self._in_packet = {
-            "command": 0,
-            "have_remaining": 0,
-            "remaining_count": [],
-            "remaining_mult": 1,
-            "remaining_length": 0,
-            "packet": bytearray(b""),
-            "to_process": 0,
-            "pos": 0,
-        }
+        # Reset reusable parse state for the next packet.
+        self._in_packet.reset()
 
         with self._msgtime_mutex:
             self._last_msg_in = time_func()
@@ -3884,7 +3882,7 @@ class Client:
         return MQTTErrorCode.MQTT_ERR_SUCCESS
 
     def _packet_handle(self) -> MQTTErrorCode:
-        cmd = self._in_packet['command'] & 0xF0
+        cmd = self._in_packet.command & 0xF0
         if cmd == PINGREQ:
             return self._handle_pingreq()
         elif cmd == PINGRESP:
@@ -3915,14 +3913,14 @@ class Client:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
     def _handle_pingreq(self) -> MQTTErrorCode:
-        if self._in_packet['remaining_length'] != 0:
+        if self._in_packet.remaining_length != 0:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
         self._easy_log(MQTT_LOG_DEBUG, "Received PINGREQ")
         return self._send_pingresp()
 
     def _handle_pingresp(self) -> MQTTErrorCode:
-        if self._in_packet['remaining_length'] != 0:
+        if self._in_packet.remaining_length != 0:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
         # No longer waiting for a PINGRESP.
@@ -3932,14 +3930,14 @@ class Client:
 
     def _handle_connack(self) -> MQTTErrorCode:
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] < 2:
+            if self._in_packet.remaining_length < 2:
                 return MQTTErrorCode.MQTT_ERR_PROTOCOL
-        elif self._in_packet['remaining_length'] != 2:
+        elif self._in_packet.remaining_length != 2:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
         if self._protocol == MQTTv5:
             (flags, result) = struct.unpack(
-                "!BB", self._in_packet['packet'][:2])
+                "!BB", self._in_packet.packet[:2])
             if result == 1:
                 # This is probably a failure from a broker that doesn't support
                 # MQTT v5.
@@ -3948,9 +3946,9 @@ class Client:
             else:
                 reason = ReasonCode(CONNACK >> 4, identifier=result)
                 properties = Properties(CONNACK >> 4)
-                properties.unpack(self._in_packet['packet'][2:])
+                properties.unpack(self._in_packet.packet[2:])
         else:
-            (flags, result) = struct.unpack("!BB", self._in_packet['packet'])
+            (flags, result) = struct.unpack("!BB", self._in_packet.packet)
             reason = convert_connack_rc_to_reason_code(result)
             properties = None
         if self._protocol == MQTTv311:
@@ -4107,13 +4105,13 @@ class Client:
     def _handle_disconnect(self) -> None:
         packet_type = DISCONNECT >> 4
         reasonCode = properties = None
-        if self._in_packet['remaining_length'] > 2:
+        if self._in_packet.remaining_length > 2:
             reasonCode = ReasonCode(packet_type)
-            reasonCode.unpack(self._in_packet['packet'])
-            if self._in_packet['remaining_length'] > 3:
+            reasonCode.unpack(self._in_packet.packet)
+            if self._in_packet.remaining_length > 3:
                 properties = Properties(packet_type)
                 props, props_len = properties.unpack(
-                    self._in_packet['packet'][1:])
+                    self._in_packet.packet[1:])
         self._easy_log(MQTT_LOG_DEBUG, "Received DISCONNECT %s %s",
                        reasonCode,
                        properties
@@ -4129,8 +4127,8 @@ class Client:
 
     def _handle_suback(self) -> None:
         self._easy_log(MQTT_LOG_DEBUG, "Received SUBACK")
-        pack_format = f"!H{len(self._in_packet['packet']) - 2}s"
-        (mid, packet) = struct.unpack(pack_format, self._in_packet['packet'])
+        pack_format = f"!H{len(self._in_packet.packet) - 2}s"
+        (mid, packet) = struct.unpack(pack_format, self._in_packet.packet)
 
         if self._protocol == MQTTv5:
             properties = Properties(SUBACK >> 4)
@@ -4178,18 +4176,26 @@ class Client:
                         raise
 
     def _handle_publish(self) -> MQTTErrorCode:
-        header = self._in_packet['command']
+        header = self._in_packet.command
         message = MQTTMessage(create_info=False)
         message.dup = ((header & 0x08) >> 3) != 0
         message.qos = (header & 0x06) >> 1
         message.retain = (header & 0x01) != 0
 
-        pack_format = f"!H{len(self._in_packet['packet']) - 2}s"
-        (slen, packet) = struct.unpack(pack_format, self._in_packet['packet'])
-        pack_format = f"!{slen}s{len(packet) - slen}s"
-        (topic, packet) = struct.unpack(pack_format, packet)
+        packet = self._in_packet.packet
+        packet_len = len(packet)
+        if packet_len < 2:
+            return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
-        if self._protocol != MQTTv5 and len(topic) == 0:
+        slen = _PACK_U16.unpack_from(packet, 0)[0]
+        topic_end = 2 + slen
+        if topic_end > packet_len:
+            return MQTTErrorCode.MQTT_ERR_PROTOCOL
+        view = memoryview(packet)
+        topic = view[2:topic_end].tobytes()
+        pos = topic_end
+
+        if self._protocol != MQTTv5 and slen == 0:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
         # Handle topics with invalid UTF-8
@@ -4204,15 +4210,22 @@ class Client:
         message.topic = topic
 
         if message.qos > 0:
-            pack_format = f"!H{len(packet) - 2}s"
-            (message.mid, packet) = struct.unpack(pack_format, packet)
+            if pos + 2 > packet_len:
+                return MQTTErrorCode.MQTT_ERR_PROTOCOL
+            message.mid = _PACK_U16.unpack_from(packet, pos)[0]
+            pos += 2
 
         if self._protocol == MQTTv5:
             message.properties = Properties(PUBLISH >> 4)
-            props, props_len = message.properties.unpack(packet)
-            packet = packet[props_len:]
+            # Fast-path empty property length (single 0 VBI byte).
+            if pos < packet_len and packet[pos] == 0:
+                pos += 1
+            else:
+                props, props_len = message.properties.unpack(packet[pos:])
+                pos += props_len
 
-        message.payload = packet
+        # Copy out before _in_packet.reset() clears the reusable buffer.
+        message.payload = view[pos:].tobytes()
 
         if self._protocol == MQTTv5:
             self._easy_log(
@@ -4275,20 +4288,20 @@ class Client:
 
     def _handle_pubrel(self) -> MQTTErrorCode:
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] < 2:
+            if self._in_packet.remaining_length < 2:
                 return MQTTErrorCode.MQTT_ERR_PROTOCOL
-        elif self._in_packet['remaining_length'] != 2:
+        elif self._in_packet.remaining_length != 2:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
-        mid, = struct.unpack("!H", self._in_packet['packet'][:2])
+        mid, = struct.unpack("!H", self._in_packet.packet[:2])
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] > 2:
+            if self._in_packet.remaining_length > 2:
                 reasonCode = ReasonCode(PUBREL >> 4)
-                reasonCode.unpack(self._in_packet['packet'][2:])
-                if self._in_packet['remaining_length'] > 3:
+                reasonCode.unpack(self._in_packet.packet[2:])
+                if self._in_packet.remaining_length > 3:
                     properties = Properties(PUBREL >> 4)
                     props, props_len = properties.unpack(
-                        self._in_packet['packet'][3:])
+                        self._in_packet.packet[3:])
         self._easy_log(MQTT_LOG_DEBUG, "Received PUBREL (Mid: %d)", mid)
 
         with self._in_message_mutex:
@@ -4341,20 +4354,20 @@ class Client:
 
     def _handle_pubrec(self) -> MQTTErrorCode:
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] < 2:
+            if self._in_packet.remaining_length < 2:
                 return MQTTErrorCode.MQTT_ERR_PROTOCOL
-        elif self._in_packet['remaining_length'] != 2:
+        elif self._in_packet.remaining_length != 2:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
-        mid, = struct.unpack("!H", self._in_packet['packet'][:2])
+        mid, = struct.unpack("!H", self._in_packet.packet[:2])
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] > 2:
+            if self._in_packet.remaining_length > 2:
                 reasonCode = ReasonCode(PUBREC >> 4)
-                reasonCode.unpack(self._in_packet['packet'][2:])
-                if self._in_packet['remaining_length'] > 3:
+                reasonCode.unpack(self._in_packet.packet[2:])
+                if self._in_packet.remaining_length > 3:
                     properties = Properties(PUBREC >> 4)
                     props, props_len = properties.unpack(
-                        self._in_packet['packet'][3:])
+                        self._in_packet.packet[3:])
         self._easy_log(MQTT_LOG_DEBUG, "Received PUBREC (Mid: %d)", mid)
 
         with self._out_message_mutex:
@@ -4368,14 +4381,14 @@ class Client:
 
     def _handle_unsuback(self) -> MQTTErrorCode:
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] < 4:
+            if self._in_packet.remaining_length < 4:
                 return MQTTErrorCode.MQTT_ERR_PROTOCOL
-        elif self._in_packet['remaining_length'] != 2:
+        elif self._in_packet.remaining_length != 2:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
-        mid, = struct.unpack("!H", self._in_packet['packet'][:2])
+        mid, = struct.unpack("!H", self._in_packet.packet[:2])
         if self._protocol == MQTTv5:
-            packet = self._in_packet['packet'][2:]
+            packet = self._in_packet.packet[2:]
             properties = Properties(UNSUBACK >> 4)
             props, props_len = properties.unpack(packet)
             reasoncodes_list = [
@@ -4526,22 +4539,22 @@ class Client:
         self, cmd: Literal['PUBACK'] | Literal['PUBCOMP']
     ) -> MQTTErrorCode:
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] < 2:
+            if self._in_packet.remaining_length < 2:
                 return MQTTErrorCode.MQTT_ERR_PROTOCOL
-        elif self._in_packet['remaining_length'] != 2:
+        elif self._in_packet.remaining_length != 2:
             return MQTTErrorCode.MQTT_ERR_PROTOCOL
 
         packet_type_enum = PUBACK if cmd == "PUBACK" else PUBCOMP
         packet_type = packet_type_enum.value >> 4
-        mid, = struct.unpack("!H", self._in_packet['packet'][:2])
+        mid, = struct.unpack("!H", self._in_packet.packet[:2])
         reasonCode = ReasonCode(packet_type)
         properties = Properties(packet_type)
         if self._protocol == MQTTv5:
-            if self._in_packet['remaining_length'] > 2:
-                reasonCode.unpack(self._in_packet['packet'][2:])
-                if self._in_packet['remaining_length'] > 3:
+            if self._in_packet.remaining_length > 2:
+                reasonCode.unpack(self._in_packet.packet[2:])
+                if self._in_packet.remaining_length > 3:
                     props, props_len = properties.unpack(
-                        self._in_packet['packet'][3:])
+                        self._in_packet.packet[3:])
         self._easy_log(MQTT_LOG_DEBUG, "Received %s (Mid: %d)", cmd, mid)
 
         with self._out_message_mutex:
