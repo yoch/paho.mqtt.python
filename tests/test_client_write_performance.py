@@ -241,6 +241,104 @@ def test_external_loop_register_write_on_packet_queue():
     assert len(mqttc._out_packet) == 1
 
 
+def test_external_loop_unregister_write_after_drain():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    registered = []
+    unregistered = []
+
+    def on_register(mqttc, userdata, sock):
+        registered.append(sock)
+
+    def on_unregister(mqttc, userdata, sock):
+        unregistered.append(sock)
+
+    mqttc.on_socket_register_write = on_register
+    mqttc.on_socket_unregister_write = on_unregister
+    mqttc._thread = None
+    mqttc._sock = FakeSendSocket()
+    mqttc._state = _ConnectionState.MQTT_CS_CONNECTED
+    mqttc._registered_write = False
+
+    rc = mqttc._packet_queue(client.PUBLISH, b"payload", 1, 0)
+    assert rc == client.MQTT_ERR_SUCCESS
+    assert registered == [mqttc._sock]
+    assert mqttc.want_write() is True
+
+    assert mqttc.loop_write() == client.MQTT_ERR_SUCCESS
+    assert unregistered == [mqttc._sock]
+    assert mqttc.want_write() is False
+    assert mqttc._registered_write is False
+
+
+def test_publish_from_on_message_defers_loop_write():
+    """Publish inside on_message must queue without re-entering loop_write."""
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._state = _ConnectionState.MQTT_CS_CONNECTED
+    mqttc._thread = None
+    loop_write_calls = []
+    real_loop_write = mqttc.loop_write
+
+    def counting_loop_write():
+        loop_write_calls.append(1)
+        return real_loop_write()
+
+    mqttc.loop_write = counting_loop_write
+
+    in_callback_during_publish = []
+
+    def on_message(mqttc, userdata, msg):
+        in_callback_during_publish.append(mqttc._in_callback_mutex.locked())
+        info = mqttc.publish("reply/topic", b"reply", qos=0)
+        assert info.rc == client.MQTT_ERR_SUCCESS
+        in_callback_during_publish.append(mqttc._in_callback_mutex.locked())
+
+    mqttc.on_message = on_message
+
+    message = client.MQTTMessage(create_info=False)
+    message.topic = "request/topic"
+    message.payload = b"ping"
+    message.qos = 0
+
+    mqttc._handle_on_message(message)
+
+    assert in_callback_during_publish == [True, True]
+    assert mqttc.want_write() is True
+    assert loop_write_calls == []
+
+    assert mqttc.loop_write() == client.MQTT_ERR_SUCCESS
+    assert mqttc.want_write() is False
+    assert loop_write_calls == [1]
+
+
+def test_publish_from_on_message_threaded_coalesces_wakeup():
+    """Threaded mode: follow-up publish from on_message uses one sockpair wakeup."""
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._state = _ConnectionState.MQTT_CS_CONNECTED
+    sockpair = CountingSockpair()
+    mqttc._sockpairW = sockpair
+    mqttc._sockpairR = sockpair
+    mqttc._thread = threading.Thread(target=lambda: None)
+    mqttc._thread_terminate = True
+
+    def on_message(mqttc, userdata, msg):
+        mqttc.publish("reply/topic", b"reply", qos=0)
+
+    mqttc.on_message = on_message
+
+    message = client.MQTTMessage(create_info=False)
+    message.topic = "request/topic"
+    message.payload = b"ping"
+    message.qos = 0
+
+    mqttc._handle_on_message(message)
+
+    assert sockpair.sends == 1
+    assert mqttc._sockpair_wakeup_pending is True
+    assert mqttc.want_write() is True
+
+
 def test_loop_start_clears_stale_sockpair_wakeup_pending(monkeypatch):
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     mqttc._sockpair_wakeup_pending = True

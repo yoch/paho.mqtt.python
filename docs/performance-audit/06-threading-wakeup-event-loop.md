@@ -130,7 +130,7 @@ threaded and external-loop tests.
 
 ## Progress (2026-07-09)
 
-Status: **Partial — core coalesce done via project 02**.
+Status: **Done (this PR)** — core coalesce via project 02; residual tests + state machine doc closed here. **07 WebSocket out of scope** for this PR.
 
 ### Implemented (in write-path commits)
 
@@ -138,16 +138,42 @@ Status: **Partial — core coalesce done via project 02**.
 - Coalesced `_packet_queue()` wakeup send.
 - Drain clears pending under the same mutex in `_loop()`.
 - `loop_start()` sockpair swap under mutex + re-wake if queue non-empty.
-- Tests: coalesce, concurrent `loop_start` vs queue, external-loop register.
+- Tests: coalesce, concurrent `loop_start` vs queue, external-loop register/unregister, publish-from-callback deferral.
 
-### Acceptance already met from 02
+### Wakeup state machine
 
-- ≥ 50% fewer sockpair writes on burst: **PASS** (typically 10000 → 1).
+Three integration modes share one queue but differ in how the network side is notified:
 
-### Still open
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Idle: no pending wakeup
+    Idle --> Pending: _packet_queue() first packet\n(threaded: sockpair send)
+    Pending --> Pending: more _packet_queue()\n(coalesced, no extra send)
+    Pending --> Idle: _loop() drains sockpair\nor external loop_write() empties queue
+    Idle --> Pending: loop_start() swap +\n_out_packet non-empty re-wake
+```
 
-- Document wakeup state machine more formally for external/asyncio loops.
-- Broader publish-from-callback coverage if gaps remain outside existing tests.
-- System-CPU threaded burst measurement with a real broker (optional).
+| Mode | `_thread` | `on_socket_register_write` | Wakeup path | Coalesce |
+| --- | --- | --- | --- | --- |
+| Manual `loop()` | `None` | `None` | `_packet_queue()` → `loop_write()` if not in callback | N/A (same thread) |
+| `loop_start()` | set | any | sockpair byte; drain in `_loop()` | **Yes** (`_sockpair_wakeup_pending`) |
+| External / asyncio | `None` | set | `_call_socket_register_write()` once | Register coalesced via `_registered_write` |
 
-Treat further 06 work as opportunistic polish, not a blocker before 01.
+**In-callback publish:** `_in_callback_mutex` is held during `on_message` / `on_publish`. `_packet_queue()` must not call `loop_write()` while the mutex is held (`acquire(False)` guard). Follow-up packets stay queued until the callback returns and the loop drains them — covered by `test_publish_from_on_message_defers_loop_write`.
+
+**External loop:** `_packet_queue()` registers write interest; `loop_write()` unregisters when `want_write()` is false — `test_external_loop_unregister_write_after_drain`.
+
+### Acceptance (re-measured 2026-07-09)
+
+| Criterion | Result |
+| --- | --- |
+| ≥ 50% fewer sockpair writes on 10k burst | **PASS** — 10 000 queues → **1** send (`sockpair_wakeup_coalesce_10000`) |
+| Functional: coalesce / partial write / external loop / callback publish | **PASS** — 13 tests in `test_client_write_performance.py` |
+| Threaded publish drain | **PASS** — `publish_threaded_qos0_v3_small` ~77k msgs/s median (3k/run, brokerless) |
+| Formal wakeup doc | **PASS** — this section |
+| Broker system-CPU profile | **Deferred** — brokerless harness sufficient for this PR |
+
+### Verdict
+
+**GO — closed.** Wakeup coalescing delivers the expected syscall reduction; mutex pairing prevents missed wakeups on `loop_start()` swap. No further 06 code changes required before merge. Lock-scope reductions and broker-side CPU profiles remain optional follow-ups outside this PR.

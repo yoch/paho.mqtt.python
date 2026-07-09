@@ -17,9 +17,9 @@ future notes, but they are not acceptance requirements for these projects.
 | [02 - Packet Write Queue](02-packet-write-queue.md) | P0 | **Done (this round)** | `Client._send_publish()`, `Client._packet_queue()`, `Client._packet_write()` | Improve publish throughput and reduce wakeup/write overhead. |
 | [03 - MQTT v5 Properties and Reason Codes](03-mqttv5-properties-reasoncodes.md) | P0 | **Done** | `Properties`, `ReasonCode`, MQTT v5 handlers | Remove repeated metadata construction and linear lookups. |
 | [04 - Callback Dispatch and Topic Matching](04-callback-dispatch-topic-matching.md) | P1 | **Partial** (round 1 done; eager `match()` NO GO; `iter_match` micro-opt kept) | `Client._handle_on_message()`, `MQTTMatcher` | Bound callback filtering overhead under many subscriptions. |
-| [05 - Inflight Message State](05-inflight-message-state.md) | P1 | Not started | `_out_messages`, `_in_messages`, `_update_inflight()` | Reduce linear scans and QoS bookkeeping cost. |
-| [06 - Threading Wakeup and Event Loop](06-threading-wakeup-event-loop.md) | P1 | **Partial** (wakeup coalesce landed via 02) | socketpair wakeups, locks, loop integration | Reduce cross-thread wakeups and lock contention. |
-| [07 - WebSocket Transport](07-websocket-transport.md) | P2 | Not started | `_WebsocketWrapper` | Reduce pure-Python masking and buffering overhead. |
+| [05 - Inflight Message State](05-inflight-message-state.md) | P1 | **NO GO** (ACK path) | `_out_messages`, `_update_inflight()` | Ready-queue rejected; reconnect O(N) scan noted for future. |
+| [06 - Threading Wakeup and Event Loop](06-threading-wakeup-event-loop.md) | P1 | **Done** | socketpair wakeups, locks, loop integration | Wakeup coalesce + tests + state machine doc. |
+| [07 - WebSocket Transport](07-websocket-transport.md) | P2 | **Out of scope (this PR)** | `_WebsocketWrapper` | Deferred to a future PR. |
 | [08 - Logging and Observability](08-logging-observability.md) | P1 | **Done (harness)** | `_easy_log()`, benchmark/profiling workflow | Add low-noise measurement and regression guardrails. |
 
 ## Progress Snapshot (2026-07-09)
@@ -32,12 +32,16 @@ Landed on branch `benchmarks` (representative commits):
 - `6f6869c` / `65e1671` / `6bb33c5` write path + wakeup coalesce + remaining-length fast path (02, 06 partial)
 - plan **01**: reusable `_InPacketState`, index-based `_handle_publish`, v5 empty-props fast path
 - plan **04** round 2: eager `match()` rejected; kept `iter_match` micro-opt (`nparts` / `yield from`) + dispatch tests/harness
+- plan **05** evaluated: ready-queue **NO GO** on ACK path (scan O(max_inflight)); reconnect reset O(N) deferred
+- plan **06** closed: wakeup coalesce (02) + callback/external-loop tests + state machine doc
 
-Recommended order for the next round:
+This PR scope: plans **01–06** and **08** harness. Plan **07** (WebSocket) is explicitly deferred.
 
-1. **05 Inflight** after a QoS1-saturated profile proves `_update_inflight` scans dominate.
-2. Keep **06** residual work (external-loop / asyncio docs+tests) opportunistic; core coalesce is done.
-3. **07 WebSocket** only if WS users are in scope.
+Recommended follow-ups (future PRs):
+
+1. **07 WebSocket** if WS transport users are in scope.
+2. Revisit **05** only for reconnect-heavy profiles (full `_out_messages` scan on reset).
+3. Optional broker-side system-CPU profiles for threaded publish bursts.
 
 Do not reopen rejected 02 tracks (`_OutPacket` slots shim, PUBLISH prealloc, fire-and-forget `MQTTMessageInfo`) unless a new profile contradicts the earlier NO GO evidence.
 

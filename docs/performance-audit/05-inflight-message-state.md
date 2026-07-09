@@ -124,6 +124,65 @@ linear scans dominate and after state invariants are documented.
 
 ## Progress (2026-07-09)
 
-Status: **Not started**. Schedule after 01 (and after a QoS1-saturated profile).
-Note: upstream #884 already adjusted PUBREL inflight accounting; any 05 work
-must preserve that contract.
+Status: **Evaluated — NO GO ready-queue (ACK path)**; reconnect scan is a separate track.
+
+### Measurement harness
+
+[`benchmarks/inflight_saturation_eval.py`](../../benchmarks/inflight_saturation_eval.py) — brokerless, ~15 s full matrix + profile.
+
+Environment: Python 3.12, `PYTHONPATH=src`, `FakeSendSocket` / `FakeRecvSocket`, no `on_publish` callback.
+
+### Results (median, 3 repeats)
+
+**ACK cycle** (PUBACK via `_packet_read` → `_do_on_publish` → `_update_inflight` → promote):
+
+| Label | N | max_inflight | ops/s | µs/ACK |
+| --- | ---: | ---: | ---: | ---: |
+| unsaturated | 20 | 20 | 27 854 | 35.9 |
+| saturated | 100 | 20 | 13 003 | 76.9 |
+| saturated | 1 000 | 20 | 16 889 | 59.2 |
+| saturated | 10 000 | 20 | 18 004 | 55.5 |
+| sat_hi_if | 1 000 | 100 | 13 339 | 75.0 |
+| sat_hi_if | 10 000 | 100 | 10 798 | 92.6 |
+
+Scaling saturated `max_inflight=20`: ops(N=100) / ops(N=10 000) = **0.72** (no degradation; noise at low N).
+
+**Single `_update_inflight()`** (one promotion, fresh queue): ~26 µs @ N=100, ~76 µs @ N=1 000, ~74 µs @ N=10 000 — flat beyond 1 000 (scan ≈ O(max_inflight), not O(N)).
+
+**`_messages_reconnect_reset_out()`** (full dict scan): 84 → 7 → 3 resets/s for N=100 / 1 000 / 10 000 — **O(N) confirmed**.
+
+**cProfile** ACK path (N=1 000, 600 ACKs): `_update_inflight` 46.5% cumulative (includes `_send_publish` 36.7%); parse/handle overhead dominates rest.
+
+**tracemalloc**: ~5 B peak/ACK (N=1 000) — not allocation-bound.
+
+### Verdict vs plan criteria
+
+| Criterion | Result | Decision |
+| --- | --- | --- |
+| Scan dominates ACK path at N=1k/10k | `_update_inflight` visible in profile, but **per-ACK throughput flat vs N** | Scan is **O(max_inflight)** via early `return` once inflight full; queued entries sit after inflight in `OrderedDict` insertion order |
+| Cost scales with N | **No** on ACK path (ratio ≈1.0 for 1k vs 10k) | Ready-queue **NO GO** for ACK/promote |
+| Non-saturated cheap | Yes (~36 µs/ACK @ N=20) | Baseline OK |
+| Encode topic secondary | `_send_publish` ~37% in profile; promotion cost is send-heavy | Topic cache **deferred** |
+
+**Decision: NO GO** for mid deque / `_update_inflight` rewrite on the ACK→promote hot path.
+
+**GO partial (future, out of scope here):** `_messages_reconnect_reset_out()` and CONNACK resend loops still do **O(N)** full scans — only worth touching if reconnect-heavy workloads are in scope (different invariant than ready-queue for queued mids).
+
+### Invariant confirmed (why scan stays cheap)
+
+```mermaid
+flowchart TD
+  od["_out_messages OrderedDict"]
+  od --> inflight["mids 1..max_if: wait_for_puback"]
+  od --> queued["mids max_if+1..N: queued"]
+  ack["PUBACK mid k"] --> pop["pop mid k"]
+  pop --> dec["inflight -= 1"]
+  dec --> scan["_update_inflight: scan from start"]
+  scan --> skip["skip wait_for_puback ~max_if entries"]
+  skip --> promote["promote first queued"]
+  promote --> full["inflight == max → return on next iter"]
+```
+
+Per ACK the scan visits **~max_inflight + 1** entries, not N.
+
+Preserve upstream #884 PUBREL inflight contract if any future work touches QoS2 paths.
