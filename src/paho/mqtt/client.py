@@ -591,9 +591,9 @@ class MQTTMessage:
     """ This is a class that describes an incoming message. It is
     passed to the `on_message` callback as the message parameter.
     """
-    __slots__ = 'timestamp', 'state', 'dup', 'mid', '_topic', 'payload', 'qos', 'retain', 'info', 'properties'
+    __slots__ = 'timestamp', 'state', 'dup', 'mid', '_topic', 'payload', 'qos', 'retain', '_info', 'properties'
 
-    def __init__(self, mid: int = 0, topic: bytes = b""):
+    def __init__(self, mid: int = 0, topic: bytes = b"", *, create_info: bool = True):
         self.timestamp = 0.0
         self.state = mqtt_ms_invalid
         self.dup = False
@@ -606,7 +606,7 @@ class MQTTMessage:
         """ The message Quality of Service (0, 1 or 2)."""
         self.retain = False
         """ If true, the message is a retained message and not fresh."""
-        self.info = MQTTMessageInfo(mid)
+        self._info = MQTTMessageInfo(mid) if create_info else None
         self.properties: Properties | None = None
         """ In MQTT v5.0, the properties associated with the message. (`Properties`)"""
 
@@ -631,6 +631,16 @@ class MQTTMessage:
     @topic.setter
     def topic(self, value: bytes) -> None:
         self._topic = value
+
+    @property
+    def info(self) -> MQTTMessageInfo:
+        if self._info is None:
+            self._info = MQTTMessageInfo(self.mid)
+        return self._info
+
+    @info.setter
+    def info(self, value: MQTTMessageInfo | None) -> None:
+        self._info = value
 
 
 class Client:
@@ -841,6 +851,7 @@ class Client:
         self._will_qos = 0
         self._will_retain = False
         self._on_message_filtered = MQTTMatcher()
+        self._on_message_filtered_count = 0
         self._host = ""
         self._port = 1883
         self._bind_address = ""
@@ -3012,6 +3023,10 @@ class Client:
             raise ValueError("sub and callback must both be defined.")
 
         with self._callback_mutex:
+            try:
+                self._on_message_filtered[sub]
+            except KeyError:
+                self._on_message_filtered_count += 1
             self._on_message_filtered[sub] = callback
 
     def topic_callback(
@@ -3033,6 +3048,8 @@ class Client:
                 del self._on_message_filtered[sub]
             except KeyError:  # no such subscription
                 pass
+            else:
+                self._on_message_filtered_count -= 1
 
     # ============================================================
     # Private functions
@@ -4094,7 +4111,7 @@ class Client:
 
     def _handle_publish(self) -> MQTTErrorCode:
         header = self._in_packet['command']
-        message = MQTTMessage()
+        message = MQTTMessage(create_info=False)
         message.dup = ((header & 0x08) >> 3) != 0
         message.qos = (header & 0x06) >> 1
         message.retain = (header & 0x01) != 0
@@ -4469,15 +4486,16 @@ class Client:
 
     def _handle_on_message(self, message: MQTTMessage) -> None:
 
-        try:
-            topic = message.topic
-        except UnicodeDecodeError:
-            topic = None
-
         on_message_callbacks = []
         with self._callback_mutex:
-            if topic is not None:
-                on_message_callbacks = list(self._on_message_filtered.iter_match(message.topic))
+            if self._on_message_filtered_count > 0:
+                try:
+                    topic = message.topic
+                except UnicodeDecodeError:
+                    topic = None
+
+                if topic is not None:
+                    on_message_callbacks = list(self._on_message_filtered.iter_match(topic))
 
             if len(on_message_callbacks) == 0:
                 on_message = self.on_message
