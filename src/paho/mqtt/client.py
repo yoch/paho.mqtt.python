@@ -3425,6 +3425,10 @@ class Client:
     def _pack_remaining_length(
         self, packet: bytearray, remaining_length: int
     ) -> bytearray:
+        # Fast path for the common small-packet case (1-byte remaining length).
+        if remaining_length < 128:
+            packet.append(remaining_length)
+            return packet
         if remaining_length > 268_435_455:
             raise ValueError("Packet too large")
         while True:

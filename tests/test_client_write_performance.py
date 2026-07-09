@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 import paho.mqtt.client as client
 from paho.mqtt.enums import CallbackAPIVersion, _ConnectionState
 
@@ -294,3 +296,22 @@ def test_loop_start_does_not_lose_wakeup_to_concurrent_packet_queue(monkeypatch)
     assert new_w.sends == 1
     assert mqttc._sockpair_wakeup_pending is True
     mqttc.loop_stop()
+
+
+def test_pack_remaining_length_fast_path_and_size_limit():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+
+    small = bytearray()
+    mqttc._pack_remaining_length(small, 127)
+    assert bytes(small) == b"\x7f"
+
+    multi = bytearray()
+    mqttc._pack_remaining_length(multi, 128)
+    assert bytes(multi) == b"\x80\x01"
+
+    max_ok = bytearray()
+    mqttc._pack_remaining_length(max_ok, 268_435_455)
+    assert bytes(max_ok) == b"\xff\xff\xff\x7f"
+
+    with pytest.raises(ValueError, match="Packet too large"):
+        mqttc._pack_remaining_length(bytearray(), 268_435_456)
