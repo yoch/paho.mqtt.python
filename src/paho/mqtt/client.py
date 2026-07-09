@@ -158,6 +158,7 @@ LOGGING_LEVEL = {
     LogLevel.MQTT_LOG_WARNING: logging.WARNING,
     LogLevel.MQTT_LOG_ERR: logging.ERROR,
 }
+_PACK_U16 = struct.Struct("!H")
 
 # CONNACK codes
 CONNACK_ACCEPTED = ConnackCode.CONNACK_ACCEPTED
@@ -488,6 +489,10 @@ def _encode_payload(payload: str | bytes | bytearray | int | float | None) -> by
     return payload
 
 
+# Serializes lazy Condition creation / published-flag handoff on MQTTMessageInfo.
+_message_info_condition_lock = threading.Lock()
+
+
 class MQTTMessageInfo:
     """This is a class returned from `Client.publish()` and can be used to find
     out the mid of the message that was published, and to determine whether the
@@ -500,7 +505,8 @@ class MQTTMessageInfo:
         self.mid = mid
         """ The message Id (int)"""
         self._published = False
-        self._condition = threading.Condition()
+        # Lazily allocated: most QoS 0 callers never wait_for_publish()/is_published().
+        self._condition: threading.Condition | None = None
         self.rc: MQTTErrorCode = MQTTErrorCode.MQTT_ERR_SUCCESS
         """ The `MQTTErrorCode` that give status for this message.
         This value could change until the message `is_published`"""
@@ -535,9 +541,15 @@ class MQTTMessageInfo:
             raise IndexError("index out of range")
 
     def _set_as_published(self) -> None:
-        with self._condition:
-            self._published = True
-            self._condition.notify()
+        # Hot path: no Condition exists until a waiter calls wait_for_publish().
+        # Order matters: publish the flag before reading _condition so a waiter
+        # that creates the Condition after this write will observe _published.
+        self._published = True
+        condition = self._condition
+        if condition is not None:
+            with condition:
+                self._published = True
+                condition.notify()
 
     def wait_for_publish(self, timeout: float | None = None) -> None:
         """Block until the message associated with this object is published, or
@@ -558,14 +570,26 @@ class MQTTMessageInfo:
         elif self.rc > 0:
             raise RuntimeError(f'Message publish failed: {error_string(self.rc)}')
 
+        # Serialize Condition creation. After releasing the lock, always re-check
+        # _published under the Condition so a concurrent _set_as_published() that
+        # ran while _condition was still None cannot be missed.
+        with _message_info_condition_lock:
+            if self._published:
+                if self.rc > 0:
+                    raise RuntimeError(f'Message publish failed: {error_string(self.rc)}')
+                return
+            if self._condition is None:
+                self._condition = threading.Condition()
+            condition = self._condition
+
         timeout_time = None if timeout is None else time_func() + timeout
         timeout_tenth = None if timeout is None else timeout / 10.
         def timed_out() -> bool:
             return False if timeout_time is None else time_func() > timeout_time
 
-        with self._condition:
+        with condition:
             while not self._published and not timed_out():
-                self._condition.wait(timeout_tenth)
+                condition.wait(timeout_tenth)
 
         if self.rc > 0:
             raise RuntimeError(f'Message publish failed: {error_string(self.rc)}')
@@ -583,7 +607,10 @@ class MQTTMessageInfo:
         elif self.rc > 0:
             raise RuntimeError(f'Message publish failed: {error_string(self.rc)}')
 
-        with self._condition:
+        condition = self._condition
+        if condition is None:
+            return self._published
+        with condition:
             return self._published
 
 
@@ -770,6 +797,11 @@ class Client:
         self._sock: SocketLike | None = None
         self._sockpairR: socket.socket | None = None
         self._sockpairW: socket.socket | None = None
+        # True after a sockpair wakeup byte was written and before loop drains it.
+        # Guarded by _sockpair_wakeup_mutex so publish threads and the network
+        # loop cannot leave pending=True with an empty sockpair (missed wakeups).
+        self._sockpair_wakeup_pending = False
+        self._sockpair_wakeup_mutex = threading.Lock()
         self._keepalive = 60
         self._connect_timeout = 5.0
         self._client_mode = MQTT_CLIENT
@@ -1160,6 +1192,8 @@ class Client:
         if self._sockpairW:
             self._sockpairW.close()
             self._sockpairW = None
+        with self._sockpair_wakeup_mutex:
+            self._sockpair_wakeup_pending = False
 
     def reinitialise(
         self,
@@ -1707,13 +1741,16 @@ class Client:
             # Stimulate output write even though we didn't ask for it, because
             # at that point the publish or other command wasn't present.
             socklist[1].insert(0, self._sock)
-            # Clear sockpairR - only ever a single byte written.
-            try:
-                # Read many bytes at once - this allows up to 10000 calls to
-                # publish() inbetween calls to loop().
-                self._sockpairR.recv(10000)
-            except BlockingIOError:
-                pass
+            # Clear sockpairR under the same lock as wakeup sends so a concurrent
+            # publish cannot observe pending=True after the byte was drained.
+            with self._sockpair_wakeup_mutex:
+                try:
+                    # Read many bytes at once - this allows up to 10000 calls to
+                    # publish() inbetween calls to loop().
+                    self._sockpairR.recv(10000)
+                except BlockingIOError:
+                    pass
+                self._sockpair_wakeup_pending = False
 
         if self._sock in socklist[1]:
             rc = self.loop_write()
@@ -2356,6 +2393,8 @@ class Client:
         if self._thread is not None:
             return MQTTErrorCode.MQTT_ERR_INVAL
 
+        # New sockpair; clear any stale wakeup flag from a previous loop_start().
+        self._sockpair_wakeup_pending = False
         self._sockpairR, self._sockpairW = _socketpair_compat()
         self._thread_terminate = False
         self._thread = threading.Thread(target=self._thread_main, name=f"paho-mqtt-client-{self._client_id.decode()}")
@@ -3187,8 +3226,10 @@ class Client:
                 return MQTTErrorCode.MQTT_ERR_SUCCESS
 
             try:
-                write_length = self._sock_send(
-                    packet['packet'][packet['pos']:])
+                # Avoid a full-buffer copy when the whole packet is still pending.
+                pos = packet['pos']
+                buf = packet['packet']
+                write_length = self._sock_send(buf if pos == 0 else buf[pos:])
             except (AttributeError, ValueError):
                 self._out_packet.appendleft(packet)
                 return MQTTErrorCode.MQTT_ERR_SUCCESS
@@ -3235,11 +3276,11 @@ class Client:
                                     if not self.suppress_exceptions:
                                         raise
 
-                        # TODO: Something is odd here. I don't see why packet["info"] can't be None.
-                        # A packet could be produced by _handle_connack with qos=0 and no info
-                        # (around line 3645). Ignore the mypy check for now but I feel there is a bug
-                        # somewhere.
-                        packet['info']._set_as_published()  # type: ignore
+                        # info may be None for internal QoS 0 packets (e.g. will
+                        # replay after CONNACK) or when callers do not track publish state.
+                        info = packet['info']
+                        if info is not None:
+                            info._set_as_published()
 
                     if (packet['command'] & 0xF0) == DISCONNECT:
                         with self._msgtime_mutex:
@@ -3367,7 +3408,6 @@ class Client:
     def _pack_remaining_length(
         self, packet: bytearray, remaining_length: int
     ) -> bytearray:
-        remaining_bytes = []
         if remaining_length > 268_435_455:
             raise ValueError("Packet too large")
         while True:
@@ -3377,14 +3417,13 @@ class Client:
             if remaining_length > 0:
                 byte |= 0x80
 
-            remaining_bytes.append(byte)
             packet.append(byte)
             if remaining_length == 0:
                 return packet
 
     def _pack_str16(self, packet: bytearray, data: bytearray | bytes | str) -> None:
         data = _force_bytes(data)
-        packet.extend(struct.pack("!H", len(data)))
+        packet.extend(_PACK_U16.pack(len(data)))
         packet.extend(data)
 
     def _send_publish(
@@ -3412,7 +3451,8 @@ class Client:
         packet.append(command)
 
         payloadlen = len(payload)
-        remaining_length = 2 + len(topic) + payloadlen
+        topiclen = len(topic)
+        remaining_length = 2 + topiclen + payloadlen
 
         if payloadlen == 0:
             if self._protocol == MQTTv5:
@@ -3453,11 +3493,13 @@ class Client:
             remaining_length += len(packed_properties)
 
         self._pack_remaining_length(packet, remaining_length)
-        self._pack_str16(packet, topic)
+        # topic is already bytes; avoid _pack_str16()/_force_bytes()
+        packet.extend(_PACK_U16.pack(topiclen))
+        packet.extend(topic)
 
         if qos > 0:
             # For message id
-            packet.extend(struct.pack("!H", mid))
+            packet.extend(_PACK_U16.pack(mid))
 
         if self._protocol == MQTTv5:
             packet.extend(packed_properties)
@@ -3797,12 +3839,17 @@ class Client:
         self._out_packet.append(mpkt)
 
         # Write a single byte to sockpairW (connected to sockpairR) to break
-        # out of select() if in threaded mode.
+        # out of select() if in threaded mode. Coalesce while a previous wakeup
+        # is still pending so publish bursts do not flood the socketpair.
         if self._sockpairW is not None:
-            try:
-                self._sockpairW.send(sockpair_data)
-            except BlockingIOError:
-                pass
+            with self._sockpair_wakeup_mutex:
+                if not self._sockpair_wakeup_pending:
+                    try:
+                        self._sockpairW.send(sockpair_data)
+                    except BlockingIOError:
+                        # Buffer already has unread wakeup bytes; treat as pending.
+                        pass
+                    self._sockpair_wakeup_pending = True
 
         # If we have an external event loop registered, use that instead
         # of calling loop_write() directly.

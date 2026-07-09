@@ -5,9 +5,11 @@ from __future__ import absolute_import
 import collections
 import logging
 import struct
+import threading
+import time
 
 import paho.mqtt.client as mqtt
-from paho.mqtt.enums import CallbackAPIVersion
+from paho.mqtt.enums import CallbackAPIVersion, _ConnectionState
 from paho.mqtt.matcher import MQTTMatcher
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
@@ -211,6 +213,105 @@ def packet_write_drain_10000(iterations):
     _packet_write_drain(iterations, 10000)
 
 
+class _CountingSockpair(object):
+    def __init__(self):
+        self.sends = 0
+
+    def send(self, data):
+        self.sends += 1
+        return len(data)
+
+    def close(self):
+        return None
+
+    def fileno(self):
+        return 1
+
+    def setblocking(self, flag):
+        return None
+
+
+def sockpair_wakeup_coalesce_10000(iterations):
+    """Count sockpair wakeups while queuing 10000 packets with a live network thread."""
+    client = _new_client(mqtt.MQTTv311)
+    sockpair = _CountingSockpair()
+    client._sockpairW = sockpair
+    client._thread = threading.Thread(target=lambda: None)
+    client._thread_terminate = True
+    packet = b"x"
+    for _ in range(iterations):
+        sockpair.sends = 0
+        with client._sockpair_wakeup_mutex:
+            client._sockpair_wakeup_pending = False
+        client._out_packet.clear()
+        for mid in range(10000):
+            rc = client._packet_queue(mqtt.PUBLISH, packet, mid, 0)
+            if rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError("packet queue failed: {}".format(rc))
+        if sockpair.sends != 1:
+            raise RuntimeError("expected 1 wakeup, got {}".format(sockpair.sends))
+
+
+class _DrainSockpair(_CountingSockpair):
+    def __init__(self):
+        super(_DrainSockpair, self).__init__()
+        self._pending = 0
+
+    def send(self, data):
+        self.sends += 1
+        self._pending += len(data)
+        return len(data)
+
+    def recv(self, size):
+        if self._pending <= 0:
+            raise BlockingIOError()
+        n = min(size, self._pending)
+        self._pending -= n
+        return b"\x00" * n
+
+
+def publish_threaded_qos0_v3_small(iterations):
+    """Publish from the caller while a helper thread drains like loop_start()."""
+    client = _new_client(mqtt.MQTTv311)
+    client._sock = FakeSendSocket()
+    client._state = _ConnectionState.MQTT_CS_CONNECTED
+    sockpair = _DrainSockpair()
+    client._sockpairW = sockpair
+    client._sockpairR = sockpair
+    # Force the threaded queue path (no immediate loop_write in _packet_queue).
+    client._thread = threading.Thread(target=lambda: None)
+    stop = threading.Event()
+
+    def network_loop():
+        while not stop.is_set():
+            if client.want_write():
+                client.loop_write()
+                continue
+            try:
+                sockpair.recv(10000)
+            except BlockingIOError:
+                pass
+            with client._sockpair_wakeup_mutex:
+                client._sockpair_wakeup_pending = False
+            stop.wait(0.00005)
+
+    thread = threading.Thread(target=network_loop, name="bench-packet-write")
+    thread.start()
+    try:
+        for _ in range(iterations):
+            info = client.publish(TOPIC_TEXT, PAYLOAD_SMALL, qos=0)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError("publish failed: {}".format(info.rc))
+        deadline = time.time() + 5.0
+        while client.want_write() and time.time() < deadline:
+            time.sleep(0.001)
+        if client.want_write():
+            raise RuntimeError("timed out waiting for packet drain")
+    finally:
+        stop.set()
+        thread.join(2.0)
+
+
 def matcher_many_filters(iterations):
     matcher = MQTTMatcher()
     for index in range(1000):
@@ -243,8 +344,10 @@ SCENARIOS = [
     Scenario("publish_parse_v5_qos0_user_props", "packet-read", "message", 1000, publish_parse_v5_qos0_user_props),
     Scenario("publish_pack_qos0_v3_small", "packet-write", "message", 5000, publish_pack_qos0_v3_small),
     Scenario("publish_pack_qos1_v3_small", "packet-write", "message", 5000, publish_pack_qos1_v3_small),
+    Scenario("publish_threaded_qos0_v3_small", "packet-write", "message", 3000, publish_threaded_qos0_v3_small),
     Scenario("packet_write_drain_100", "packet-write", "packet", 100, packet_write_drain_100, operations_per_iteration=100),
     Scenario("packet_write_drain_10000", "packet-write", "packet", 1, packet_write_drain_10000, operations_per_iteration=10000),
+    Scenario("sockpair_wakeup_coalesce_10000", "packet-write", "wakeup", 20, sockpair_wakeup_coalesce_10000, operations_per_iteration=10000),
     Scenario("matcher_many_filters", "supporting", "match", 2000, matcher_many_filters),
     Scenario("logging_disabled", "supporting", "log-call", 20000, logging_disabled),
 ]

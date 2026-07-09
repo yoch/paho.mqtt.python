@@ -135,3 +135,57 @@ GO with conditions.
 Justification: send-side CPU and wakeup overhead directly affect high-volume IoT
 publishers. Proceed first with measurement of socketpair wakeups and queue drain
 behavior, because batching bugs can create subtle latency regressions.
+
+## Progress (2026-07-09)
+
+Status: **GO — project complete for this round**.
+
+### Implemented (accepted)
+
+1. Shared `_PACK_U16 = struct.Struct("!H")` for topic length / mid packing.
+2. Drop dead `remaining_bytes` list in `_pack_remaining_length()`.
+3. `_send_publish()` packs already-bytes topics without `_force_bytes()`.
+4. Lazy `threading.Condition` on `MQTTMessageInfo`. Hot-path
+   `_set_as_published()` is lock-free when no waiter exists; waiters create the
+   Condition under `_message_info_condition_lock` and re-check `_published`
+   under the Condition. Covered by a 200-iteration concurrent race test.
+5. Socketpair wakeup coalescing via `_sockpair_wakeup_pending`, guarded by
+   `_sockpair_wakeup_mutex` shared by `_packet_queue()` send and `_loop()` drain.
+6. Avoid full-buffer slice copy in `_packet_write()` when `pos == 0`.
+7. Safe `info is None` handling in QoS 0 completion path.
+8. Harness: `sockpair_wakeup_coalesce_10000`, `publish_threaded_qos0_v3_small`.
+9. Tests in `tests/test_client_write_performance.py`: lazy Condition, race,
+   wakeup coalesce, partial writes, QoS 0 `on_publish` ordering, external-loop
+   `on_socket_register_write`.
+
+### Acceptance criteria
+
+| Criterion | Result |
+| --- | --- |
+| Threaded QoS 0 small-payload ≥ +10% | **PASS** — about +51% vs HEAD (`publish` + drain thread / sockpair) |
+| ≥ 50% fewer sockpair writes when loop already awake | **PASS** — 3000 → 6 wakeups on 3000 publishes; 10000 → 1 in coalesce scenario |
+| No >2% single-message latency regression (non-threaded) | **PASS** — p50 improved (~−57% vs HEAD in same harness) |
+| Functional tests for coalesce / partial write / on_publish / external loop | **PASS** |
+| Existing `tests/test_client.py` | **PASS** |
+
+Brokerless deltas vs original Codex write baseline / HEAD:
+
+| Scenario | Delta |
+| --- | --- |
+| `publish_pack_qos0_v3_small` | about +77% vs early baseline |
+| `packet_write_drain_100` | about +200% vs packing-only baseline |
+| threaded QoS 0 (HEAD vs candidate) | about +51% |
+| sockpair wakeups / burst | −99%+ |
+
+Gain sources: fewer Condition allocations (main QoS 0 win), fewer sockpair
+syscalls (threaded win), slightly faster packing, fewer buffer copies on full
+sends.
+
+### Evaluated and rejected / deferred
+
+| Track | Verdict | Evidence |
+| --- | --- | --- |
+| `_OutPacket` `__slots__` class with dict-compatible `__getitem__` | **NO GO** | Construction-only microbench ~+17%, but publish E2E with attribute shim ~−15%. Would need a full `_packet_write` rewrite to attributes; risk > reward after current wins. |
+| Skip allocating `MQTTMessageInfo` for fire-and-forget QoS 0 | **NO GO for now** | `_send_publish(..., info=None)` ~+9% isolated, but `publish()` must still return a public `MQTTMessageInfo`. Skipping allocation needs an API-preserving sentinel or lazy object; defer unless a later profile still shows it hot. |
+| Preallocate PUBLISH `bytearray` + `pack_into` | **NO GO** | Earlier experiment: QoS 0 regressed vs simple extend packing; code uglier. |
+| Unconditional no-copy without `pos == 0` guard | n/a | Kept the safe `pos == 0` form only. |
