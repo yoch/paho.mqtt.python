@@ -80,6 +80,7 @@ Packet write/queue:
 Supporting signals:
 
 - `matcher_many_filters`
+- `dispatch_no_filters` / `dispatch_one_filter` / `dispatch_many_filters`
 - `logging_disabled`
 
 ## Result Files

@@ -54,3 +54,64 @@ def test_unfiltered_on_message_does_not_require_valid_utf8_topic():
     mqttc._handle_on_message(message)
 
     assert messages == [message]
+
+
+def test_multiple_filtered_callbacks_are_invoked():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    seen = []
+    mqttc.on_message = lambda *args: seen.append("global")
+    mqttc.message_callback_add("sensors/+", lambda *args: seen.append("plus"))
+    mqttc.message_callback_add("sensors/#", lambda *args: seen.append("hash"))
+
+    message = client.MQTTMessage(create_info=False)
+    message.topic = b"sensors/1"
+    mqttc._handle_on_message(message)
+
+    assert seen == ["plus", "hash"]
+
+
+def test_callback_remove_during_dispatch_does_not_skip_snapshot():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    seen = []
+
+    def first(mqttc, userdata, message):
+        seen.append("first")
+        mqttc.message_callback_remove("sensors/#")
+
+    def second(mqttc, userdata, message):
+        seen.append("second")
+
+    mqttc.message_callback_add("sensors/+", first)
+    mqttc.message_callback_add("sensors/#", second)
+
+    message = client.MQTTMessage(create_info=False)
+    message.topic = b"sensors/1"
+    mqttc._handle_on_message(message)
+
+    assert seen == ["first", "second"]
+    assert mqttc._on_message_filtered_count == 1
+
+
+def test_callback_add_during_dispatch_is_not_invoked_same_message():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    seen = []
+
+    def late(mqttc, userdata, message):
+        seen.append("late")
+
+    def first(mqttc, userdata, message):
+        seen.append("first")
+        mqttc.message_callback_add("sensors/#", late)
+
+    mqttc.message_callback_add("sensors/+", first)
+
+    message = client.MQTTMessage(create_info=False)
+    message.topic = b"sensors/1"
+    mqttc._handle_on_message(message)
+
+    assert seen == ["first"]
+    assert mqttc._on_message_filtered_count == 2
+
+    seen.clear()
+    mqttc._handle_on_message(message)
+    assert seen == ["first", "late"]

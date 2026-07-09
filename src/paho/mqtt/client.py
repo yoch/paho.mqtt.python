@@ -4576,6 +4576,7 @@ class Client:
                     topic = None
 
                 if topic is not None:
+                    # Snapshot matches so callback add/remove during dispatch is safe.
                     on_message_callbacks = list(self._on_message_filtered.iter_match(topic))
 
             if len(on_message_callbacks) == 0:

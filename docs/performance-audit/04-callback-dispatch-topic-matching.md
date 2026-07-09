@@ -129,24 +129,50 @@ callback routing dominates a target workload.
 
 ## Progress (2026-07-09)
 
-Status: **Partial**.
-
-Commit: `92008c1` (`perf: reduce receive message dispatch overhead`).
+Status: **Partial** — round 1 done; round 2 eager-`match()` API rejected.
 
 ### Implemented (accepted)
+
+Round 1 — `92008c1` (`perf: reduce receive message dispatch overhead`):
 
 - Fast path in `_handle_on_message()` when `_on_message_filtered_count == 0`
   (skip topic decode + matcher).
 - Count maintained under `_callback_mutex` on add/replace/remove.
 - Lazy `MQTTMessage.info` for inbound messages (`create_info=False` in
   `_handle_publish`).
-- Tests in `tests/test_client_receive_performance.py`.
 
-### Still open (only if profiles justify)
+Round 2 follow-up (kept):
 
-- Avoid `list(iter_match(...))` allocation when a single callback matches.
-- Iterative trie walk instead of recursive generator.
-- Cache decoded topic / split segments per message carefully.
+- Micro-optimize `iter_match()` in place: cache `nparts`, use `yield from`.
+  Keep the lazy generator API (used by `topic_matches_sub` and dispatch via
+  `list(iter_match(...))`).
+- Documented / tested callback mutation semantics for the existing snapshot.
+- Added `$` / multi-match / lazy `iter_match` tests.
+- Added dispatch harness scenarios:
+  `dispatch_no_filters` / `dispatch_one_filter` / `dispatch_many_filters`.
 
-Do not start these until after **01 Packet Read Parser**, unless a workload with
-many filtered callbacks is the primary target.
+### Rejected after realism check
+
+| Idea | Verdict | Notes |
+| --- | --- | --- |
+| Eager `MQTTMatcher.match()` list-fill API | **NO GO** | Against already-optimized `list(iter_match)`, gains are noisy / modest (~0–20% matcher, ~+9% dispatch). Allocations unchanged. Not worth a second public API; keep a single lazy `iter_match`. |
+| `iter_match = iter(match(...))` | **NO GO** | Destroys laziness. |
+| Explicit-stack iterative trie | **NO GO** | ~−13% vs recursive generator. |
+
+Observed complexity: match cost tracks topic depth and wildcard branches on the
+path, not total filter count.
+
+### Callback mutation semantics (current `list(iter_match)` snapshot)
+
+- Matches are snapshotted to a list before any user callback runs.
+- Removing a still-pending matched callback during dispatch does **not** skip it
+  for the current message.
+- Adding a new matching callback during dispatch does **not** invoke it for the
+  current message; it applies to subsequent messages.
+
+### Deferred
+
+| Idea | Notes |
+| --- | --- |
+| Cache decoded topic / split segments on `MQTTMessage` | Only if filtered dispatch still dominates. |
+| Avoid list materialization when invoking a single callback | Needs care around mutation-during-dispatch. |

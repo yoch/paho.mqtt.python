@@ -320,7 +320,48 @@ def matcher_many_filters(iterations):
     matcher["devices/#"] = "all-devices"
     topic = TOPIC_TEXT
     for _ in range(iterations):
-        tuple(matcher.iter_match(topic))
+        list(matcher.iter_match(topic))
+
+
+def _dispatch_client(filter_count):
+    client = _new_client(mqtt.MQTTv311)
+    for index in range(filter_count):
+        if index == 0:
+            client.message_callback_add("devices/+/telemetry", lambda *args: None)
+        else:
+            client.message_callback_add(
+                "other/device-{}/x".format(index),
+                lambda *args: None,
+            )
+    return client
+
+
+def _dispatch_message():
+    message = mqtt.MQTTMessage(create_info=False)
+    message.topic = TOPIC
+    message.payload = PAYLOAD_SMALL
+    return message
+
+
+def dispatch_no_filters(iterations):
+    client = _dispatch_client(0)
+    message = _dispatch_message()
+    for _ in range(iterations):
+        client._handle_on_message(message)
+
+
+def dispatch_one_filter(iterations):
+    client = _dispatch_client(1)
+    message = _dispatch_message()
+    for _ in range(iterations):
+        client._handle_on_message(message)
+
+
+def dispatch_many_filters(iterations):
+    client = _dispatch_client(1000)
+    message = _dispatch_message()
+    for _ in range(iterations):
+        client._handle_on_message(message)
 
 
 def logging_disabled(iterations):
@@ -349,5 +390,8 @@ SCENARIOS = [
     Scenario("packet_write_drain_10000", "packet-write", "packet", 1, packet_write_drain_10000, operations_per_iteration=10000),
     Scenario("sockpair_wakeup_coalesce_10000", "packet-write", "wakeup", 20, sockpair_wakeup_coalesce_10000, operations_per_iteration=10000),
     Scenario("matcher_many_filters", "supporting", "match", 2000, matcher_many_filters),
+    Scenario("dispatch_no_filters", "callback-dispatch", "message", 10000, dispatch_no_filters),
+    Scenario("dispatch_one_filter", "callback-dispatch", "message", 5000, dispatch_one_filter),
+    Scenario("dispatch_many_filters", "callback-dispatch", "message", 3000, dispatch_many_filters),
     Scenario("logging_disabled", "supporting", "log-call", 20000, logging_disabled),
 ]
