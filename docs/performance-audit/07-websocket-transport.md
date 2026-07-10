@@ -1,122 +1,58 @@
 # 07 - WebSocket Transport
 
-## Problem
+## Analysis
 
-The WebSocket transport adds a Python-level framing layer around MQTT packets.
-The relevant code is `_WebsocketWrapper` in `src/paho/mqtt/client.py`.
+WebSocket client frames must be masked, and the original implementation XORed every payload byte in Python. Partial sends also replaced `_sendbuffer` with a full slice after every socket write. These costs affect only WebSocket users but grow rapidly with payload size.
 
-Likely symptoms:
+## Preparation
 
-- WebSocket transport uses much more CPU than TCP for the same MQTT workload.
-- `_create_frame()` masks payloads byte by byte in Python.
-- `_recv_impl()` performs buffer slicing, bytearray mutation, and frame parsing
-  on every read.
-- Handshake parsing reads one byte at a time, though this is connection-time
-  only and not a steady-state hot path.
-- Send buffering copies data into `_sendbuffer`.
-
-Common workloads:
-
-- Browser-adjacent or proxy-constrained MQTT clients using WebSocket transport.
-- Cloud broker connections where WebSocket is required.
-- Small telemetry messages where framing overhead dominates payload size.
-
-## Theoretical Rationale
-
-WebSocket client masking is required by the protocol, but byte-by-byte Python
-loops are expensive. Masking is a simple XOR pattern that CPUs execute quickly,
-but Python loop overhead dominates. Reducing loop iterations, using chunked
-operations, or minimizing copies can help.
-
-The transport is P2 because not all deployments use WebSockets, but for users
-who do, the overhead can be large relative to MQTT packet processing.
+Frame creation is measured at 2, 16, 128, 1,024, and 65,536 bytes. Tests decode the generated mask, exercise extended lengths, partial sends, ping/pong, binary frames, and continuation frames. The HTTP handshake is excluded because it is connection-time work.
 
 ## Expected Gain
 
-Priority: P2.
-
-Conservative expected gain:
-
-- 10 to 30 percent CPU reduction in isolated WebSocket frame masking benchmarks.
-- 5 to 15 percent throughput improvement for small WebSocket MQTT messages.
-- Little impact for raw TCP users.
-
-The gain depends heavily on payload size and whether the workload is send-heavy
-or receive-heavy.
-
-## Before/After Measurements
-
-Microbenchmarks:
-
-- Create masked WebSocket frames for MQTT packet sizes 2, 16, 128, 1024, and
-  65536 bytes.
-- Receive/decode WebSocket frames for the same sizes.
-- Measure partial-send behavior with `_sendbuffer`.
-- Compare handshake parsing only as informational, not as a P2 acceptance
-  target.
-
-Broker scenarios:
-
-- WebSocket QoS 0 publish throughput.
-- WebSocket subscriber receiving small telemetry.
-- WebSocket over TLS if a local test broker supports it.
-
-Metrics:
-
-- Frames per second.
-- CPU per MiB framed.
-- Allocations per frame.
-- MQTT messages per second over WebSocket vs raw TCP.
-
-## Implementation Guidelines
-
-Allowed implementation directions:
-
-- Optimize masking with chunked operations while staying pure Python and
-  dependency-free.
-- Avoid mutating caller-provided buffers in place unless the current behavior
-  already guarantees isolation.
-- Reduce temporary frame concatenations by extending one `bytearray`.
-- Improve receive buffering to avoid full-buffer resets and copies when partial
-  frames are read.
-- Consider faster handshake parsing only if profiling shows connection churn is
-  a real workload.
-
-Risks:
-
-- WebSocket masking correctness is protocol-critical.
-- Partial frames and continuation frames are already delicate.
-- Changing buffer ownership can corrupt retransmission or partial-send behavior.
-- Large-payload optimizations must not slow small frames.
+Priority: P2. Target at least +15% for 128-byte frame creation with no small-frame regression and bounded temporary memory.
 
 ## Acceptance Criteria
 
-Functional criteria:
-
+- At least +15% at 128 bytes.
+- No regression for 2/16-byte frames.
+- Temporary masking work is bounded to 64-KiB chunks.
+- Partial sends emit one correct frame without copying the remaining buffer.
 - Existing WebSocket unit and integration tests pass.
-- Add tests for masking correctness, partial sends, ping/pong handling, close
-  frames, and continuation behavior covered by current support.
-- Preserve public transport selection behavior.
 
-Performance criteria:
+## Before Measurement
 
-- At least 15 percent faster frame creation for 128-byte payloads.
-- At least 10 percent lower CPU in WebSocket small-message broker scenario.
-- No regression above 2 percent for raw TCP benchmarks.
+| Payload | Before frames/s |
+| ---: | ---: |
+| 16 B | 237,684 |
+| 128 B | 55,218 |
+| 1,024 B | 8,342 |
+| 65,536 B | 130 |
 
-Documentation criteria:
+## Implementation
 
-- Record WebSocket vs raw TCP overhead before and after.
-- Document which frame sizes benefit.
+- Keep the short Python XOR loop below 64 bytes, where native-integer setup is more expensive.
+- Mask larger payloads using `int.from_bytes()`/XOR/`to_bytes()` in bounded 64-KiB chunks.
+- Build frame headers with cached `Struct` instances.
+- Avoid generating a mask key for unmasked server control replies.
+- Track `_sendbuffer_head` and send a memoryview instead of slicing the remaining buffer after partial writes.
+- Leave handshake parsing unchanged.
+
+## After Measurements
+
+| Payload | After frames/s | Delta |
+| ---: | ---: | ---: |
+| 16 B | 276,686 | **+16.4%** |
+| 128 B | 140,558 | **+154.5%** |
+| 1,024 B | 75,130 | **+800.6%** |
+| 65,536 B | 2,496 | **+1,820%** |
+
+The permanent harness subsequently reports roughly 260k, 170k, and 101k frames/s for 16, 128, and 1,024 bytes; run-to-run CPU scaling affects absolute values but not the verdict.
+
+## Results Analysis
+
+A hybrid is necessary: allocating a 64-KiB mask block for tiny frames regressed them, while the original short loop is already efficient at that scale. Native big-integer operations dominate positively from 128 bytes upward. Chunking prevents temporary integers from scaling with an arbitrarily large frame.
 
 ## Verdict
 
-GO with conditions.
-
-Justification: the optimization target is clear, but WebSocket affects a subset
-of users and protocol edge cases are easy to break. Proceed after P0/P1 work or
-when WebSocket-heavy users provide profiles.
-
-## Progress (2026-07-09)
-
-Status: **Not started**. Keep P2 until WS workloads are in scope.
+**GO.** The 128-byte threshold is exceeded by a wide margin, small frames improve, and all 32 focused WebSocket tests pass.

@@ -19,8 +19,13 @@ future notes, but they are not acceptance requirements for these projects.
 | [04 - Callback Dispatch and Topic Matching](04-callback-dispatch-topic-matching.md) | P1 | **Partial** (round 1 done; eager `match()` NO GO; `iter_match` micro-opt kept) | `Client._handle_on_message()`, `MQTTMatcher` | Bound callback filtering overhead under many subscriptions. |
 | [05 - Inflight Message State](05-inflight-message-state.md) | P1 | **NO GO** (ACK path) | `_out_messages`, `_update_inflight()` | Ready-queue rejected; reconnect O(N) scan noted for future. |
 | [06 - Threading Wakeup and Event Loop](06-threading-wakeup-event-loop.md) | P1 | **Done** | socketpair wakeups, locks, loop integration | Wakeup coalesce + tests + state machine doc. |
-| [07 - WebSocket Transport](07-websocket-transport.md) | P2 | **Out of scope (this PR)** | `_WebsocketWrapper` | Deferred to a future PR. |
+| [07 - WebSocket Transport](07-websocket-transport.md) | P2 | **Done** | `_WebsocketWrapper` | Hybrid native masking and zero-copy partial-send cursor. |
 | [08 - Logging and Observability](08-logging-observability.md) | P1 | **Done (harness)** | `_easy_log()`, benchmark/profiling workflow | Add low-noise measurement and regression guardrails. |
+| [09 - Read-Ahead and Packet Batching](09-read-ahead-packet-batching.md) | P0 | **Done** | `_loop()`, `_packet_read()`, `_sock_recv()` | Batch inbound packets and amortize socket reads. |
+| [10 - Publish ACK Completion](10-publish-ack-completion.md) | P1 | **Done** | `_handle_pubackcomp()`, `_do_on_publish()` | Skip callback metadata when MQTT v3 has no publish callback. |
+| [11 - MQTT v5 Rich Property Codec](11-mqttv5-rich-property-codec.md) | P1 | **Done** | `Properties`, `VariableByteIntegers` | Cursor parsing and native UTF validation. |
+| [12 - Outbound Topic Encoding Cache](12-outbound-topic-encoding-cache.md) | P1 | **NO GO** | `Client.publish()` | Rejected due to high-cardinality regression. |
+| [13 - Reconnect Reset and Replay](13-reconnect-replay.md) | P2 | **Done** | reconnect reset, CONNACK replay | Remove repeated invariant work without a second queue. |
 
 ## Progress Snapshot (2026-07-09)
 
@@ -45,11 +50,20 @@ Receive follow-up for `mqtt_zigbee_listener` (2026-07-09):
 - **NO GO**: further QoS2 `_in_messages` bookkeeping; further matcher/`list()` work for 7 filters (~+2.5%).
 - Remaining listener CPU is largely **outside paho** (SQLAlchemy workers / `orjson` / app logging).
 
-Recommended follow-ups (future PRs):
+Second audit round (2026-07-10):
 
-1. **07 WebSocket** if WS transport users are in scope.
-2. Revisit **05** only for reconnect-heavy profiles (full `_out_messages` scan on reset).
-3. Optional broker-side system-CPU profiles for threaded publish bursts.
+- **09 GO:** built-in read-ahead/batching improves a local 1,000-message burst by about 84% and reduces burst reads to one.
+- **10 GO:** MQTT v3 ACK completion without `on_publish` improves by about 18%.
+- **11 GO:** rich property unpack and end-to-end MQTT v5 rich PUBLISH improve by about 53% and 28% in paired runs.
+- **12 NO GO:** a bounded topic cache regresses a 1,000-topic publisher by about 14%; prototype removed.
+- **13 GO:** QoS 2 reconnect reset improves by about 24% at 1,000 messages.
+- **07 GO:** WebSocket frame creation improves about 154% at 128 bytes with bounded 64-KiB masking chunks.
+
+Recommended follow-ups:
+
+1. Optional local-broker TCP/TLS/WS system-CPU profiles.
+2. Do not reopen the topic cache without a new profile or explicit opt-in design.
+3. Do not reopen rejected 02/05 structures without contradictory evidence.
 
 Do not reopen rejected 02 tracks (`_OutPacket` slots shim, PUBLISH prealloc, fire-and-forget `MQTTMessageInfo`) unless a new profile contradicts the earlier NO GO evidence.
 
