@@ -1,7 +1,7 @@
 import pytest
 
 from paho.mqtt.packettypes import PacketTypes
-from paho.mqtt.properties import MQTTException, Properties, writeUTF
+from paho.mqtt.properties import MalformedPacket, MQTTException, Properties, readUTF, writeUTF
 from paho.mqtt.reasoncodes import ReasonCode
 
 
@@ -70,3 +70,29 @@ def test_property_name_lookup_uses_compressed_names():
 def test_reason_code_invalid_for_packet_still_fails():
     with pytest.raises(ValueError):
         ReasonCode(PacketTypes.PUBACK, identifier=1)
+
+
+@pytest.mark.parametrize("encoded", [b"\x00", "\ufeff".encode("utf-8")])
+def test_read_utf_rejects_mqtt_forbidden_characters(encoded):
+    field = len(encoded).to_bytes(2, "big") + encoded
+
+    with pytest.raises(MalformedPacket):
+        readUTF(field, len(field))
+
+
+def test_read_utf_strict_decoder_rejects_encoded_surrogate():
+    encoded_surrogate = b"\xed\xa0\x80"
+    field = len(encoded_surrogate).to_bytes(2, "big") + encoded_surrogate
+
+    with pytest.raises(UnicodeDecodeError):
+        readUTF(field, len(field))
+
+
+def test_property_unpack_rejects_truncated_utf_field():
+    with pytest.raises(MalformedPacket):
+        Properties(PacketTypes.PUBLISH).unpack(b"\x02\x03\x00")
+
+
+def test_property_unpack_rejects_declared_length_beyond_packet():
+    with pytest.raises(MalformedPacket):
+        Properties(PacketTypes.PUBLISH).unpack(b"\x05\x03\x00\x01x")

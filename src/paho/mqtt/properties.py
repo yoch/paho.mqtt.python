@@ -20,6 +20,10 @@ from types import MappingProxyType
 from .packettypes import PacketTypes
 
 
+_PACK_U16 = struct.Struct("!H")
+_PACK_U32 = struct.Struct("!L")
+
+
 class MQTTException(Exception):
     pass
 
@@ -30,22 +34,22 @@ class MalformedPacket(MQTTException):
 
 def writeInt16(length):
     # serialize a 16 bit integer to network format
-    return bytearray(struct.pack("!H", length))
+    return bytearray(_PACK_U16.pack(length))
 
 
 def readInt16(buf):
     # deserialize a 16 bit integer from network format
-    return struct.unpack("!H", buf[:2])[0]
+    return _PACK_U16.unpack_from(buf, 0)[0]
 
 
 def writeInt32(length):
     # serialize a 32 bit integer to network format
-    return bytearray(struct.pack("!L", length))
+    return bytearray(_PACK_U32.pack(length))
 
 
 def readInt32(buf):
     # deserialize a 32 bit integer from network format
-    return struct.unpack("!L", buf[:4])[0]
+    return _PACK_U32.unpack_from(buf, 0)[0]
 
 
 def writeUTF(data):
@@ -64,15 +68,12 @@ def readUTF(buffer, maxlen):
     if length > maxlen:
         raise MalformedPacket("Length delimited string too long")
     buf = buffer[2:2+length].decode("utf-8")
-    # look for chars which are invalid for MQTT
-    for c in buf: # look for D800-DFFF in the UTF string
-        ord_c = ord(c)
-        if ord_c >= 0xD800 and ord_c <= 0xDFFF:
-            raise MalformedPacket("[MQTT-1.5.4-1] D800-DFFF found in UTF-8 data")
-        if ord_c == 0x00: # look for null in the UTF string
-            raise MalformedPacket("[MQTT-1.5.4-2] Null found in UTF-8 data")
-        if ord_c == 0xFEFF:
-            raise MalformedPacket("[MQTT-1.5.4-3] U+FEFF in UTF-8 data")
+    # Python's strict UTF-8 decoder rejects encoded surrogate code points.
+    # Native string searches avoid a Python/ord loop for valid MQTT strings.
+    if "\x00" in buf:
+        raise MalformedPacket("[MQTT-1.5.4-2] Null found in UTF-8 data")
+    if "\ufeff" in buf:
+        raise MalformedPacket("[MQTT-1.5.4-3] U+FEFF in UTF-8 data")
     return buf, length+2
 
 
@@ -119,18 +120,23 @@ class VariableByteIntegers:  # Variable Byte Integer
 
           [MQTT-1.5.5-1] the encoded value MUST use the minimum number of bytes necessary to represent the value
         """
+        return VariableByteIntegers.decode_at(buffer, 0, len(buffer))
+
+    @staticmethod
+    def decode_at(buffer, offset, end):
         multiplier = 1
         value = 0
-        bytes = 0
-        while 1:
-            bytes += 1
-            digit = buffer[0]
-            buffer = buffer[1:]
+        byte_count = 0
+        while offset + byte_count < end:
+            digit = buffer[offset + byte_count]
+            byte_count += 1
             value += (digit & 127) * multiplier
             if digit & 128 == 0:
-                break
+                return value, byte_count
+            if byte_count == 4:
+                raise MalformedPacket("Variable byte integer exceeds four bytes")
             multiplier *= 128
-        return (value, bytes)
+        raise MalformedPacket("Truncated variable byte integer")
 
 
 class Properties:
@@ -235,11 +241,15 @@ class Properties:
 
     _compressed_names_dict = {}
     _names_from_ident_dict = {}
+    _compressed_names_from_ident_dict = {}
     for _name, _identifier in names.items():
-        _compressed_names_dict[_name.replace(' ', '')] = _identifier
+        _compressed_name = _name.replace(' ', '')
+        _compressed_names_dict[_compressed_name] = _identifier
         _names_from_ident_dict[_identifier] = _name
+        _compressed_names_from_ident_dict[_identifier] = _compressed_name
     _compressed_names = MappingProxyType(_compressed_names_dict)
     _names_from_ident = MappingProxyType(_names_from_ident_dict)
+    _compressed_names_from_ident = MappingProxyType(_compressed_names_from_ident_dict)
     _multiple_identifiers = frozenset((11, 38))
     _multiple_names_set = set()
     for _name, _identifier in _compressed_names.items():
@@ -251,21 +261,27 @@ class Properties:
         _property_order_list.append(_name.replace(' ', ''))
     _property_order = tuple(_property_order_list)
     _private_vars = frozenset(("packetType", "types", "names", "properties", "_set_properties"))
-    del _compressed_names_dict, _names_from_ident_dict, _multiple_names_set, _property_order_list, _name, _identifier
+    del _compressed_names_dict, _names_from_ident_dict, _compressed_names_from_ident_dict
+    del _multiple_names_set, _property_order_list, _name, _identifier, _compressed_name
 
     def __init__(self, packetType):
         object.__setattr__(self, "packetType", packetType)
         object.__setattr__(self, "_set_properties", set())
 
     def allowsMultiple(self, compressedName):
-        return compressedName.replace(' ', '') in self._multiple_names
+        if ' ' in compressedName:
+            compressedName = compressedName.replace(' ', '')
+        return compressedName in self._multiple_names
 
     def getIdentFromName(self, compressedName):
         # return the identifier corresponding to the property name
-        return self._compressed_names.get(compressedName.replace(' ', ''), -1)
+        if ' ' in compressedName:
+            compressedName = compressedName.replace(' ', '')
+        return self._compressed_names.get(compressedName, -1)
 
     def __setattr__(self, name, value):
-        name = name.replace(' ', '')
+        if ' ' in name:
+            name = name.replace(' ', '')
         if name in self._private_vars:
             object.__setattr__(self, name, value)
         else:
@@ -307,7 +323,8 @@ class Properties:
             object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        name = name.replace(' ', '')
+        if ' ' in name:
+            name = name.replace(' ', '')
         object.__delattr__(self, name)
         if name not in self._private_vars:
             self._set_properties.discard(name)
@@ -410,23 +427,72 @@ class Properties:
     def unpack(self, buffer):
         self.clear()
         # deserialize properties into attributes from buffer received from network
-        propslen, VBIlen = VariableByteIntegers.decode(buffer)
-        buffer = buffer[VBIlen:]  # strip the bytes used by the VBI
-        propslenleft = propslen
-        while propslenleft > 0:  # properties length is 0 if there are none
-            identifier, VBIlen2 = VariableByteIntegers.decode(
-                buffer)  # property identifier
-            buffer = buffer[VBIlen2:]  # strip the bytes used by the VBI
-            propslenleft -= VBIlen2
+        if buffer and buffer[0] == 0:
+            return self, 1
+        buffer_len = len(buffer)
+        propslen, VBIlen = VariableByteIntegers.decode_at(buffer, 0, buffer_len)
+        pos = VBIlen
+        properties_end = pos + propslen
+        if properties_end > buffer_len:
+            raise MalformedPacket("Properties length exceeds packet length")
+
+        while pos < properties_end:
+            identifier, identifier_len = VariableByteIntegers.decode_at(buffer, pos, properties_end)
+            pos += identifier_len
             attr_type = self.properties[identifier][0]
-            value, valuelen = self.readProperty(
-                buffer, attr_type, propslenleft)
-            buffer = buffer[valuelen:]  # strip the bytes used by the value
-            propslenleft -= valuelen
-            propname = self.getNameFromIdent(identifier)
-            compressedName = propname.replace(' ', '')
+            value, pos = self._read_property_at(buffer, attr_type, pos, properties_end)
+            compressedName = self._compressed_names_from_ident[identifier]
             if compressedName not in self._multiple_names and hasattr(self, compressedName):
                 raise MQTTException(
-                    f"Property '{property}' must not exist more than once")
-            setattr(self, propname, value)
+                    f"Property '{compressedName}' must not exist more than once")
+            setattr(self, compressedName, value)
         return self, propslen + VBIlen
+
+    @staticmethod
+    def _read_utf_at(buffer, pos, end):
+        if pos + 2 > end:
+            raise MalformedPacket("Not enough data to read string length")
+        length = _PACK_U16.unpack_from(buffer, pos)[0]
+        value_start = pos + 2
+        value_end = value_start + length
+        if value_end > end:
+            raise MalformedPacket("Length delimited string too long")
+        value = buffer[value_start:value_end].decode("utf-8")
+        if "\x00" in value:
+            raise MalformedPacket("[MQTT-1.5.4-2] Null found in UTF-8 data")
+        if "\ufeff" in value:
+            raise MalformedPacket("[MQTT-1.5.4-3] U+FEFF in UTF-8 data")
+        return value, value_end
+
+    def _read_property_at(self, buffer, property_type, pos, end):
+        if property_type == self._TYPE_BYTE:
+            if pos >= end:
+                raise MalformedPacket("Not enough data to read byte property")
+            return buffer[pos], pos + 1
+        if property_type == self._TYPE_TWO_BYTE_INTEGER:
+            if pos + 2 > end:
+                raise MalformedPacket("Not enough data to read two-byte property")
+            return _PACK_U16.unpack_from(buffer, pos)[0], pos + 2
+        if property_type == self._TYPE_FOUR_BYTE_INTEGER:
+            if pos + 4 > end:
+                raise MalformedPacket("Not enough data to read four-byte property")
+            return _PACK_U32.unpack_from(buffer, pos)[0], pos + 4
+        if property_type == self._TYPE_VARIABLE_BYTE_INTEGER:
+            value, value_len = VariableByteIntegers.decode_at(buffer, pos, end)
+            return value, pos + value_len
+        if property_type == self._TYPE_BINARY_DATA:
+            if pos + 2 > end:
+                raise MalformedPacket("Not enough data to read binary property")
+            length = _PACK_U16.unpack_from(buffer, pos)[0]
+            value_start = pos + 2
+            value_end = value_start + length
+            if value_end > end:
+                raise MalformedPacket("Length delimited binary data too long")
+            return buffer[value_start:value_end], value_end
+        if property_type == self._TYPE_UTF8_STRING:
+            return self._read_utf_at(buffer, pos, end)
+        if property_type == self._TYPE_UTF8_STRING_PAIR:
+            first, pos = self._read_utf_at(buffer, pos, end)
+            second, pos = self._read_utf_at(buffer, pos, end)
+            return (first, second), pos
+        raise MQTTException(f"Unknown property type: {property_type}")
