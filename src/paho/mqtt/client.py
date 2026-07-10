@@ -148,6 +148,10 @@ LOGGING_LEVEL = {
     LogLevel.MQTT_LOG_ERR: logging.ERROR,
 }
 _PACK_U16 = struct.Struct("!H")
+_PACK_U64 = struct.Struct("!Q")
+_READAHEAD_CHUNK_SIZE = 64 * 1024
+_READ_BATCH_MAX_PACKETS = 100
+_WEBSOCKET_MASK_CHUNK_SIZE = 64 * 1024
 
 
 class _InPacketState:
@@ -830,6 +834,13 @@ class Client:
         self._protocol = protocol
         self._userdata = userdata
         self._sock: SocketLike | None = None
+        # Read-ahead is enabled only by the built-in network loop.  Public
+        # loop_read() keeps its historical packet-at-a-time behaviour, while
+        # bytes already prefetched by a previous internal batch are always
+        # consumed before touching the socket again.
+        self._read_buffer = b""
+        self._read_buffer_pos = 0
+        self._read_ahead_exhausted = False
         self._sockpairR: socket.socket | None = None
         self._sockpairW: socket.socket | None = None
         # True after a sockpair wakeup byte was written and before loop drains it.
@@ -1164,9 +1175,16 @@ class Client:
     def logger(self, value: logging.Logger | None) -> None:
         self._logger = value
 
+    def _read_buffer_pending(self) -> int:
+        return len(self._read_buffer) - self._read_buffer_pos
+
     def _sock_recv(self, bufsize: int) -> bytes:
         if self._sock is None:
             raise ConnectionError("self._sock is None")
+
+        if self._read_buffer:
+            return self._sock_recv_read_ahead(bufsize)
+
         try:
             return self._sock.recv(bufsize)
         except ssl.SSLWantReadError as err:
@@ -1178,6 +1196,37 @@ class Client:
             self._easy_log(
                 MQTT_LOG_DEBUG, "socket was None: %s", err)
             raise ConnectionError() from err
+
+    def _sock_recv_read_ahead(self, bufsize: int) -> bytes:
+        if self._sock is None:
+            raise ConnectionError("self._sock is None")
+
+        pending = self._read_buffer_pending()
+        if pending > 0:
+            count = min(bufsize, pending)
+            start = self._read_buffer_pos
+            end = start + count
+            data = self._read_buffer[start:end]
+            self._read_buffer_pos = end
+            if end == len(self._read_buffer):
+                self._read_buffer = b""
+                self._read_buffer_pos = 0
+            return data
+
+        if self._read_ahead_exhausted:
+            raise BlockingIOError()
+
+        recv_size = bufsize
+        if self._transport != "websockets":
+            recv_size = max(bufsize, _READAHEAD_CHUNK_SIZE)
+        data = self._sock_recv(recv_size)
+        self._read_ahead_exhausted = len(data) < recv_size
+        if len(data) <= bufsize:
+            return data
+
+        self._read_buffer = data
+        self._read_buffer_pos = bufsize
+        return data[:bufsize]
 
     def _sock_send(self, buf: bytes | bytearray) -> int:
         if self._sock is None:
@@ -1196,6 +1245,9 @@ class Client:
 
     def _sock_close(self) -> None:
         """Close the connection to the server."""
+        self._read_buffer = b""
+        self._read_buffer_pos = 0
+        self._read_ahead_exhausted = False
         if not self._sock:
             return
 
@@ -1711,8 +1763,8 @@ class Client:
             wlist = []
 
         # used to check if there are any bytes left in the (SSL) socket
-        pending_bytes = 0
-        if hasattr(self._sock, 'pending'):
+        pending_bytes = self._read_buffer_pending()
+        if pending_bytes == 0 and hasattr(self._sock, 'pending'):
             pending_bytes = self._sock.pending()  # type: ignore[union-attr]
 
         # if bytes are pending do not wait in select
@@ -1750,7 +1802,7 @@ class Client:
             return MQTTErrorCode.MQTT_ERR_UNKNOWN
 
         if self._sock in socklist[0] or pending_bytes > 0:
-            rc = self.loop_read()
+            rc = self._loop_read_batch(_READ_BATCH_MAX_PACKETS)
             if rc or self._sock is None:
                 return rc
 
@@ -2171,6 +2223,25 @@ class Client:
             if rc > 0:
                 return self._loop_rc_handle(rc)
             elif rc == MQTTErrorCode.MQTT_ERR_AGAIN:
+                return MQTTErrorCode.MQTT_ERR_SUCCESS
+        return MQTTErrorCode.MQTT_ERR_SUCCESS
+
+    def _loop_read_batch(self, max_packets: int) -> MQTTErrorCode:
+        """Drain a bounded packet batch for the built-in select loop."""
+        if self._sock is None:
+            return MQTTErrorCode.MQTT_ERR_NO_CONN
+
+        if self._read_buffer_pending() == 0:
+            self._read_ahead_exhausted = False
+        for _ in range(max_packets):
+            if self._sock is None:
+                return MQTTErrorCode.MQTT_ERR_NO_CONN
+            rc = self._packet_read(read_ahead=True)
+            if rc > 0:
+                return self._loop_rc_handle(rc)
+            if rc == MQTTErrorCode.MQTT_ERR_AGAIN:
+                return MQTTErrorCode.MQTT_ERR_SUCCESS
+            if self._read_ahead_exhausted and self._read_buffer_pending() == 0:
                 return MQTTErrorCode.MQTT_ERR_SUCCESS
         return MQTTErrorCode.MQTT_ERR_SUCCESS
 
@@ -3146,7 +3217,7 @@ class Client:
 
         return rc
 
-    def _packet_read(self) -> MQTTErrorCode:
+    def _packet_read(self, *, read_ahead: bool = False) -> MQTTErrorCode:
         # This gets called if pselect() indicates that there is network data
         # available - ie. at least one byte.  What we do depends on what data we
         # already have.
@@ -3160,9 +3231,10 @@ class Client:
         # fail due to longer length, so save current data and current position.
         # After all data is read, send to _mqtt_handle_packet() to deal with.
         # Finally, free the memory and reset everything to starting conditions.
+        sock_recv = self._sock_recv_read_ahead if read_ahead else self._sock_recv
         if self._in_packet.command == 0:
             try:
-                command = self._sock_recv(1)
+                command = sock_recv(1)
             except BlockingIOError:
                 return MQTTErrorCode.MQTT_ERR_AGAIN
             except TimeoutError as err:
@@ -3184,7 +3256,7 @@ class Client:
             # http://publib.boulder.ibm.com/infocenter/wmbhelp/v6r0m0/topic/com.ibm.etools.mft.doc/ac10870_.htm
             while True:
                 try:
-                    byte = self._sock_recv(1)
+                    byte = sock_recv(1)
                 except BlockingIOError:
                     return MQTTErrorCode.MQTT_ERR_AGAIN
                 except OSError as err:
@@ -3214,7 +3286,7 @@ class Client:
         count = 100 # Don't get stuck in this loop if we have a huge message.
         while self._in_packet.to_process > 0:
             try:
-                data = self._sock_recv(self._in_packet.to_process)
+                data = sock_recv(self._in_packet.to_process)
             except BlockingIOError:
                 return MQTTErrorCode.MQTT_ERR_AGAIN
             except OSError as err:
@@ -3806,6 +3878,7 @@ class Client:
     def _messages_reconnect_reset_out(self) -> None:
         with self._out_message_mutex:
             self._inflight_messages = 0
+            clean_session = self._check_clean_session()
             for m in self._out_messages.values():
                 m.timestamp = 0
                 if self._max_inflight_messages == 0 or self._inflight_messages < self._max_inflight_messages:
@@ -3816,7 +3889,7 @@ class Client:
                             m.dup = True
                         m.state = mqtt_ms_publish
                     elif m.qos == 2:
-                        if self._check_clean_session():
+                        if clean_session:
                             if m.state != mqtt_ms_publish:
                                 m.dup = True
                             m.state = mqtt_ms_publish
@@ -4046,8 +4119,9 @@ class Client:
         if result == 0:
             rc = MQTTErrorCode.MQTT_ERR_SUCCESS
             with self._out_message_mutex:
+                reconnect_timestamp = time_func()
                 for m in self._out_messages.values():
-                    m.timestamp = time_func()
+                    m.timestamp = reconnect_timestamp
                     if m.state == mqtt_ms_queued:
                         self.loop_write()  # Process outgoing messages that have just been queued up
                         return MQTT_ERR_SUCCESS
@@ -4056,7 +4130,7 @@ class Client:
                         with self._in_callback_mutex:  # Don't call loop_write after _send_publish()
                             rc = self._send_publish(
                                 m.mid,
-                                m.topic.encode('utf-8'),
+                                m._topic,
                                 m.payload,
                                 m.qos,
                                 m.retain,
@@ -4072,7 +4146,7 @@ class Client:
                             with self._in_callback_mutex:  # Don't call loop_write after _send_publish()
                                 rc = self._send_publish(
                                     m.mid,
-                                    m.topic.encode('utf-8'),
+                                    m._topic,
                                     m.payload,
                                     m.qos,
                                     m.retain,
@@ -4088,7 +4162,7 @@ class Client:
                             with self._in_callback_mutex:  # Don't call loop_write after _send_publish()
                                 rc = self._send_publish(
                                     m.mid,
-                                    m.topic.encode('utf-8'),
+                                    m._topic,
                                     m.payload,
                                     m.qos,
                                     m.retain,
@@ -4350,7 +4424,7 @@ class Client:
                         m.state = mqtt_ms_wait_for_pubrec
                     rc = self._send_publish(
                         m.mid,
-                        m.topic.encode('utf-8'),
+                        m._topic,
                         m.payload,
                         m.qos,
                         m.retain,
@@ -4536,6 +4610,10 @@ class Client:
                     if not self.suppress_exceptions:
                         raise
 
+        return self._complete_outgoing_publish(mid)
+
+    def _complete_outgoing_publish(self, mid: int) -> MQTTErrorCode:
+        """Complete an outgoing QoS flow while _out_message_mutex is held."""
         msg = self._out_messages.pop(mid)
         msg.info._set_as_published()
         if msg.qos > 0:
@@ -4557,21 +4635,37 @@ class Client:
 
         packet_type_enum = PUBACK if cmd == "PUBACK" else PUBCOMP
         packet_type = packet_type_enum.value >> 4
-        mid, = struct.unpack("!H", self._in_packet.packet[:2])
-        reasonCode = ReasonCode(packet_type)
+        mid = _PACK_U16.unpack_from(self._in_packet.packet, 0)[0]
+
+        # MQTT v3 carries no reason code or properties.  Avoid constructing
+        # callback-only objects for the common fire-and-forget QoS 1 producer.
+        if self._protocol != MQTTv5:
+            self._easy_log(MQTT_LOG_DEBUG, "Received %s (Mid: %d)", cmd, mid)
+            with self._out_message_mutex:
+                if mid not in self._out_messages:
+                    return MQTTErrorCode.MQTT_ERR_SUCCESS
+                with self._callback_mutex:
+                    on_publish = self._on_publish
+                if on_publish is None:
+                    return self._complete_outgoing_publish(mid)
+
+                reason_code = ReasonCode(packet_type)
+                properties = Properties(packet_type)
+                return self._do_on_publish(mid, reason_code, properties)
+
+        reason_code = ReasonCode(packet_type)
         properties = Properties(packet_type)
         if self._protocol == MQTTv5:
             if self._in_packet.remaining_length > 2:
-                reasonCode.unpack(self._in_packet.packet[2:])
+                reason_code.unpack(self._in_packet.packet[2:])
                 if self._in_packet.remaining_length > 3:
-                    props, props_len = properties.unpack(
-                        self._in_packet.packet[3:])
+                    properties.unpack(self._in_packet.packet[3:])
         self._easy_log(MQTT_LOG_DEBUG, "Received %s (Mid: %d)", cmd, mid)
 
         with self._out_message_mutex:
             if mid in self._out_messages:
                 # Only inform the client the message has been sent once.
-                rc = self._do_on_publish(mid, reasonCode, properties)
+                rc = self._do_on_publish(mid, reason_code, properties)
                 return rc
 
         return MQTTErrorCode.MQTT_ERR_SUCCESS
@@ -4818,6 +4912,7 @@ class _WebsocketWrapper:
         self._path = path
 
         self._sendbuffer = bytearray()
+        self._sendbuffer_head = 0
         self._readbuffer = bytearray()
 
         self._requested_size = 0
@@ -4828,6 +4923,7 @@ class _WebsocketWrapper:
 
     def __del__(self) -> None:
         self._sendbuffer = bytearray()
+        self._sendbuffer_head = 0
         self._readbuffer = bytearray()
 
     def _do_handshake(self, extra_headers: WebSocketHeaders | None) -> None:
@@ -4935,8 +5031,6 @@ class _WebsocketWrapper:
     ) -> bytearray:
         header = bytearray()
         length = len(data)
-
-        mask_key = bytearray(os.urandom(4))
         mask_flag = do_masking
 
         # 1 << 7 is the final flag, we don't send continuated data
@@ -4947,21 +5041,48 @@ class _WebsocketWrapper:
 
         elif length < 65536:
             header.append(mask_flag << 7 | 126)
-            header += struct.pack("!H", length)
+            header.extend(_PACK_U16.pack(length))
 
         elif length < 0x8000000000000001:
             header.append(mask_flag << 7 | 127)
-            header += struct.pack("!Q", length)
+            header.extend(_PACK_U64.pack(length))
 
         else:
             raise ValueError("Maximum payload size is 2^63")
 
         if mask_flag == 1:
-            for index in range(length):
-                data[index] ^= mask_key[index % 4]
-            data = mask_key + data
+            mask_key = os.urandom(4)
+            header.extend(mask_key)
+            if length < 64:
+                # Big-int setup costs more than the tiny Python loop here.
+                for index in range(length):
+                    data[index] ^= mask_key[index & 3]
+                header.extend(data)
+            else:
+                header.extend(self._mask_payload(data, mask_key))
+        else:
+            header.extend(data)
 
-        return header + data
+        return header
+
+    @staticmethod
+    def _mask_payload(data: bytes | bytearray, mask_key: bytes) -> bytearray:
+        """Mask a WebSocket payload with bounded native integer XOR chunks."""
+        length = len(data)
+        masked = bytearray(length)
+        if length == 0:
+            return masked
+
+        mask_block_size = min(_WEBSOCKET_MASK_CHUNK_SIZE, ((length + 3) // 4) * 4)
+        mask_block = mask_key * (mask_block_size // len(mask_key))
+        for offset in range(0, length, _WEBSOCKET_MASK_CHUNK_SIZE):
+            end = min(offset + _WEBSOCKET_MASK_CHUNK_SIZE, length)
+            chunk_length = end - offset
+            chunk = data[offset:end]
+            chunk_mask = mask_block if chunk_length == _WEBSOCKET_MASK_CHUNK_SIZE else mask_block[:chunk_length]
+            value = int.from_bytes(chunk, "little") ^ int.from_bytes(chunk_mask, "little")
+            masked[offset:end] = value.to_bytes(chunk_length, "little")
+        return masked
 
     def _buffered_read(self, length: int) -> bytearray:
 
@@ -5068,7 +5189,9 @@ class _WebsocketWrapper:
     def _send_impl(self, data: bytes | bytearray) -> int:
 
         # if previous frame was sent successfully
-        if len(self._sendbuffer) == 0:
+        if self._sendbuffer_head == len(self._sendbuffer):
+            self._sendbuffer.clear()
+            self._sendbuffer_head = 0
             # create websocket frame
             frame = self._create_frame(
                 _WebsocketWrapper.OPCODE_BINARY, bytearray(data))
@@ -5076,11 +5199,14 @@ class _WebsocketWrapper:
             self._requested_size = len(data)
 
         # try to write out as much as possible
-        length = self._socket.send(self._sendbuffer)
+        pending = memoryview(self._sendbuffer)[self._sendbuffer_head:]
+        length = self._socket.send(pending)  # type: ignore[arg-type]
+        del pending
+        self._sendbuffer_head += length
 
-        self._sendbuffer = self._sendbuffer[length:]
-
-        if len(self._sendbuffer) == 0:
+        if self._sendbuffer_head == len(self._sendbuffer):
+            self._sendbuffer.clear()
+            self._sendbuffer_head = 0
             # buffer sent out completely, return with payload's size
             return self._requested_size
         else:

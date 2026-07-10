@@ -413,3 +413,46 @@ def test_pack_remaining_length_fast_path_and_size_limit():
 
     with pytest.raises(ValueError, match="Packet too large"):
         mqttc._pack_remaining_length(bytearray(), 268_435_456)
+
+
+def test_reconnect_reset_computes_clean_session_once(monkeypatch):
+    mqttc = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="reconnect-test",
+        clean_session=False,
+    )
+    calls = []
+
+    def check_clean_session():
+        calls.append(1)
+        return False
+
+    monkeypatch.setattr(mqttc, "_check_clean_session", check_clean_session)
+    for mid in range(1, 101):
+        message = client.MQTTMessage(mid=mid, topic=b"devices/topic")
+        message.qos = 2
+        message.state = client.mqtt_ms_wait_for_pubrec
+        mqttc._out_messages[mid] = message
+
+    mqttc._messages_reconnect_reset_out()
+
+    assert calls == [1]
+    assert [message.state for message in mqttc._out_messages.values()] == [client.mqtt_ms_publish] * 100
+    assert all(message.dup for message in mqttc._out_messages.values())
+
+
+def test_update_inflight_reuses_internal_topic_bytes():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._state = _ConnectionState.MQTT_CS_CONNECTED
+    mqttc._max_inflight_messages = 1
+    message = client.MQTTMessage(mid=1, topic=b"devices/topic")
+    message._topic_str = object()
+    message.payload = b"payload"
+    message.qos = 1
+    message.state = client.mqtt_ms_queued
+    mqttc._out_messages[1] = message
+
+    assert mqttc._update_inflight() == client.MQTT_ERR_SUCCESS
+    assert message.state == client.mqtt_ms_wait_for_puback
+    assert mqttc._inflight_messages == 1

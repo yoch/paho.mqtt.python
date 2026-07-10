@@ -39,6 +39,19 @@ class PartialRecvSocket:
         return None
 
 
+class NonBlockingBurstSocket(PartialRecvSocket):
+    """Expose a complete burst, then behave like an open non-blocking socket."""
+
+    def __init__(self, data):
+        super().__init__(data, available=len(data))
+
+    def recv(self, size):
+        if self._pos >= self.available:
+            self.calls += 1
+            raise BlockingIOError()
+        return super().recv(size)
+
+
 def _encode_varint(value):
     encoded = bytearray()
     while True:
@@ -88,6 +101,104 @@ def test_in_packet_state_is_reused_across_reads():
 
     assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
     assert mqttc._in_packet is state
+
+
+def test_internal_read_batch_prefetches_and_preserves_fairness_cap():
+    mqttc = _new_client()
+    packet = _publish_packet(client.MQTTv311)
+    messages = []
+    mqttc.on_message = lambda mqttc, userdata, message: messages.append(message)
+    sock = NonBlockingBurstSocket(packet * 250)
+    mqttc._sock = sock
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert len(messages) == 100
+    assert mqttc._read_buffer_pending() > 0
+    assert sock.calls == 1
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert len(messages) == 200
+    assert sock.calls == 1
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert len(messages) == 250
+    assert mqttc._read_buffer_pending() == 0
+    assert sock.calls == 1
+
+
+def test_public_packet_read_does_not_enable_read_ahead():
+    mqttc = _new_client()
+    packet = _publish_packet(client.MQTTv311)
+    sock = NonBlockingBurstSocket(packet * 2)
+    mqttc._sock = sock
+
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert sock.calls == 3
+    assert mqttc._read_buffer_pending() == 0
+
+
+def test_websocket_transport_bypasses_client_read_ahead():
+    mqttc = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        protocol=client.MQTTv311,
+        transport="websockets",
+    )
+    mqttc.on_message = lambda *args: None
+    packet = _publish_packet(client.MQTTv311)
+    sock = NonBlockingBurstSocket(packet * 2)
+    mqttc._sock = sock
+
+    assert mqttc._packet_read(read_ahead=True) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert sock.calls == 3
+    assert mqttc._read_buffer_pending() == 0
+
+
+def test_sock_close_discards_prefetched_bytes():
+    mqttc = _new_client()
+    sock = NonBlockingBurstSocket(b"abcdef")
+    mqttc._sock = sock
+
+    assert mqttc._sock_recv_read_ahead(1) == b"a"
+    assert mqttc._read_buffer_pending() == 5
+
+    mqttc._sock_close()
+
+    assert mqttc._read_buffer_pending() == 0
+
+
+def test_puback_without_callback_skips_callback_metadata(monkeypatch):
+    mqttc = _new_client()
+    message = client.MQTTMessage(mid=7, topic=b"out/topic")
+    message.qos = 1
+    message.state = client.mqtt_ms_wait_for_puback
+    mqttc._out_messages[7] = message
+    mqttc._inflight_messages = 1
+    mqttc._max_inflight_messages = 0
+    mqttc._sock = PartialRecvSocket(b"\x40\x02\x00\x07", available=4)
+
+    def unexpected_metadata(*args, **kwargs):
+        raise AssertionError("MQTT v3 ACK metadata should be lazy without on_publish")
+
+    monkeypatch.setattr(client, "ReasonCode", unexpected_metadata)
+    monkeypatch.setattr(client, "Properties", unexpected_metadata)
+
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert message.info.is_published() is True
+    assert mqttc._out_messages == {}
+    assert mqttc._inflight_messages == 0
+
+
+def test_unknown_puback_without_callback_is_ignored(monkeypatch):
+    mqttc = _new_client()
+    mqttc._sock = PartialRecvSocket(b"\x40\x02\x00\x63", available=4)
+
+    def unexpected_metadata(*args, **kwargs):
+        raise AssertionError("unknown MQTT v3 ACK must not build callback metadata")
+
+    monkeypatch.setattr(client, "ReasonCode", unexpected_metadata)
+    monkeypatch.setattr(client, "Properties", unexpected_metadata)
+
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
 
 
 def test_partial_fixed_header_read_returns_again():
