@@ -32,6 +32,20 @@ class FakeRecvSocket(object):
         return None
 
 
+class NonBlockingRecvSocket(FakeRecvSocket):
+    """Burst socket that raises EAGAIN after its current input is drained."""
+
+    def __init__(self, data):
+        super(NonBlockingRecvSocket, self).__init__(data)
+        self.recv_calls = 0
+
+    def recv(self, size):
+        self.recv_calls += 1
+        if self._pos >= len(self._data):
+            raise BlockingIOError()
+        return super(NonBlockingRecvSocket, self).recv(size)
+
+
 class FakeSendSocket(object):
     def __init__(self):
         self.bytes_sent = 0

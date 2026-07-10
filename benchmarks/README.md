@@ -71,6 +71,8 @@ Packet read/parser:
 - `publish_parse_v5_qos0_user_props`
 - `publish_parse_v3_qos2_small` — inbound QoS2 PUBLISH+PUBREL cycle
 - `publish_parse_v3_qos2_z2m_filters` — QoS2 + 7 Z2M `topic_callback` filters
+- `publish_parse_v3_qos0_large` — 64-KiB regression guardrail
+- `loop_read_batch_v3_qos0_small` — bounded read-ahead/batch drain
 
 Packet write/queue:
 
@@ -85,6 +87,9 @@ Supporting signals:
 - `dispatch_no_filters` / `dispatch_one_filter` / `dispatch_many_filters`
 - `dispatch_z2m_seven_filters` — filters from `mqtt_zigbee_listener`
 - `logging_disabled`
+- `puback_qos1_no_callback`
+- `reconnect_reset_qos2_1000`
+- `websocket_frame_16` / `websocket_frame_128` / `websocket_frame_1024`
 
 ## Result Files
 

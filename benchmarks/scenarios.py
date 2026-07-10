@@ -15,7 +15,7 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 from paho.mqtt.reasoncodes import ReasonCode
 
-from fakes import FakeRecvSocket, FakeSendSocket, make_out_packet, packet_deque
+from fakes import FakeRecvSocket, FakeSendSocket, NonBlockingRecvSocket, make_out_packet, packet_deque
 from harness import Scenario
 
 
@@ -93,6 +93,7 @@ PACKED_EMPTY_PROPERTIES = Properties(PacketTypes.PUBLISH).pack()
 PACKED_COMMON_PROPERTIES = _common_properties().pack()
 PACKED_USER_PROPERTIES = _user_properties().pack()
 PUBLISH_V3_QOS0_SMALL = _publish_packet(mqtt.MQTTv311, PAYLOAD_SMALL)
+PUBLISH_V3_QOS0_LARGE = _publish_packet(mqtt.MQTTv311, b"x" * 65536)
 PUBLISH_V5_QOS0_EMPTY_PROPS = _publish_packet(mqtt.MQTTv5, PAYLOAD_SMALL)
 PUBLISH_V5_QOS0_USER_PROPS = _publish_packet(mqtt.MQTTv5, PAYLOAD_SMALL, _user_properties())
 PUBLISH_V3_QOS2_SMALL = _publish_packet(mqtt.MQTTv311, PAYLOAD_SMALL, qos=2, mid=1)
@@ -183,6 +184,24 @@ def publish_parse_v5_qos0_empty_props(iterations):
 
 def publish_parse_v5_qos0_user_props(iterations):
     _parse_publish(iterations, mqtt.MQTTv5, PUBLISH_V5_QOS0_USER_PROPS)
+
+
+def publish_parse_v3_qos0_large(iterations):
+    _parse_publish(iterations, mqtt.MQTTv311, PUBLISH_V3_QOS0_LARGE)
+
+
+def loop_read_batch_v3_qos0_small(iterations):
+    client = _new_client(mqtt.MQTTv311)
+    delivered = [0]
+    client.on_message = lambda *args: delivered.__setitem__(0, delivered[0] + 1)
+    sock = NonBlockingRecvSocket(PUBLISH_V3_QOS0_SMALL * iterations)
+    client._sock = sock
+    while delivered[0] < iterations:
+        rc = client._loop_read_batch(100)
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("batch packet read failed: {}".format(rc))
+    if sock.recv_calls >= iterations:
+        raise RuntimeError("read-ahead did not reduce recv calls")
 
 
 def _parse_qos2_cycle(iterations, packet_cycle, register_z2m_filters=False):
@@ -460,6 +479,58 @@ def logging_disabled(iterations):
         client._easy_log(mqtt.MQTT_LOG_DEBUG, "Benchmark log message %d", 1)
 
 
+def puback_qos1_no_callback(iterations):
+    client = _new_client(mqtt.MQTTv311)
+    client.on_publish = None
+    client._max_inflight_messages = 0
+    packets = bytearray()
+    for mid in range(1, iterations + 1):
+        message = mqtt.MQTTMessage(mid=mid, topic=TOPIC)
+        message.qos = 1
+        message.state = mqtt.mqtt_ms_wait_for_puback
+        client._out_messages[mid] = message
+        packets.extend(struct.pack("!BBH", int(mqtt.PUBACK), 2, mid))
+    client._inflight_messages = iterations
+    client._sock = FakeRecvSocket(packets)
+    for _ in range(iterations):
+        rc = client._packet_read()
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("PUBACK parse failed: {}".format(rc))
+
+
+def reconnect_reset_qos2_1000(iterations):
+    client = mqtt.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="benchmark-reconnect",
+        clean_session=False,
+    )
+    for mid in range(1, 1001):
+        message = mqtt.MQTTMessage(mid=mid, topic=TOPIC)
+        message.qos = 2
+        message.state = mqtt.mqtt_ms_wait_for_pubrec
+        client._out_messages[mid] = message
+    for _ in range(iterations):
+        client._messages_reconnect_reset_out()
+
+
+def _websocket_frame(iterations, size):
+    wrapper = mqtt._WebsocketWrapper.__new__(mqtt._WebsocketWrapper)
+    for _ in range(iterations):
+        wrapper._create_frame(mqtt._WebsocketWrapper.OPCODE_BINARY, bytearray(b"x" * size))
+
+
+def websocket_frame_16(iterations):
+    _websocket_frame(iterations, 16)
+
+
+def websocket_frame_128(iterations):
+    _websocket_frame(iterations, 128)
+
+
+def websocket_frame_1024(iterations):
+    _websocket_frame(iterations, 1024)
+
+
 SCENARIOS = [
     Scenario("properties_pack_empty", "mqttv5-codec", "property-set", 5000, properties_pack_empty),
     Scenario("properties_unpack_empty", "mqttv5-codec", "property-set", 5000, properties_unpack_empty),
@@ -469,6 +540,8 @@ SCENARIOS = [
     Scenario("properties_unpack_user_properties", "mqttv5-codec", "property-set", 1000, properties_unpack_user_properties),
     Scenario("reasoncode_create_puback_success", "mqttv5-codec", "reason-code", 5000, reasoncode_create_puback_success),
     Scenario("publish_parse_v3_qos0_small", "packet-read", "message", 5000, publish_parse_v3_qos0_small),
+    Scenario("publish_parse_v3_qos0_large", "packet-read", "message", 100, publish_parse_v3_qos0_large),
+    Scenario("loop_read_batch_v3_qos0_small", "packet-read", "message", 5000, loop_read_batch_v3_qos0_small),
     Scenario("publish_parse_v5_qos0_empty_props", "packet-read", "message", 5000, publish_parse_v5_qos0_empty_props),
     Scenario("publish_parse_v5_qos0_user_props", "packet-read", "message", 1000, publish_parse_v5_qos0_user_props),
     Scenario("publish_parse_v3_qos2_small", "packet-read", "message", 3000, publish_parse_v3_qos2_small),
@@ -491,4 +564,9 @@ SCENARIOS = [
     Scenario("dispatch_many_filters", "callback-dispatch", "message", 3000, dispatch_many_filters),
     Scenario("dispatch_z2m_seven_filters", "callback-dispatch", "message", 5000, dispatch_z2m_seven_filters),
     Scenario("logging_disabled", "supporting", "log-call", 20000, logging_disabled),
+    Scenario("puback_qos1_no_callback", "ack-completion", "ack", 3000, puback_qos1_no_callback),
+    Scenario("reconnect_reset_qos2_1000", "reconnect", "reset", 100, reconnect_reset_qos2_1000),
+    Scenario("websocket_frame_16", "websocket", "frame", 10000, websocket_frame_16),
+    Scenario("websocket_frame_128", "websocket", "frame", 5000, websocket_frame_128),
+    Scenario("websocket_frame_1024", "websocket", "frame", 1000, websocket_frame_1024),
 ]
