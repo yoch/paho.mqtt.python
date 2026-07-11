@@ -37,7 +37,7 @@ from network import PROFILES as NETWORK_PROFILES
 from network import apply_profile, clear_profile, qdisc_stats
 from scenarios import SCENARIO_BY_NAME, expand_scenario, list_scenarios, estimate_suite
 from telemetry import TelemetrySampler, allocate_cpuset, environment_metadata
-from workloads import PAYLOAD_SPECS, single_topic, fleet_topics, wildcard_hash
+from workloads import PAYLOAD_SPECS, single_topic, fleet_topics, wildcard_hash, callback_match_loadgen_topic
 
 CLIENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CLIENT_DIR.parent.parent
@@ -333,10 +333,21 @@ def run_point(
             target = 5000.0 if profile == "smoke" else 20000.0
             if point.get("fanin_mode") == "per_publisher":
                 target = clients * 1000.0
-            interval = interval_for_rate(clients, target)
+            callback_filters = int(point.get("callback_filters", 0) or 0)
+            overlapping = bool(point.get("overlapping_callbacks", False))
             lg_topic = topic
-            if point.get("subscription") in ("plus", "hash") or str(point.get("topic_topology", "")).startswith("fleet"):
+            if callback_filters > 0:
+                # Publish onto cb/%i/data so local message_callback_add filters receive traffic.
+                lg_topic = callback_match_loadgen_topic(run_id)
+                if not overlapping:
+                    # Exactly one emqtt-bench client per exact filter so every publish
+                    # hits a registered callback (no spill into on_message).
+                    clients = max(1, callback_filters)
+                # Keep aggregate offered load stable when client count grows with filters.
+                target = 5000.0 if profile == "smoke" else 20000.0
+            elif point.get("subscription") in ("plus", "hash") or str(point.get("topic_topology", "")).startswith("fleet"):
                 lg_topic = f"bench/{run_id}/org/acme/site/s0000/device/d0000/telemetry/temperature"
+            interval = interval_for_rate(clients, target)
             spec = LoadgenSpec(
                 host=host,
                 port=endpoint_port,

@@ -160,6 +160,50 @@ def single_topic(run_id: str) -> str:
     return topic_for_device(run_id, 0, 0, "temperature")
 
 
+def callback_match_topics(run_id: str, count: int) -> List[str]:
+    """Exact topics used by sub_callback_matching (must match loadgen %i)."""
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    return [f"bench/{run_id}/org/acme/cb/{i}/data" for i in range(count)]
+
+
+def callback_match_loadgen_topic(run_id: str) -> str:
+    """emqtt-bench publish template; %i is the client sequence number."""
+    return f"bench/{run_id}/org/acme/cb/%i/data"
+
+
+def overlapping_match_filters(run_id: str, count: int) -> List[str]:
+    """Distinct MQTT filters that all match callback_match_topics(...).
+
+    Paho stores one callback per filter string, so filters must be unique.
+    """
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    candidates = [
+        f"bench/{run_id}/org/acme/#",
+        f"bench/{run_id}/org/acme/cb/#",
+        f"bench/{run_id}/org/acme/cb/+/data",
+        f"bench/{run_id}/org/+/cb/+/data",
+        f"bench/{run_id}/+/acme/cb/+/data",
+        f"bench/{run_id}/#",
+        f"bench/+/org/acme/cb/+/data",
+        f"bench/+/org/acme/#",
+    ]
+    if count <= len(candidates):
+        return candidates[:count]
+    # Extend uniquely with explicit device indices under a wildcard parent.
+    out = list(candidates)
+    i = 0
+    while len(out) < count:
+        filt = f"bench/{run_id}/org/acme/cb/{i}/data"
+        if filt not in out:
+            out.append(filt)
+        i += 1
+        if i > count + 10:
+            break
+    return out[:count]
+
+
 def wildcard_plus(run_id: str) -> str:
     return f"bench/{run_id}/org/acme/site/+/device/+/telemetry/+"
 

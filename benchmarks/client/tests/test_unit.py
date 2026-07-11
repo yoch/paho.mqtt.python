@@ -24,8 +24,11 @@ from metrics import (  # noqa: E402
 from scenarios import SCENARIO_BY_NAME, expand_scenario, list_scenarios, estimate_suite  # noqa: E402
 from workloads import (  # noqa: E402
     build_payload,
+    callback_match_loadgen_topic,
+    callback_match_topics,
     decode_header,
     encode_header,
+    overlapping_match_filters,
     payload_len_for_remaining_length,
     remaining_length_size,
     rl_boundary_payloads,
@@ -99,6 +102,22 @@ class WorkloadTests(unittest.TestCase):
         sizes = rl_boundary_payloads(topic, qos=0)
         self.assertIn("rl_127", sizes)
         self.assertIn("rl_128", sizes)
+
+    def test_callback_match_topics_align_with_loadgen_template(self):
+        run_id = "abcd1234"
+        topics = callback_match_topics(run_id, 3)
+        self.assertEqual(
+            topics,
+            [
+                "bench/abcd1234/org/acme/cb/0/data",
+                "bench/abcd1234/org/acme/cb/1/data",
+                "bench/abcd1234/org/acme/cb/2/data",
+            ],
+        )
+        self.assertEqual(callback_match_loadgen_topic(run_id), "bench/abcd1234/org/acme/cb/%i/data")
+        overlap = overlapping_match_filters(run_id, 8)
+        self.assertEqual(len(overlap), 8)
+        self.assertEqual(len(set(overlap)), 8)
 
 
 class LoadgenParserTests(unittest.TestCase):
