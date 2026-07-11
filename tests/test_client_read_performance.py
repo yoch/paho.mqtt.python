@@ -1,4 +1,5 @@
 import struct
+import threading
 
 import pytest
 
@@ -86,6 +87,29 @@ def _new_client(protocol=client.MQTTv311):
     return mqttc
 
 
+def _new_ack_refill_client(total=8, ack_count=4):
+    mqttc = _new_client()
+    mqttc.on_publish = None
+    mqttc._max_inflight_messages = ack_count
+    mqttc._inflight_messages = ack_count
+    mqttc._thread = threading.Thread(target=lambda: None)
+    packets = bytearray()
+    for mid in range(1, total + 1):
+        message = client.MQTTMessage(mid=mid, topic=b"out/topic")
+        message.payload = b"payload"
+        message.qos = 1
+        message.state = (
+            client.mqtt_ms_wait_for_puback
+            if mid <= ack_count
+            else client.mqtt_ms_queued
+        )
+        mqttc._out_messages[mid] = message
+        if mid <= ack_count:
+            packets.extend(struct.pack("!BBH", int(client.PUBACK), 2, mid))
+    mqttc._sock = NonBlockingBurstSocket(packets)
+    return mqttc
+
+
 def test_in_packet_state_is_reused_across_reads():
     mqttc = _new_client()
     packet = _publish_packet(client.MQTTv311)
@@ -169,6 +193,56 @@ def test_internal_buffered_parser_rejects_invalid_remaining_length():
     mqttc._sock = NonBlockingBurstSocket(bad)
 
     assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_PROTOCOL
+
+
+def test_internal_ack_batch_refills_inflight_once(monkeypatch):
+    mqttc = _new_ack_refill_client()
+    original_update = mqttc._update_inflight
+    update_calls = []
+
+    def update_inflight():
+        update_calls.append(None)
+        return original_update()
+
+    monkeypatch.setattr(mqttc, "_update_inflight", update_inflight)
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert len(update_calls) == 1
+    assert mqttc._inflight_messages == 4
+    assert len(mqttc._out_messages) == 4
+    assert len(mqttc._out_packet) == 4
+    assert mqttc._inflight_refill_pending is False
+    assert mqttc._inflight_refill_deferred is False
+
+
+def test_public_packet_reads_refill_inflight_immediately(monkeypatch):
+    mqttc = _new_ack_refill_client(total=4, ack_count=2)
+    original_update = mqttc._update_inflight
+    update_calls = []
+
+    def update_inflight():
+        update_calls.append(None)
+        return original_update()
+
+    monkeypatch.setattr(mqttc, "_update_inflight", update_inflight)
+
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert mqttc._inflight_messages == 2
+    assert len(update_calls) == 1
+    assert mqttc._packet_read() == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert mqttc._inflight_messages == 2
+    assert len(update_calls) == 2
+
+
+def test_protocol_error_clears_deferred_inflight_refill():
+    mqttc = _new_ack_refill_client()
+    valid_ack = struct.pack("!BBH", int(client.PUBACK), 2, 1)
+    invalid_packet = bytes([int(client.PUBLISH), 0x80, 0x80, 0x80, 0x80, 0x01])
+    mqttc._sock = NonBlockingBurstSocket(valid_ack + invalid_packet)
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_PROTOCOL
+    assert mqttc._inflight_refill_pending is False
+    assert mqttc._inflight_refill_deferred is False
 
 
 def test_public_packet_read_does_not_enable_read_ahead():

@@ -515,6 +515,45 @@ def puback_qos1_no_callback(iterations):
             raise RuntimeError("PUBACK parse failed: {}".format(rc))
 
 
+def _new_puback_refill_client(total_messages=1000, ack_count=100):
+    client = _new_client(mqtt.MQTTv311)
+    client.on_publish = None
+    client._max_inflight_messages = ack_count
+    client._inflight_messages = ack_count
+    # Model loop_start(): generated PUBLISH packets stay queued until the read
+    # batch returns to the network loop's write phase.
+    client._thread = threading.Thread(target=lambda: None)
+    packets = bytearray()
+    for mid in range(1, total_messages + 1):
+        message = mqtt.MQTTMessage(mid=mid, topic=TOPIC)
+        message.payload = PAYLOAD_SMALL
+        message.qos = 1
+        message.state = (
+            mqtt.mqtt_ms_wait_for_puback
+            if mid <= ack_count
+            else mqtt.mqtt_ms_queued
+        )
+        client._out_messages[mid] = message
+        if mid <= ack_count:
+            packets.extend(struct.pack("!BBH", int(mqtt.PUBACK), 2, mid))
+    client._sock = NonBlockingRecvSocket(packets)
+    return client
+
+
+def puback_batch_refill_qos1(iterations):
+    for _ in range(iterations):
+        client = _new_puback_refill_client()
+        rc = client._loop_read_batch(100)
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("PUBACK batch failed: {}".format(rc))
+        if client._inflight_messages != 100:
+            raise RuntimeError("inflight window was not refilled")
+        if len(client._out_messages) != 900:
+            raise RuntimeError("unexpected outgoing message count")
+        if len(client._out_packet) != 100:
+            raise RuntimeError("expected 100 promoted PUBLISH packets")
+
+
 def reconnect_reset_qos2_1000(iterations):
     client = mqtt.Client(
         callback_api_version=CallbackAPIVersion.VERSION2,
@@ -583,6 +622,7 @@ SCENARIOS = [
     Scenario("dispatch_z2m_seven_filters", "callback-dispatch", "message", 5000, dispatch_z2m_seven_filters),
     Scenario("logging_disabled", "supporting", "log-call", 20000, logging_disabled),
     Scenario("puback_qos1_no_callback", "ack-completion", "ack", 3000, puback_qos1_no_callback),
+    Scenario("puback_batch_refill_qos1", "ack-completion", "ack", 20, puback_batch_refill_qos1, operations_per_iteration=100),
     Scenario("reconnect_reset_qos2_1000", "reconnect", "reset", 100, reconnect_reset_qos2_1000),
     Scenario("websocket_frame_16", "websocket", "frame", 10000, websocket_frame_16),
     Scenario("websocket_frame_128", "websocket", "frame", 5000, websocket_frame_128),

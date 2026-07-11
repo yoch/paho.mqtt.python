@@ -916,6 +916,8 @@ class Client:
         ] = collections.OrderedDict()
         self._max_inflight_messages = 20
         self._inflight_messages = 0
+        self._inflight_refill_deferred = False
+        self._inflight_refill_pending = False
         self._max_queued_messages = 0
         self._connect_properties: Properties | None = None
         self._will_properties: Properties | None = None
@@ -2238,17 +2240,46 @@ class Client:
 
         if self._read_buffer_pending() == 0:
             self._read_ahead_exhausted = False
-        for _ in range(max_packets):
-            if self._sock is None:
-                return MQTTErrorCode.MQTT_ERR_NO_CONN
-            rc = self._packet_read_buffered()
-            if rc > 0:
-                return self._loop_rc_handle(rc)
-            if rc == MQTTErrorCode.MQTT_ERR_AGAIN:
-                return MQTTErrorCode.MQTT_ERR_SUCCESS
-            if self._read_ahead_exhausted and self._read_buffer_pending() == 0:
-                return MQTTErrorCode.MQTT_ERR_SUCCESS
-        return MQTTErrorCode.MQTT_ERR_SUCCESS
+        previous_deferred = self._inflight_refill_deferred
+        self._inflight_refill_deferred = True
+        result = MQTTErrorCode.MQTT_ERR_SUCCESS
+        try:
+            for _ in range(max_packets):
+                if self._sock is None:
+                    result = MQTTErrorCode.MQTT_ERR_NO_CONN
+                    break
+                rc = self._packet_read_buffered()
+                if rc > 0:
+                    result = self._loop_rc_handle(rc)
+                    break
+                if rc == MQTTErrorCode.MQTT_ERR_AGAIN:
+                    break
+                if self._read_ahead_exhausted and self._read_buffer_pending() == 0:
+                    break
+        except BaseException:
+            self._inflight_refill_deferred = previous_deferred
+            if not previous_deferred:
+                self._flush_inflight_refill()
+            raise
+
+        self._inflight_refill_deferred = previous_deferred
+        if not previous_deferred:
+            if result != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                self._inflight_refill_pending = False
+            else:
+                refill_rc = self._flush_inflight_refill()
+                if refill_rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                    return self._loop_rc_handle(refill_rc)
+        return result
+
+    def _flush_inflight_refill(self) -> MQTTErrorCode:
+        if not self._inflight_refill_pending:
+            return MQTTErrorCode.MQTT_ERR_SUCCESS
+        self._inflight_refill_pending = False
+        if self._sock is None:
+            return MQTTErrorCode.MQTT_ERR_SUCCESS
+        with self._out_message_mutex:
+            return self._update_inflight()
 
     def _packet_read_buffered(self) -> MQTTErrorCode:
         """Read one packet directly from the built-in loop's read-ahead buffer."""
@@ -4699,6 +4730,11 @@ class Client:
         if msg.qos > 0:
             self._inflight_messages -= 1
             if self._max_inflight_messages > 0:
+                if self._inflight_refill_deferred and (
+                    self._inflight_refill_pending or self._read_buffer_pending() > 0
+                ):
+                    self._inflight_refill_pending = True
+                    return MQTTErrorCode.MQTT_ERR_SUCCESS
                 rc = self._update_inflight()
                 if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
                     return rc

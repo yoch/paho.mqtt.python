@@ -28,7 +28,7 @@ acceptance requirements for these projects.
 | [12 - Outbound Topic Encoding Cache](12-outbound-topic-encoding-cache.md) | P1 | **NO GO** | `Client.publish()` | Rejected due to high-cardinality regression. |
 | [13 - Reconnect Reset and Replay](13-reconnect-replay.md) | P2 | **Done** | reconnect reset, CONNACK replay | Remove repeated invariant work without a second queue. |
 | [14 - Contiguous Ingress Decoder](14-contiguous-ingress-decoder.md) | P0 | **GO with conditions** | built-in ingress pump, `loop_read()` | Direct buffered decode kept; public batching prototype rejected. |
-| [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **Planned** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
+| [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **GO with conditions** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
 | [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Planned** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
 | [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **Planned** | successful CONNACK replay | Stage ordered retransmits before one drain. |
 | [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **Planned** | PUBLISH construction, vector writer | Avoid copying large immutable payloads. |
@@ -86,6 +86,15 @@ Third architectural audit plan (2026-07-11):
 - Execution order is 14, 15, 16, 17, 18, 19, 20, 22, 23, 21, 24, 25. Each
   project stops after paired measurements for explicit verdict and commit
   approval before the next project starts.
+
+Third audit execution:
+
+- **14 GO with conditions:** direct contiguous buffered decode improves TCP and
+  TLS small-message ingress by about 37%; the public batching prototype was
+  removed.
+- **15 GO with conditions:** one inflight refill per private ACK batch improves
+  the permanent 100-PUBACK scenario by about 132%; retain the isolated-ACK
+  guardrail after a measured sub-microsecond (~4.4%) internal-loop cost.
 
 Recommended follow-ups:
 

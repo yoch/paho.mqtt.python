@@ -95,6 +95,7 @@ Supporting signals:
 - `dispatch_z2m_seven_filters` — filters from `mqtt_zigbee_listener`
 - `logging_disabled`
 - `puback_qos1_no_callback`
+- `puback_batch_refill_qos1` — 100-ACK saturated refill batch
 - `reconnect_reset_qos2_1000`
 - `websocket_frame_16` / `websocket_frame_128` / `websocket_frame_1024`
 

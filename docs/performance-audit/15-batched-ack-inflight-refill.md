@@ -49,44 +49,65 @@ Priority: P0.
 
 ## Before Measurement
 
-Pending. Record the current per-ACK implementation with 2 warmups, 7 exploratory
-runs, and 15 final runs.
+The permanent brokerless scenario completes batches of 100 MQTT v3 PUBACKs
+against 1,000 queued QoS 1 messages with an inflight limit of 100. With two
+warmups and 15 measured runs, the immediate per-ACK refill implementation
+reached **23,405 ACK/s** (median 85.452 ms per 2,000 ACKs, range
+71.980--123.336 ms, p95 54.79 microseconds/ACK).
 
-Required baseline rows:
-
-| ACK batch | Inflight | Queue | ACK/s | Refill calls | p95 |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 20 | 100 | pending | pending | pending |
-| 20 | 20 | 1,000 | pending | pending | pending |
-| 100 | 100 | 1,000 | pending | pending | pending |
-| 1,000 | 100 | 10,000 | pending | pending | pending |
+A paired same-process harness, which removes machine drift and scenario setup
+from the timed region, measured the legacy batch at **46,566 ACK/s**. It also
+records the isolated-ACK path as a guardrail.
 
 ## Implementation
 
-Planned prototype:
-
-- Split outgoing-message completion from inflight refill scheduling.
-- Add a batch-local deferred-refill flag/count used only by the private built-in
-  read batch.
-- Complete callbacks and `MQTTMessageInfo` immediately and in wire order.
-- At the batch boundary, invoke the existing `_update_inflight()` once; it can
-  fill every available slot in its normal ordered scan.
-- Keep immediate refill for public packet-at-a-time paths.
-- Do not add a deque, alternate authoritative mapping, or new public setting.
-- Remove the prototype if the full ACK path does not cross the threshold even
-  when the isolated scan benchmark improves.
+- Added private deferred/pending refill state scoped to `_loop_read_batch()`.
+- ACK completion still removes the message, publishes `MQTTMessageInfo`, and
+  decrements inflight immediately. If more buffered packets remain, it records
+  one pending refill instead of rescanning the outgoing mapping.
+- The batch boundary calls the existing `_update_inflight()` once under the
+  existing mutex, preserving its ordering and state transitions.
+- An isolated ACK and the public packet-at-a-time path refill immediately.
+- Protocol errors discard pending work; exceptions restore the enclosing batch
+  state and flush a valid pending refill.
+- No public option, secondary queue, or alternate source of truth was added.
+- Added a permanent harness, paired evaluator, and tests for one refill per
+  batch, immediate public-path refill, and protocol-error cleanup.
 
 ## After Measurements
 
-Pending implementation and paired measurement.
+The same permanent 2-warmup/15-run scenario reached **54,287 ACK/s**, a
+**+132.0%** improvement. Median time fell to 36.841 ms per 2,000 ACKs (range
+35.708--39.974 ms, p95 19.88 microseconds/ACK).
+
+The final paired run measured **110,567 ACK/s** versus **46,566 ACK/s** for
+the legacy control, or **+137.4%**. The isolated internal-batch guardrail was
+15.75 microseconds versus 15.06 microseconds (**-4.4%**); this sub-microsecond
+difference is above the strict 2% microbenchmark threshold. Public
+packet-at-a-time behavior remains immediate and is covered by a focused test.
+
+Correctness validation: 37 focused read/write tests passed. The enlarged suite
+passed with **185 passed, 21 skipped**; the first sandboxed attempt failed only
+because local TCP/Unix socket creation was denied and passed unchanged with
+that permission enabled.
 
 ## Results Analysis
 
-Pending. Attribute the result between fewer dictionary scans, fewer send-path
-entries, and interaction with the writer. Report standalone results before
-project 16 as well as the combined result after project 16.
+The gain comes from collapsing 100 repeated `_update_inflight()` scans and
+send-path promotions into one ordered scan. Both the independent permanent
+scenario (+132.0%) and paired timing (+137.4%) exceed the 20% primary target by
+a wide margin, so the result is not attributable to run-to-run noise.
+
+The isolated internal-loop cost misses its strict guardrail by 2.4 percentage
+points, although the absolute difference is about 0.69 microseconds and the
+public packet-at-a-time path does not defer work. This warrants retaining an
+explicit condition rather than hiding the trade-off. Project 16 must report
+standalone and combined numbers so grouped writes do not mask a regression in
+this refill boundary.
 
 ## Verdict
 
-**Pending.** Final decision must be `GO`, `GO with conditions`, or `NO GO` at
-the explicit evaluation checkpoint before commit.
+**GO with conditions.** Keep the private batched refill because saturated ACK
+throughput improves by more than 130% with preserved ordering and protocol
+tests. Retain the isolated-ACK guardrail, do not extend deferral to public
+packet-at-a-time reads, and remeasure the standalone result after project 16.
