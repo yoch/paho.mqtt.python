@@ -5,9 +5,10 @@ Python client. It is written as a set of independent project files so each
 suspected bottleneck can be profiled, prototyped, accepted, or rejected without
 coupling it to unrelated work.
 
-The audit is intentionally compatible with the current CI/tox baseline
-(`python >=3.9`). Python 3.12+ implementation ideas may be recorded as optional
-future notes, but they are not acceptance requirements for these projects.
+The audit is intentionally compatible with the package baseline
+(`requires-python >=3.7`). The local tox matrix may start on a newer version,
+but Python 3.12+ implementation ideas are optional notes and cannot become
+acceptance requirements for these projects.
 
 ## Project Index
 
@@ -26,6 +27,18 @@ future notes, but they are not acceptance requirements for these projects.
 | [11 - MQTT v5 Rich Property Codec](11-mqttv5-rich-property-codec.md) | P1 | **Done** | `Properties`, `VariableByteIntegers` | Cursor parsing and native UTF validation. |
 | [12 - Outbound Topic Encoding Cache](12-outbound-topic-encoding-cache.md) | P1 | **NO GO** | `Client.publish()` | Rejected due to high-cardinality regression. |
 | [13 - Reconnect Reset and Replay](13-reconnect-replay.md) | P2 | **Done** | reconnect reset, CONNACK replay | Remove repeated invariant work without a second queue. |
+| [14 - Contiguous Ingress Decoder](14-contiguous-ingress-decoder.md) | P0 | **Planned** | built-in ingress pump, `loop_read()` | Parse complete MQTT frames directly from buffered bytes. |
+| [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **Planned** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
+| [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Planned** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
+| [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **Planned** | successful CONNACK replay | Stage ordered retransmits before one drain. |
+| [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **Planned** | PUBLISH construction, vector writer | Avoid copying large immutable payloads. |
+| [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **Planned** | private built-in event loop | Bound and alternate read/write work. |
+| [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **Planned** | `loop_start()`, `loop_stop()`, reconnect wait | Replace polling with timer/control wakeups. |
+| [21 - WebSocket Inbound Streaming](21-websocket-inbound-streaming.md) | P2 | **Planned** | `_WebsocketWrapper.recv()` / `pending()` | Decode frames from bounded read-ahead buffers. |
+| [22 - Callback and State-Lock Decoupling](22-callback-state-lock-decoupling.md) | P1 | **Planned** | PUBACK/PUBCOMP/PUBREL callbacks | Run user callbacks outside message-state mutexes. |
+| [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **Planned** | one-shot publish helper | Use a bounded 20-message completion window. |
+| [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **Planned** | CONNACK capabilities, PUBLISH packing | Reduce repeated topic bytes with a strict bounded table. |
+| [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **Planned** | TLS handshake/reconnect | Reuse verified TLS sessions when supported. |
 
 ## Progress Snapshot (2026-07-09)
 
@@ -59,6 +72,21 @@ Second audit round (2026-07-10):
 - **13 GO:** QoS 2 reconnect reset improves by about 24% at 1,000 messages.
 - **07 GO:** WebSocket frame creation improves about 154% at 128 bytes with bounded 64-KiB masking chunks.
 
+Third architectural audit plan (2026-07-11):
+
+- **P0 core:** projects 14-16 cover contiguous ingress, batch-level inflight
+  refill, and transport-aware grouped writes.
+- **Flow/lifecycle:** projects 17-20 cover reconnect staging, large immutable
+  payload ownership, duplex fairness, and deadline-driven thread wakeups.
+- **Transport/concurrency/helpers:** projects 21-25 cover WebSocket ingress,
+  callback lock scope, helper pipelining, MQTT v5 aliases, and TLS resumption.
+- No new public execution mode or setting is planned. Shared reactors,
+  asynchronous callback executors, streaming APIs, and byte-based public
+  backpressure remain out of scope.
+- Execution order is 14, 15, 16, 17, 18, 19, 20, 22, 23, 21, 24, 25. Each
+  project stops after paired measurements for explicit verdict and commit
+  approval before the next project starts.
+
 Recommended follow-ups:
 
 1. Optional local-broker TCP/TLS/WS system-CPU profiles.
@@ -90,12 +118,30 @@ Minimum metrics:
 
 Minimum run protocol:
 
-- Run at least 5 iterations per scenario.
-- Report the median and the spread.
+- Use 2 warmup runs.
+- Use at least 7 measured runs during exploration and 15 for final evidence.
+- Report the median, spread, and p50/p95/p99 where relevant.
 - Warm up the interpreter before recording.
 - Pin scenario inputs: payload size, QoS, protocol version, transport, number of
   subscriptions, inflight limit, and queued message count.
 - Compare baseline and prototype in the same environment.
+
+## Execution Checkpoints
+
+Projects 14-25 use a strict sequential workflow:
+
+1. Verify the expected HEAD and inspect all tracked/untracked changes.
+2. Add the isolated scenario/tests and record the before measurement.
+3. Implement only the current project's private prototype.
+4. Run focused correctness tests and paired exploratory/final measurements.
+5. Complete all nine document sections and stop for human evaluation.
+6. Commit only after an explicit `GO`, `GO with conditions`, or `NO GO`
+   decision. Accepted production code is one signed commit; a rejected
+   prototype is removed before its signed benchmark/documentation commit.
+7. Start the next project only from a committed, reviewed checkpoint.
+
+Unexpected overlapping edits are never overwritten or stashed implicitly. The
+untracked `AGENTS.md` and `.cursorignore` files remain untouched.
 
 ## Benchmark Harness Shape
 
