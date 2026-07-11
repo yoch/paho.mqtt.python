@@ -94,6 +94,14 @@ def main(argv=None) -> int:
                     pass
         elif state["phase"] == "drain":
             state["delivered_during_drain"] += 1
+            # Integrity must still account for in-flight messages arriving
+            # after T1, otherwise the window edge shows up as false "missing".
+            payload = msg.payload or b""
+            if len(payload) >= HEADER_SIZE:
+                try:
+                    state["sequences"].append(decode_header(payload)["sequence"])
+                except ValueError:
+                    pass
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
         rc = int(getattr(reason_code, "value", reason_code))
@@ -225,6 +233,8 @@ def main(argv=None) -> int:
 
     with state["lock"]:
         during_drain = state["delivered_during_drain"]
+        # Include drain-phase sequences for integrity accounting.
+        sequences = list(state["sequences"])
 
     client.disconnect()
     client.loop_stop()

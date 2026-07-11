@@ -103,6 +103,20 @@ class WorkloadTests(unittest.TestCase):
         self.assertIn("rl_127", sizes)
         self.assertIn("rl_128", sizes)
 
+    def test_unsupported_features_guard(self):
+        from harness import unsupported_features  # noqa: PLC0415 - avoids docker deps at module import
+
+        self.assertEqual(unsupported_features({"payload": "telemetry256", "qos_publish": 0}), [])
+        self.assertIn("receive_maximum", unsupported_features({"receive_maximum": 10}))
+        self.assertIn("retained_count", unsupported_features({"retained_count": 10_000}))
+        self.assertIn("session_outage", unsupported_features({"outage_s": 2.0}))
+        self.assertIn("queue_rejection_protocol", unsupported_features({"submit_count": 150}))
+        self.assertIn("properties_profile:topic_alias", unsupported_features({"properties_profile": "topic_alias"}))
+        self.assertIn("connect_mode:tcp_concurrent", unsupported_features({"connect_mode": "tcp_concurrent"}))
+        self.assertIn("topic_topology:fleet4k_zipf", unsupported_features({"topic_topology": "fleet4k_zipf"}))
+        # Supported values must not be flagged.
+        self.assertEqual(unsupported_features({"properties_profile": "realistic", "connect_mode": "tcp_serial"}), [])
+
     def test_callback_match_topics_align_with_loadgen_template(self):
         run_id = "abcd1234"
         topics = callback_match_topics(run_id, 3)

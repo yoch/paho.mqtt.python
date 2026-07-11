@@ -81,9 +81,25 @@ class BarrierServer:
             raise TimeoutError(f"only {len(self.clients)}/{n} workers connected to barrier")
 
     def broadcast(self, message: str) -> None:
+        # Accept any late (re)connections so no worker is left waiting.
+        while True:
+            try:
+                self.sock.settimeout(0.05)
+                conn, _ = self.sock.accept()
+                conn.settimeout(1.0)
+                self.clients.append(conn)
+            except (socket.timeout, OSError):
+                break
+            finally:
+                self.sock.settimeout(0.5)
         data = (message.strip() + "\n").encode("utf-8")
         for conn in self.clients:
-            conn.sendall(data)
+            try:
+                conn.sendall(data)
+            except OSError:
+                # Worker vanished or reconnected on another socket; its own
+                # timeout will surface the failure.
+                pass
 
     def close(self) -> None:
         for conn in self.clients:
@@ -100,26 +116,40 @@ class BarrierServer:
 
 
 def barrier_client_wait(path: str, expected: str, timeout_s: float = 120.0) -> str:
+    """Connect once and wait for the broadcast line.
+
+    Must keep a single connection: the server broadcasts to the sockets it
+    accepted, so reconnecting after a read timeout would leave a dead socket
+    on the server side and this client waiting on an unknown one.
+    """
     deadline = time.time() + timeout_s
     last_err = None
-    while time.time() < deadline:
+    sock = None
+    while time.time() < deadline and sock is None:
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(1.0)
             sock.connect(path)
-            buf = b""
-            while b"\n" not in buf:
-                chunk = sock.recv(64)
-                if not chunk:
-                    break
-                buf += chunk
-            sock.close()
-            line = buf.decode("utf-8").strip()
-            if line == expected or expected == "*":
-                return line
-            if line:
-                return line
         except OSError as exc:
             last_err = exc
+            sock.close()
+            sock = None
             time.sleep(0.05)
-    raise TimeoutError(f"barrier wait for {expected!r} failed: {last_err}")
+    if sock is None:
+        raise TimeoutError(f"barrier connect for {expected!r} failed: {last_err}")
+    sock.settimeout(1.0)
+    try:
+        buf = b""
+        while time.time() < deadline and b"\n" not in buf:
+            try:
+                chunk = sock.recv(64)
+            except socket.timeout:
+                continue
+            if not chunk:
+                raise TimeoutError(f"barrier connection closed before {expected!r}")
+            buf += chunk
+        line = buf.decode("utf-8").strip()
+        if line:
+            return line
+    finally:
+        sock.close()
+    raise TimeoutError(f"barrier wait for {expected!r} timed out")

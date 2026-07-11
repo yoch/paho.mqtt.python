@@ -162,10 +162,26 @@ def main(argv=None) -> int:
     # Wait for T0 barrier.
     barrier_client_wait(cfg["barrier_path"], "T0", timeout_s=float(cfg.get("barrier_timeout_s", 120)))
 
+    open_loop_rate = None
+    if cadence in ("steady50", "loaded75", "loaded90", "periodic10") or cfg.get("load_fraction"):
+        if target_rate:
+            open_loop_rate = float(target_rate)
+        else:
+            # Fallback rate if calibration missing.
+            open_loop_rate = 1000.0 * load_fraction
+        if cadence == "steady50":
+            open_loop_rate = (target_rate or 2000.0) * 0.50
+        elif cadence == "periodic10":
+            open_loop_rate = 10.0
+
     gc.collect()
     gc_start = gc.get_count()
     state["phase"] = "warmup"
     warmup_end = time.perf_counter() + warmup_s
+    # Warm up at the measure cadence: a capacity warmup before an open-loop
+    # measure floods broker/subscriber queues and corrupts integrity windows.
+    # Warmup sequences live in a disjoint range so late deliveries can never
+    # collide with measure-window sequence numbers.
     _run_publish_loop(
         client,
         state,
@@ -175,11 +191,12 @@ def main(argv=None) -> int:
         corpus=corpus,
         run_id=run_id,
         outstanding=outstanding,
-        cadence="capacity",
+        cadence=cadence,
         until=warmup_end,
-        target_rate=None,
+        target_rate=open_loop_rate,
         properties_builder=_properties_builder(cfg, mqtt, Properties, PacketTypes),
         force_header=bool(cfg.get("force_header", False)),
+        sequence_start=1 << 40,
     )
 
     # Reset window counters after warmup and wait for outstanding to drain
@@ -208,18 +225,6 @@ def main(argv=None) -> int:
     state["phase"] = "measure"
     t0 = time.perf_counter()
     measure_end = t0 + duration_s
-    open_loop_rate = None
-    if cadence in ("steady50", "loaded75", "loaded90", "periodic10") or cfg.get("load_fraction"):
-        if target_rate:
-            open_loop_rate = float(target_rate)
-        else:
-            # Fallback rate if calibration missing.
-            open_loop_rate = 1000.0 * load_fraction
-        if cadence == "steady50":
-            open_loop_rate = (target_rate or 2000.0) * 0.50
-        elif cadence == "periodic10":
-            open_loop_rate = 10.0
-
     measure_sequences = _run_publish_loop(
         client,
         state,
@@ -347,15 +352,24 @@ def _run_publish_loop(
     batch_size=1,
     reset_sequence=False,
     force_header=False,
+    sequence_start=0,
 ):
-    sequence = 0
+    sequence = sequence_start
     sent_sequences = []
-    next_send = time.perf_counter()
+    loop_start = time.perf_counter()
+    next_send = loop_start
     interval = (1.0 / target_rate) if target_rate and target_rate > 0 else 0.0
     corpus_i = 0
     # reset_sequence currently means "start measure sequences at 1"; always local counter.
 
     while time.perf_counter() < until:
+        if cadence in ("burst", "microburst"):
+            # Duty-cycled capacity: 100ms burst per 1s (burst) or 10ms per 100ms (microburst).
+            period, duty = (1.0, 0.1) if cadence == "burst" else (0.1, 0.01)
+            phase = (time.perf_counter() - loop_start) % period
+            if phase > duty:
+                time.sleep(min(0.001, period - phase))
+                continue
         # Closed-loop outstanding gate.
         with state["lock"]:
             inflight_local = state["inflight_local"]

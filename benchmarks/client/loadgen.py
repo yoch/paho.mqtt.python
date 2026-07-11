@@ -147,7 +147,7 @@ class EmqttBenchProcess:
             "nominal_rate": nominal_rate(self.spec.clients, self.spec.interval_ms),
             "args": build_pub_args(self.spec),
             "image": self.image,
-            "image_digest": image_digest("emqx/emqtt-bench:latest"),
+            "image_digest": image_digest(self.image.split("@")[0]),
             "parsed": parsed,
             "stdout_tail": "\n".join(self.stdout_text.splitlines()[-20:]),
         }

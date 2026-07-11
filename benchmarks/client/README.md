@@ -67,7 +67,8 @@ Metric meanings:
 | `publish_accepted` | API accepted the message |
 | `socket_completed_qos0` | QoS0 left the client socket (`on_publish`) |
 | `protocol_completed` | QoS1 PUBACK / QoS2 PUBCOMP success |
-| `subscriber_delivered` | `on_message` callbacks |
+| `subscriber_delivered` | Application deliveries (`on_message` or matched `message_callback_add` callbacks) |
+| `callbacks_per_s` | Callback invocations per second (> `msgs_per_s` with overlapping filters) |
 | `completed_in_window` | Completions inside the measured window only |
 | `completed_during_drain` | Completions after T1 (not counted in rate) |
 | `application_rtt` | Request/response with responder process (not one-way timestamp) |
@@ -90,6 +91,24 @@ See `scenarios.py` for the full catalogue (`core` and `full`).
 A run is `valid` only if barriers succeed, no unexpected disconnects occur, and
 loadgen/broker are not saturated. Otherwise the run is kept as `inconclusive`
 with explicit reasons. Do not treat inconclusive rates as Paho scores.
+
+## Known limitations (not yet implemented)
+
+Points using the following knobs are refused with `not_implemented:*` reasons
+instead of silently measuring something else:
+
+- `receive_maximum` (MQTT v5 flow control interaction)
+- `retained_count` (retained bootstrap requires pre-seeding the broker)
+- `outage_s` / session resume (controlled outage orchestration)
+- `submit_count` (queue-rejection accounting protocol)
+- `properties_profile` `topic_alias` / `subscription_identifier`
+- `connect_mode` `tls_resume` / `tcp_concurrent` (churn probe is serial)
+- `topic_topology` `fleet4k_zipf` / `fleet100k` (loadgen publishes one fixed topic,
+  so cardinality/skew is not actually offered)
+
+`burst` / `microburst` ingress cadences are implemented as a bounded burst via
+emqtt-bench `-L` (global message cap) launched inside the measure window;
+recovery shows up in `delivered_during_drain`.
 
 ## A/B comparison
 

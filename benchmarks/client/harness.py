@@ -37,7 +37,16 @@ from network import PROFILES as NETWORK_PROFILES
 from network import apply_profile, clear_profile, qdisc_stats
 from scenarios import SCENARIO_BY_NAME, expand_scenario, list_scenarios, estimate_suite
 from telemetry import TelemetrySampler, allocate_cpuset, environment_metadata
-from workloads import PAYLOAD_SPECS, single_topic, fleet_topics, wildcard_hash, callback_match_loadgen_topic
+from workloads import (
+    PAYLOAD_SPECS,
+    callback_match_loadgen_topic,
+    deep_topic,
+    fleet_topics,
+    long_topic,
+    single_topic,
+    unicode_topic,
+    wildcard_hash,
+)
 
 CLIENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CLIENT_DIR.parent.parent
@@ -69,6 +78,33 @@ def _spawn_role(script: str, config_path: str, cpuset: Optional[str] = None) -> 
     return subprocess.Popen(cmd, env=env, preexec_fn=preexec)
 
 
+def unsupported_features(point: dict) -> List[str]:
+    """Scenario knobs declared in the catalogue but not implemented by the harness.
+
+    Points using them are refused up front instead of silently measuring
+    something else than what the point claims.
+    """
+    missing = []
+    if point.get("receive_maximum") is not None:
+        missing.append("receive_maximum")
+    if point.get("retained_count") is not None:
+        missing.append("retained_count")
+    if point.get("outage_s") is not None:
+        missing.append("session_outage")
+    if point.get("submit_count") is not None:
+        missing.append("queue_rejection_protocol")
+    if point.get("properties_profile") in ("topic_alias", "subscription_identifier"):
+        missing.append(f"properties_profile:{point['properties_profile']}")
+    if point.get("connect_mode") in ("tls_resume", "tcp_concurrent"):
+        missing.append(f"connect_mode:{point['connect_mode']}")
+    if str(point.get("topic_topology", "")) in ("fleet4k_zipf", "fleet100k"):
+        # Loadgen publishes on a single fixed topic; cardinality/skew is not offered.
+        missing.append(f"topic_topology:{point['topic_topology']}")
+    if point.get("integrity") and point.get("topology") == "publisher_only":
+        missing.append("integrity_without_oracle")
+    return missing
+
+
 def validate_run(point: dict, worker_results: List[dict], loadgen_stats: Optional[dict], telemetry_samples: List[dict]) -> dict:
     reasons = []
     for result in worker_results:
@@ -98,13 +134,21 @@ def validate_run(point: dict, worker_results: List[dict], loadgen_stats: Optiona
                     # For capacity-limited machines this often trips; keep as inconclusive signal.
                     reasons.append("open_loop_rate_out_of_tolerance")
 
+    # An ingress run where the loadgen emitted traffic but nothing was delivered
+    # indicates a topic/filter mismatch or a broken subscriber, not a Paho score.
+    if point.get("topology") == "subscriber_ingress":
+        emitted = ((loadgen_stats or {}).get("parsed") or {}).get("last_total")
+        delivered = sum(int(r.get("subscriber_delivered") or 0) for r in worker_results if r.get("role") == "subscriber")
+        if emitted and delivered == 0:
+            reasons.append("no_delivery_despite_load")
+
     # Telemetry saturation heuristics.
     for sample in telemetry_samples[-5:]:
         for name, stats in (sample.get("containers") or {}).items():
             if stats and stats.get("cpu_pct") is not None and stats["cpu_pct"] >= 85.0:
                 reasons.append(f"container_cpu_high:{name}")
 
-    if loadgen_stats and loadgen_stats.get("parsed"):
+    if loadgen_stats and loadgen_stats.get("parsed") and point.get("cadence") not in ("burst", "microburst"):
         parsed = loadgen_stats["parsed"]
         nominal = loadgen_stats.get("nominal_rate")
         last = parsed.get("last_rate")
@@ -140,6 +184,18 @@ def run_point(
     run_id = make_run_id()
     point = dict(point)
     point["run_id"] = run_id
+
+    missing = unsupported_features(point)
+    if missing:
+        return {
+            "schema_version": 1,
+            "run_id": run_id,
+            "point": point,
+            "status": "inconclusive",
+            "reasons": [f"not_implemented:{m}" for m in missing],
+            "workers": [],
+        }
+
     if load_profile and point.get("load_fraction") is not None:
         capacity = load_profile.get("capacity_msgs_per_s")
         if capacity:
@@ -270,20 +326,22 @@ def run_point(
             expected_workers = 2
 
         elif topology == "duplex_gateway":
-            # Publisher role acts as SUT; a small command injector via second publisher process.
+            # SUT publishes telemetry while a SUT subscriber receives commands
+            # injected by emqtt-bench (two client processes on the sut cpuset).
             sub_cfg = base_cfg("subscriber", "subscriber")
             sub_cfg["subscription"] = "exact"
             sub_cfg["topic"] = f"bench/{run_id}/commands"
             sub_path = work_dir / f"gateway-sub-{run_id}.cfg.json"
             write_json(str(sub_path), sub_cfg)
-            # For duplex we use one publisher for telemetry and rely on loadgen/commands optional.
+            workers.append(_spawn_role("subscriber.py", str(sub_path), cpusets.get("sut")))
+            configs.append(sub_cfg)
             pub_cfg = base_cfg("publisher", "publisher")
             pub_cfg["topic"] = f"bench/{run_id}/telemetry"
             pub_path = work_dir / f"gateway-pub-{run_id}.cfg.json"
             write_json(str(pub_path), pub_cfg)
             workers.append(_spawn_role("publisher.py", str(pub_path), cpusets.get("sut")))
             configs.append(pub_cfg)
-            expected_workers = 1
+            expected_workers = 2
 
         elif topology == "connect":
             # Lightweight in-orchestrator connect probe using a child publisher with duration 0 replaced.
@@ -325,6 +383,9 @@ def run_point(
         for cfg in configs:
             wait_for_file(cfg["ready_path"], timeout_s=60.0)
 
+        cadence = str(point.get("cadence", "capacity"))
+        burst_ingress = topology == "subscriber_ingress" and cadence in ("burst", "microburst")
+
         if topology == "subscriber_ingress":
             clients = int(point.get("loadgen_clients", 32) or 32)
             payload = point.get("payload", "telemetry256")
@@ -333,6 +394,8 @@ def run_point(
             target = 5000.0 if profile == "smoke" else 20000.0
             if point.get("fanin_mode") == "per_publisher":
                 target = clients * 1000.0
+            if cadence == "periodic10":
+                target = 10.0
             callback_filters = int(point.get("callback_filters", 0) or 0)
             overlapping = bool(point.get("overlapping_callbacks", False))
             lg_topic = topic
@@ -340,14 +403,35 @@ def run_point(
                 # Publish onto cb/%i/data so local message_callback_add filters receive traffic.
                 lg_topic = callback_match_loadgen_topic(run_id)
                 if not overlapping:
-                    # Exactly one emqtt-bench client per exact filter so every publish
-                    # hits a registered callback (no spill into on_message).
-                    clients = max(1, callback_filters)
+                    # Keep the client count (and thus offered load) comparable across
+                    # variants: every message goes through iter_match; messages whose
+                    # cb/<i> topic has no registered filter fall back to on_message,
+                    # which also records the delivery. Cap avoids a connection storm.
+                    clients = max(clients, min(callback_filters, 256))
                 # Keep aggregate offered load stable when client count grows with filters.
                 target = 5000.0 if profile == "smoke" else 20000.0
             elif point.get("subscription") in ("plus", "hash") or str(point.get("topic_topology", "")).startswith("fleet"):
                 lg_topic = f"bench/{run_id}/org/acme/site/s0000/device/d0000/telemetry/temperature"
+            else:
+                # Exact-subscription stress topologies: publish on the same topic
+                # the subscriber registered, or nothing gets delivered.
+                topo = str(point.get("topic_topology", "single"))
+                if topo == "deep32":
+                    lg_topic = deep_topic(run_id, 32)
+                elif topo == "long_topic_256":
+                    lg_topic = long_topic(run_id, 256)
+                elif topo == "long_topic_1024":
+                    lg_topic = long_topic(run_id, 1024)
+                elif topo == "unicode":
+                    lg_topic = unicode_topic(run_id)
+            limit_total = 0
             interval = interval_for_rate(clients, target)
+            if burst_ingress:
+                # Offer a bounded burst at max speed, then silence; the subscriber's
+                # window rate plus delivered_during_drain expose backlog recovery.
+                # emqtt-bench -L is a global cap across all clients.
+                limit_total = 1000 if cadence == "microburst" else max(1, int(target * float(point.get("duration_s", 3))))
+                interval = 1
             spec = LoadgenSpec(
                 host=host,
                 port=endpoint_port,
@@ -357,18 +441,48 @@ def run_point(
                 interval_ms=interval,
                 payload_size=max(size, 1),
                 duration_s=float(point.get("duration_s", 3)),
+                limit=limit_total,
+            )
+            loadgen = EmqttBenchProcess(spec, cpuset=cpusets.get("loadgen"))
+            if not burst_ingress:
+                loadgen.start()
+
+        elif topology == "duplex_gateway":
+            # Modest command stream toward the SUT subscriber while the SUT publishes.
+            spec = LoadgenSpec(
+                host=host,
+                port=endpoint_port,
+                topic=f"bench/{run_id}/commands",
+                qos=int(point.get("qos_subscribe", 1)),
+                clients=2,
+                interval_ms=interval_for_rate(2, 200.0),
+                payload_size=256,
+                duration_s=float(point.get("duration_s", 3)),
             )
             loadgen = EmqttBenchProcess(spec, cpuset=cpusets.get("loadgen"))
             loadgen.start()
 
         barrier.accept_n(expected_workers, timeout_s=60.0)
+        if loadgen is not None and loadgen.proc is not None:
+            # Let the loadgen connect ramp finish outside the measure window.
+            ramp_s = min(loadgen.spec.clients * loadgen.spec.connect_interval_ms / 1000.0 + 0.5, 15.0)
+            time.sleep(ramp_s)
         sampler = TelemetrySampler(pids={f"w{i}": w.pid for i, w in enumerate(workers) if w.pid}, containers=["mosquitto"] if managed_broker else [])
         sampler.start()
         barrier.broadcast("T0")
+        if burst_ingress and loadgen is not None:
+            # Burst arrives inside the measure window rather than during connect ramp.
+            loadgen.start()
 
-        # Wait workers.
+        # Wait workers; a hung worker invalidates the run instead of crashing the harness.
+        worker_hang = False
+        worker_timeout = max(120.0, float(point.get("duration_s", 3)) + float(point.get("warmup_s", 1)) + float(point.get("drain_s", 2)) + 60)
         for w in workers:
-            w.wait(timeout=max(120.0, float(point.get("duration_s", 3)) + float(point.get("warmup_s", 1)) + float(point.get("drain_s", 2)) + 60))
+            try:
+                w.wait(timeout=worker_timeout)
+            except subprocess.TimeoutExpired:
+                worker_hang = True
+                w.kill()
 
         telemetry_samples = sampler.stop()
         if loadgen is not None:
@@ -382,12 +496,17 @@ def run_point(
                 worker_results.append({"ok": False, "error": "missing_result", "result_path": cfg["result_path"]})
 
         validity = validate_run(point, worker_results, loadgen_stats, telemetry_samples)
+        if worker_hang:
+            validity["status"] = "inconclusive"
+            validity["reasons"].append("worker_hang")
 
         # Integrity enrichment when sequences present.
         pub = next((w for w in worker_results if w.get("role") == "publisher"), None)
         for wr in worker_results:
             if wr.get("role") == "subscriber" and wr.get("sequences"):
-                seqs = wr["sequences"]
+                # Warmup traffic uses a disjoint sequence range (>= 2^40); late
+                # warmup deliveries are not integrity errors.
+                seqs = [s for s in wr["sequences"] if s < (1 << 40)]
                 expected = None
                 if pub and pub.get("sent_sequences"):
                     expected = pub["sent_sequences"]
