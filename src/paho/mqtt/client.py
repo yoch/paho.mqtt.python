@@ -164,6 +164,7 @@ class _InPacketState:
         "remaining_mult",
         "remaining_length",
         "packet",
+        "_packet_buffer",
         "to_process",
         "pos",
     )
@@ -174,7 +175,8 @@ class _InPacketState:
         self.remaining_count = 0
         self.remaining_mult = 1
         self.remaining_length = 0
-        self.packet = bytearray()
+        self._packet_buffer = bytearray()
+        self.packet: bytearray | memoryview = self._packet_buffer
         self.to_process = 0
         self.pos = 0
 
@@ -184,7 +186,10 @@ class _InPacketState:
         self.remaining_count = 0
         self.remaining_mult = 1
         self.remaining_length = 0
-        self.packet.clear()
+        if self.packet is self._packet_buffer:
+            self._packet_buffer.clear()
+        else:
+            self.packet = self._packet_buffer
         self.to_process = 0
         self.pos = 0
 
@@ -2236,7 +2241,7 @@ class Client:
         for _ in range(max_packets):
             if self._sock is None:
                 return MQTTErrorCode.MQTT_ERR_NO_CONN
-            rc = self._packet_read(read_ahead=True)
+            rc = self._packet_read_buffered()
             if rc > 0:
                 return self._loop_rc_handle(rc)
             if rc == MQTTErrorCode.MQTT_ERR_AGAIN:
@@ -2244,6 +2249,81 @@ class Client:
             if self._read_ahead_exhausted and self._read_buffer_pending() == 0:
                 return MQTTErrorCode.MQTT_ERR_SUCCESS
         return MQTTErrorCode.MQTT_ERR_SUCCESS
+
+    def _packet_read_buffered(self) -> MQTTErrorCode:
+        """Read one packet directly from the built-in loop's read-ahead buffer."""
+        if self._sock is None:
+            return MQTTErrorCode.MQTT_ERR_NO_CONN
+
+        # Finish a packet that previously fell back to the incremental parser.
+        if self._in_packet.command != 0:
+            return self._packet_read(read_ahead=True)
+
+        if self._read_buffer_pending() == 0:
+            if self._read_ahead_exhausted:
+                return MQTTErrorCode.MQTT_ERR_AGAIN
+            try:
+                data = self._sock_recv(_READAHEAD_CHUNK_SIZE)
+            except BlockingIOError:
+                return MQTTErrorCode.MQTT_ERR_AGAIN
+            except TimeoutError as err:
+                self._easy_log(MQTT_LOG_ERR, 'timeout on socket: %s', err)
+                return MQTTErrorCode.MQTT_ERR_CONN_LOST
+            except OSError as err:
+                self._easy_log(MQTT_LOG_ERR, 'failed to receive on socket: %s', err)
+                return MQTTErrorCode.MQTT_ERR_CONN_LOST
+            if len(data) == 0:
+                return MQTTErrorCode.MQTT_ERR_CONN_LOST
+            self._read_buffer = data
+            self._read_buffer_pos = 0
+            self._read_ahead_exhausted = len(data) < _READAHEAD_CHUNK_SIZE
+
+        packet_start = self._read_buffer_pos
+        buffer_end = len(self._read_buffer)
+        remaining_pos = packet_start + 1
+        if remaining_pos >= buffer_end:
+            return self._packet_read(read_ahead=True)
+
+        remaining_length = 0
+        remaining_mult = 1
+        remaining_count = 0
+        while remaining_count < 4:
+            if remaining_pos >= buffer_end:
+                return self._packet_read(read_ahead=True)
+            byte_value = self._read_buffer[remaining_pos]
+            remaining_pos += 1
+            remaining_count += 1
+            remaining_length += (byte_value & 127) * remaining_mult
+            if byte_value & 128 == 0:
+                break
+            remaining_mult *= 128
+        else:
+            return MQTTErrorCode.MQTT_ERR_PROTOCOL
+
+        packet_end = remaining_pos + remaining_length
+        if packet_end > buffer_end:
+            return self._packet_read(read_ahead=True)
+
+        self._in_packet.command = self._read_buffer[packet_start]
+        self._in_packet.have_remaining = 1
+        self._in_packet.remaining_count = remaining_count
+        self._in_packet.remaining_mult = remaining_mult
+        self._in_packet.remaining_length = remaining_length
+        self._in_packet.to_process = 0
+        self._in_packet.pos = 0
+        self._in_packet.packet = memoryview(self._read_buffer)[remaining_pos:packet_end]
+
+        self._read_buffer_pos = packet_end
+        if packet_end == buffer_end:
+            self._read_buffer = b""
+            self._read_buffer_pos = 0
+
+        rc = self._packet_handle()
+        self._in_packet.reset()
+
+        with self._msgtime_mutex:
+            self._last_msg_in = time_func()
+        return rc
 
     def loop_write(self) -> MQTTErrorCode:
         """Process write network events. Use in place of calling `loop()` if you

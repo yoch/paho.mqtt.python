@@ -126,6 +126,51 @@ def test_internal_read_batch_prefetches_and_preserves_fairness_cap():
     assert sock.calls == 1
 
 
+def test_internal_buffered_parser_dispatches_packet_view(monkeypatch):
+    mqttc = _new_client()
+    packet = _publish_packet(client.MQTTv311)
+    sock = NonBlockingBurstSocket(packet)
+    mqttc._sock = sock
+    original_handle = mqttc._packet_handle
+    packet_types = []
+
+    def handle_packet():
+        packet_types.append(type(mqttc._in_packet.packet))
+        return original_handle()
+
+    monkeypatch.setattr(mqttc, "_packet_handle", handle_packet)
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert packet_types == [memoryview]
+    assert mqttc._in_packet.packet == bytearray()
+
+
+def test_internal_buffered_parser_resumes_partial_packet():
+    mqttc = _new_client()
+    packet = _publish_packet(client.MQTTv311, payload=b"x" * 200)
+    messages = []
+    mqttc.on_message = lambda mqttc, userdata, message: messages.append(message)
+    sock = PartialRecvSocket(packet * 2, available=1)
+    mqttc._sock = sock
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert messages == []
+    assert mqttc._in_packet.command == packet[0]
+
+    sock.available = len(packet) * 2
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_SUCCESS
+    assert [message.payload for message in messages] == [b"x" * 200, b"x" * 200]
+    assert mqttc._in_packet.command == 0
+
+
+def test_internal_buffered_parser_rejects_invalid_remaining_length():
+    mqttc = _new_client()
+    bad = bytes([int(client.PUBLISH), 0x80, 0x80, 0x80, 0x80, 0x01])
+    mqttc._sock = NonBlockingBurstSocket(bad)
+
+    assert mqttc._loop_read_batch(100) == MQTTErrorCode.MQTT_ERR_PROTOCOL
+
+
 def test_public_packet_read_does_not_enable_read_ahead():
     mqttc = _new_client()
     packet = _publish_packet(client.MQTTv311)

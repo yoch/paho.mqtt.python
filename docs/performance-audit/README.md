@@ -27,7 +27,7 @@ acceptance requirements for these projects.
 | [11 - MQTT v5 Rich Property Codec](11-mqttv5-rich-property-codec.md) | P1 | **Done** | `Properties`, `VariableByteIntegers` | Cursor parsing and native UTF validation. |
 | [12 - Outbound Topic Encoding Cache](12-outbound-topic-encoding-cache.md) | P1 | **NO GO** | `Client.publish()` | Rejected due to high-cardinality regression. |
 | [13 - Reconnect Reset and Replay](13-reconnect-replay.md) | P2 | **Done** | reconnect reset, CONNACK replay | Remove repeated invariant work without a second queue. |
-| [14 - Contiguous Ingress Decoder](14-contiguous-ingress-decoder.md) | P0 | **Planned** | built-in ingress pump, `loop_read()` | Parse complete MQTT frames directly from buffered bytes. |
+| [14 - Contiguous Ingress Decoder](14-contiguous-ingress-decoder.md) | P0 | **GO with conditions** | built-in ingress pump, `loop_read()` | Direct buffered decode kept; public batching prototype rejected. |
 | [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **Planned** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
 | [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Planned** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
 | [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **Planned** | successful CONNACK replay | Stage ordered retransmits before one drain. |

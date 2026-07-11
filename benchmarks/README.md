@@ -22,6 +22,12 @@ Run one scenario:
 python benchmarks/run.py --scenario properties_pack_empty --runs 7
 ```
 
+Run the paired same-process project 14 evaluation:
+
+```bash
+PYTHONPATH=src python benchmarks/ingress_decoder_eval.py
+```
+
 Save a baseline and a candidate:
 
 ```bash
@@ -73,6 +79,7 @@ Packet read/parser:
 - `publish_parse_v3_qos2_z2m_filters` — QoS2 + 7 Z2M `topic_callback` filters
 - `publish_parse_v3_qos0_large` — 64-KiB regression guardrail
 - `loop_read_batch_v3_qos0_small` — bounded read-ahead/batch drain
+- `loop_read_public_v3_qos0_small` — public `loop_read(100)` QoS 0 burst
 
 Packet write/queue:
 

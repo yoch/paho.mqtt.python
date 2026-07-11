@@ -204,6 +204,23 @@ def loop_read_batch_v3_qos0_small(iterations):
         raise RuntimeError("read-ahead did not reduce recv calls")
 
 
+def loop_read_public_v3_qos0_small(iterations):
+    """Exercise the existing public max_packets argument on a QoS 0 burst."""
+    client = _new_client(mqtt.MQTTv311)
+    delivered = [0]
+    client.on_message = lambda *args: delivered.__setitem__(0, delivered[0] + 1)
+    sock = NonBlockingRecvSocket(PUBLISH_V3_QOS0_SMALL * iterations)
+    client._sock = sock
+    loop_read_calls = 0
+    while delivered[0] < iterations:
+        rc = client.loop_read(100)
+        loop_read_calls += 1
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("public loop_read failed: {}".format(rc))
+    if loop_read_calls > iterations:
+        raise RuntimeError("loop_read made no delivery progress")
+
+
 def _parse_qos2_cycle(iterations, packet_cycle, register_z2m_filters=False):
     """PUBLISH QoS2 + PUBREL inbound cycle (PUBREC/PUBCOMP written to fake sock)."""
     client = _new_recv_send_client(mqtt.MQTTv311)
@@ -542,6 +559,7 @@ SCENARIOS = [
     Scenario("publish_parse_v3_qos0_small", "packet-read", "message", 5000, publish_parse_v3_qos0_small),
     Scenario("publish_parse_v3_qos0_large", "packet-read", "message", 100, publish_parse_v3_qos0_large),
     Scenario("loop_read_batch_v3_qos0_small", "packet-read", "message", 5000, loop_read_batch_v3_qos0_small),
+    Scenario("loop_read_public_v3_qos0_small", "packet-read", "message", 5000, loop_read_public_v3_qos0_small),
     Scenario("publish_parse_v5_qos0_empty_props", "packet-read", "message", 5000, publish_parse_v5_qos0_empty_props),
     Scenario("publish_parse_v5_qos0_user_props", "packet-read", "message", 1000, publish_parse_v5_qos0_user_props),
     Scenario("publish_parse_v3_qos2_small", "packet-read", "message", 3000, publish_parse_v3_qos2_small),
