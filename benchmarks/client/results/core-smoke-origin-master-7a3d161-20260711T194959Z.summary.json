@@ -1,0 +1,1613 @@
+{
+  "schema_version": 1,
+  "kind": "core_smoke_summary",
+  "source_file": "core-smoke-origin-master-7a3d161-20260711T194959Z.json",
+  "label": "origin/master",
+  "paho_commit": "7a3d161",
+  "suite": "core",
+  "estimate": {
+    "estimated_minutes": 2.9,
+    "points": 41,
+    "runs_per_point": 1,
+    "scenarios": 12,
+    "suite": "core"
+  },
+  "points": [
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "binary64",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 12836.643385316347,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 12836.643385316347,
+          "payload_bytes_per_s": 821545.1766602462,
+          "completed_in_window": 38510,
+          "latency_summary": {
+            "max_ms": 8.834726,
+            "n_success": 38572,
+            "p50_ms": 4.671293,
+            "p95_ms": 5.624223,
+            "p99_ms": 6.127173,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "event1k",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 13915.06495356835,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 13915.06495356835,
+          "payload_bytes_per_s": 14249026.51245399,
+          "completed_in_window": 41755,
+          "latency_summary": {
+            "max_ms": 17.638549,
+            "n_success": 41792,
+            "p50_ms": 3.269092,
+            "p95_ms": 4.59607,
+            "p99_ms": 8.38207,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "record16k",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 11449.606456973132,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 11449.606456973132,
+          "payload_bytes_per_s": 187590352.1910478,
+          "completed_in_window": 34349,
+          "latency_summary": {
+            "max_ms": 10.315428,
+            "n_success": 34412,
+            "p50_ms": 5.071626,
+            "p95_ms": 7.119073,
+            "p99_ms": 9.088911,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 12385.36685824365,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 12385.36685824365,
+          "payload_bytes_per_s": 3170653.9157103742,
+          "completed_in_window": 37157,
+          "latency_summary": {
+            "max_ms": 9.760484,
+            "n_success": 37217,
+            "p50_ms": 4.705439,
+            "p95_ms": 7.025689,
+            "p99_ms": 8.588576,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "blob1m",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "empty0",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 12456.005026284916,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 12456.005026284916,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 37369,
+          "latency_summary": {
+            "max_ms": 19.275252,
+            "n_success": 37431,
+            "p50_ms": 4.593216,
+            "p95_ms": 6.507791,
+            "p99_ms": 8.173733,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "block64k",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 8537.140607365982,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 8537.140607365982,
+          "payload_bytes_per_s": 559490046.844337,
+          "completed_in_window": 25612,
+          "latency_summary": {
+            "max_ms": 16.892997,
+            "n_success": 25673,
+            "p50_ms": 6.733648,
+            "p95_ms": 9.915619,
+            "p99_ms": 11.568168,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos_sweep_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 8952.197529731178,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 8952.197529731178,
+          "payload_bytes_per_s": 2291762.5676111816,
+          "completed_in_window": 26858,
+          "latency_summary": {
+            "max_ms": 44.394505,
+            "n_success": 26920,
+            "p50_ms": 6.703765,
+            "p95_ms": 8.601117,
+            "p99_ms": 11.412771,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos_sweep_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 12125.690794882983,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 12125.690794882983,
+          "payload_bytes_per_s": 3104176.8434900437,
+          "completed_in_window": 36378,
+          "latency_summary": {
+            "max_ms": 10.480563,
+            "n_success": 36438,
+            "p50_ms": 4.74202,
+            "p95_ms": 7.24286,
+            "p99_ms": 8.892956,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos_sweep_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 2,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 6984.621165777386,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 6984.621165777386,
+          "payload_bytes_per_s": 1788063.0184390107,
+          "completed_in_window": 20955,
+          "latency_summary": {
+            "max_ms": 46.73939,
+            "n_success": 21016,
+            "p50_ms": 8.850008,
+            "p95_ms": 10.762441,
+            "p99_ms": 14.241252,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos1_inflight",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 9887.10691858738,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 9887.10691858738,
+          "payload_bytes_per_s": 2531099.3711583694,
+          "completed_in_window": 29662,
+          "latency_summary": {
+            "max_ms": 42.010086,
+            "n_success": 29678,
+            "p50_ms": 1.775112,
+            "p95_ms": 2.274661,
+            "p99_ms": 2.847575,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos1_inflight",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 1,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 4544.785137694426,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 4544.785137694426,
+          "payload_bytes_per_s": 1163464.9952497731,
+          "completed_in_window": 13635,
+          "latency_summary": {
+            "max_ms": 4.353633,
+            "n_success": 13642,
+            "p50_ms": 1.572322,
+            "p95_ms": 2.214339,
+            "p99_ms": 2.456524,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos1_inflight",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 100,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 8816.627053946711,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 8816.627053946711,
+          "payload_bytes_per_s": 2257056.525810358,
+          "completed_in_window": 26452,
+          "latency_summary": {
+            "max_ms": 44.267501,
+            "n_success": 26548,
+            "p50_ms": 10.555544,
+            "p95_ms": 13.36165,
+            "p99_ms": 18.073902,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_16383",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 11305.255811096755,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 11305.255811096755,
+          "payload_bytes_per_s": 184411332.79061025,
+          "completed_in_window": 33917,
+          "latency_summary": {
+            "max_ms": 10.009906,
+            "n_success": 33971,
+            "p50_ms": 4.979065,
+            "p95_ms": 8.037247,
+            "p99_ms": 9.127479,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_127",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 12781.176614803082,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 12781.176614803082,
+          "payload_bytes_per_s": 715745.8904289727,
+          "completed_in_window": 38344,
+          "latency_summary": {
+            "max_ms": 12.739118,
+            "n_success": 38404,
+            "p50_ms": 4.617481,
+            "p95_ms": 5.692595,
+            "p99_ms": 7.627153,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_128",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 13006.453516865691,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 13006.453516865691,
+          "payload_bytes_per_s": 741367.8504613445,
+          "completed_in_window": 39020,
+          "latency_summary": {
+            "max_ms": 8.867161,
+            "n_success": 39080,
+            "p50_ms": 4.628909,
+            "p95_ms": 5.391511,
+            "p99_ms": 6.210307,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_16384",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 11690.79014415896,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 11690.79014415896,
+          "payload_bytes_per_s": 190711859.62166512,
+          "completed_in_window": 35074,
+          "latency_summary": {
+            "max_ms": 10.40496,
+            "n_success": 35138,
+            "p50_ms": 5.012522,
+            "p95_ms": 6.66595,
+            "p99_ms": 9.402033,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_126",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 12776.956975271329,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 12776.956975271329,
+          "payload_bytes_per_s": 702732.6336399231,
+          "completed_in_window": 38332,
+          "latency_summary": {
+            "max_ms": 13.011189,
+            "n_success": 38392,
+            "p50_ms": 4.613331,
+            "p95_ms": 5.765158,
+            "p99_ms": 8.936374,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_exact_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3770.884083025933,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 3770.884083025933,
+          "payload_bytes_per_s": 965346.3252546388,
+          "completed_in_window": 11313,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "plus",
+      "topic_topology": "fleet4k_zipf",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3765.2386802542806,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 3765.2386802542806,
+          "payload_bytes_per_s": 963901.1021450958,
+          "completed_in_window": 11296,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3969.810542122122,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 3969.810542122122,
+          "payload_bytes_per_s": 1016271.4987832633,
+          "completed_in_window": 11910,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_zipf",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3885.2106694612953,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 3885.2106694612953,
+          "payload_bytes_per_s": 994613.9313820916,
+          "completed_in_window": 11656,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "plus",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3831.1671104824068,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 3831.1671104824068,
+          "payload_bytes_per_s": 980778.7802834961,
+          "completed_in_window": 11494,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_callback_matching",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": 16,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 0,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_callback_matching",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": 1,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 0,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_callback_matching",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": 256,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 0,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "duplex_gateway",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 1,
+      "cadence": "burst",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 11987.270719145903,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 11987.270719145903,
+          "payload_bytes_per_s": 3068741.304101351,
+          "completed_in_window": 35963,
+          "latency_summary": {
+            "max_ms": 11.800106,
+            "n_success": 36023,
+            "p50_ms": 4.742273,
+            "p95_ms": 6.756651,
+            "p99_ms": 8.889407,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "duplex_gateway",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 1,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.9776574982582,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 999.9776574982582,
+          "payload_bytes_per_s": 255994.2803195541,
+          "completed_in_window": 3000,
+          "latency_summary": {
+            "max_ms": 1.030238,
+            "n_success": 2998,
+            "p50_ms": 0.216722,
+            "p95_ms": 0.333119,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "burst_recovery",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "burst",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3881.125962173802,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 3881.125962173802,
+          "payload_bytes_per_s": 993568.2463164933,
+          "completed_in_window": 11644,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "telemetry256",
+      "qos_publish": 2,
+      "qos_subscribe": 2,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.6393565209656,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 999.6393565209656,
+          "payload_bytes_per_s": 255907.6752693672,
+          "completed_in_window": 2999,
+          "latency_summary": {
+            "max_ms": 40.851031,
+            "n_success": 3000,
+            "p50_ms": 1.198694,
+            "p95_ms": 1.600057,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 1001.8114727725713,
+          "payload_bytes_per_s": 256463.73702977825,
+          "completed_in_window": 3006,
+          "latency_summary": {
+            "max_ms": 11.796339,
+            "n_success": 3006,
+            "p50_ms": 0.793121,
+            "p95_ms": 1.897537,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 52,
+            "out_of_order": 1,
+            "received": 3006,
+            "unexpected": 58,
+            "unique": 2948
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.6370370945398,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 999.6370370945398,
+          "payload_bytes_per_s": 255907.08149620218,
+          "completed_in_window": 2999,
+          "latency_summary": {
+            "max_ms": 41.159833,
+            "n_success": 3000,
+            "p50_ms": 1.231808,
+            "p95_ms": 1.362721,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 990.8813244565457,
+          "payload_bytes_per_s": 253665.6190608757,
+          "completed_in_window": 2973,
+          "latency_summary": {
+            "max_ms": 6.905181,
+            "n_success": 2973,
+            "p50_ms": 0.299848,
+            "p95_ms": 0.615107,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 50,
+            "out_of_order": 1,
+            "received": 2973,
+            "unexpected": 23,
+            "unique": 2950
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "empty0",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.9687906423037,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 999.9687906423037,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 3000,
+          "latency_summary": {
+            "max_ms": 3.297809,
+            "n_success": 2969,
+            "p50_ms": 0.200868,
+            "p95_ms": 0.299355,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 476.65433418922794,
+          "payload_bytes_per_s": 19066.173367569118,
+          "completed_in_window": 1430,
+          "latency_summary": {
+            "max_ms": 43.788601,
+            "n_success": 1430,
+            "p50_ms": 0.396254,
+            "p95_ms": 33.686315,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 2007,
+            "out_of_order": 1,
+            "received": 1430,
+            "unexpected": 437,
+            "unique": 993
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 998.9708403734732,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 998.9708403734732,
+          "payload_bytes_per_s": 255736.53513560913,
+          "completed_in_window": 2997,
+          "latency_summary": {
+            "max_ms": 3.438095,
+            "n_success": 2997,
+            "p50_ms": 0.189788,
+            "p95_ms": 0.290115,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 444.9903318422972,
+          "payload_bytes_per_s": 113917.52495162809,
+          "completed_in_window": 1335,
+          "latency_summary": {
+            "max_ms": 49.807139,
+            "n_success": 1335,
+            "p50_ms": 0.377326,
+            "p95_ms": 47.938886,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 2003,
+            "out_of_order": 1,
+            "received": 1335,
+            "unexpected": 338,
+            "unique": 997
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.75,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 749.6402885745185,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 749.6402885745185,
+          "payload_bytes_per_s": 191907.91387507675,
+          "completed_in_window": 2249,
+          "latency_summary": {
+            "max_ms": 40.636695,
+            "n_success": 2250,
+            "p50_ms": 1.591403,
+            "p95_ms": 1.834398,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.5,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 499.98570424343075,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 499.98570424343075,
+          "payload_bytes_per_s": 127996.34028631827,
+          "completed_in_window": 1500,
+          "latency_summary": {
+            "max_ms": 3.539253,
+            "n_success": 1500,
+            "p50_ms": 0.369326,
+            "p95_ms": 0.582124,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.9,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 899.6359839803717,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 899.6359839803717,
+          "payload_bytes_per_s": 230306.81189897517,
+          "completed_in_window": 2699,
+          "latency_summary": {
+            "max_ms": 41.155059,
+            "n_success": 2700,
+            "p50_ms": 1.354657,
+            "p95_ms": 1.555876,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.25,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 249.99128096990202,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 249.99128096990202,
+          "payload_bytes_per_s": 63997.76792829492,
+          "completed_in_window": 750,
+          "latency_summary": {
+            "max_ms": 3.579753,
+            "n_success": 750,
+            "p50_ms": 0.450963,
+            "p95_ms": 0.671436,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.75,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 755.9799310002097,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 755.9799310002097,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 2268,
+          "latency_summary": {
+            "max_ms": 73.902507,
+            "n_success": 2268,
+            "p50_ms": 27.102205,
+            "p95_ms": 52.981287,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.5,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 500.9866159760021,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 500.9866159760021,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 1503,
+          "latency_summary": {
+            "max_ms": 70.365193,
+            "n_success": 1503,
+            "p50_ms": 23.890081,
+            "p95_ms": 42.500487,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.9,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 890.1790202080899,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 890.1790202080899,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 2671,
+          "latency_summary": {
+            "max_ms": 93.796843,
+            "n_success": 2671,
+            "p50_ms": 29.578658,
+            "p95_ms": 63.296281,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.25,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 249.99385323417994,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "paho_file": "/tmp/paho-origin-master/src/paho/__init__.py",
+          "msgs_per_s": 249.99385323417994,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 750,
+          "latency_summary": {
+            "max_ms": 83.244294,
+            "n_success": 750,
+            "p50_ms": 25.372305,
+            "p95_ms": 53.530021,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    }
+  ],
+  "source_root": "/tmp/paho-origin-master",
+  "profile": "smoke",
+  "broker": {
+    "managed_broker": true,
+    "image": "eclipse-mosquitto:2.0.20@sha256:21421af7b32bf9ce508e9090c8eb13bb81f410ca778dc205506180a6f862d0eb",
+    "image_digest": "eclipse-mosquitto@sha256:21421af7b32bf9ce508e9090c8eb13bb81f410ca778dc205506180a6f862d0eb",
+    "host": "127.0.0.1",
+    "port": 11883,
+    "tls_port": 11884,
+    "config_hash": "3f2ae52bdab8face0a6c9a4d1060486a93630477387c9bd5785bc24cefb51d0d"
+  },
+  "environment": {
+    "cpu_count": 8,
+    "cpu_model": "Intel(R) Core(TM) i7-3770 CPU @ 3.40GHz",
+    "loadavg": [
+      2.41748046875,
+      2.6396484375,
+      2.6630859375
+    ],
+    "machine": "x86_64",
+    "physical_cpu_groups": [
+      [
+        0,
+        4
+      ],
+      [
+        1,
+        5
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        3,
+        7
+      ]
+    ],
+    "platform": "Linux-6.8.0-134-lowlatency-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "scaling_governor": "schedutil"
+  }
+}
