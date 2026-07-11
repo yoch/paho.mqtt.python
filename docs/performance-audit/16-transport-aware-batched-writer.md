@@ -50,46 +50,78 @@ Priority: P0.
 
 ## Before Measurement
 
-Pending. Measure current one-send-per-packet behavior before changing the queue
-or writer.
+The existing writer submitted every queued packet separately. In paired local
+socket measurements, 100 four-byte PUBACK packets required **100 writes** and
+reached **421,535 packet/s on Unix** and **190,832 packet/s on TCP**.
 
-Required baseline rows:
-
-| Transport | Packets | Size | Throughput | Underlying writes | p95 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| TCP | 100 | 128 B | pending | pending | pending |
-| Unix | 100 | 128 B | pending | pending | pending |
-| TLS | 100 | 128 B | pending | pending | pending |
-| WebSocket | 100 | 128 B | pending | pending | pending |
-| TCP | 1 | 64 KiB | pending | pending | pending |
+The CPU-only brokerless control reached **945,024 packet/s**. This removes
+kernel syscall cost and is therefore a useful guardrail against moving work
+from the kernel boundary into Python.
 
 ## Implementation
 
-Planned prototype:
+The bounded POSIX prototype is isolated on branch
+`perf/plan16-sendmsg-prototype`, commit `25d75f9`. It is intentionally absent
+from the current `benchmarks` branch.
 
-- Add a private writer backend selected from socket/transport capabilities.
-- Use `socket.sendmsg()` for bounded TCP/Unix batches when available on the
-  supported platform.
-- Use bounded `bytearray` coalescence for TLS and, if profitable, fallback
-  sockets.
-- Pass a bounded concatenation to the WebSocket wrapper so multiple MQTT
-  packets may share one legal binary frame.
-- Maintain a private completion ledger mapping returned byte counts back to
-  packet boundaries and existing `_OutPacket` positions.
-- Apply all packet-completion side effects only after their final byte is sent.
-- Preserve the current writer as the fallback and remove any backend that does
-  not pass its transport-specific criteria.
+That branch:
+
+- uses native `sendmsg()` for plain TCP/Unix only;
+- limits submissions to 64 iovecs and 64 KiB;
+- introduces no timer and never waits for a batch to fill;
+- keeps isolated packets, TLS, WebSocket, QoS 0 callback packets, DISCONNECT,
+  oversized packets, and unsupported sockets on the legacy path;
+- tracks partial writes across packet boundaries and preserves EAGAIN state;
+- includes its benchmark harness and focused correctness tests.
+
+Required real-usage validation before considering a merge:
+
+- measure p50/p95/p99 latency at queue depths 1, 2, 8, 64, and 100;
+- exercise TCP and Unix with fast, slow, and intermittently blocked readers;
+- measure QoS 1 PUBLISH payloads of 16 B, 128 B, 1 KiB, and 64 KiB;
+- test partial writes followed by EAGAIN, close, reset, and connection errors;
+- verify exact wire order and bytes under concurrent enqueue/drain activity;
+- test custom socket adapters exposing missing, incomplete, or failing
+  `sendmsg()` implementations;
+- reproduce the unchanged-path QoS 0 measurements in paired runs;
+- run sustained broker tests and check CPU, RSS, tail latency, reconnect,
+  callback ordering, and external-loop write registration.
 
 ## After Measurements
 
-Pending implementation and paired measurement.
+Exploratory results from the isolated branch (two warmups, 15 runs):
+
+| Transport | Before | Prototype | Gain | Writes |
+| --- | ---: | ---: | ---: | ---: |
+| Unix, 100 PUBACK | 421,535 packet/s | 532,167 packet/s | **+26.2%** | 100 -> 2 |
+| TCP, 100 PUBACK | 190,832 packet/s | 511,036 packet/s | **+167.8%** | 100 -> 2 |
+| Unix, isolated PUBACK | 6.17 us | 5.78 us | **+6.8%** | 1 -> 1 |
+
+The fake transport without real syscall cost regressed from 945,024 to 659,783
+packet/s (**-30.2%**). An unchanged QoS 0 depth-100 scenario also showed a
+non-paired **-4.6%** signal, while depth 10,000 showed +3.0%. These conflicting
+signals are why the prototype is not enabled on the current branch.
+
+Prototype validation completed so far: 40 focused tests passed; the enlarged
+suite passed **188 tests with 21 skipped**.
 
 ## Results Analysis
 
-Pending. Publish separate transport results and distinguish syscall reduction,
-TLS/frame reduction, Python CPU, allocation cost, and isolated-message latency.
+The reduction from 100 writes to 2 is real and explains the strong loopback
+gain. No intentional queueing latency exists because only already-queued data
+is grouped. Nevertheless, the cost of constructing memoryviews is also real,
+and loopback throughput cannot establish that production tail latency,
+concurrency, socket-adapter compatibility, and failure behavior are unchanged.
+
+The current evidence supports preserving the experiment, not merging it.
+Production acceptance requires the real-usage matrix above to show no
+meaningful throughput, latency, CPU, memory, ordering, or lifecycle regression.
+TLS and WebSocket remain separate decisions and unchanged implementations.
 
 ## Verdict
 
-**Pending.** The final document may use `GO with conditions` when only a subset
-of transports passes; otherwise use `GO` or `NO GO` at the checkpoint.
+**GO with conditions (prototype only).** Preserve commit `25d75f9` on branch
+`perf/plan16-sendmsg-prototype` for real-world evaluation. Do not merge or
+enable it on the main audit branch until every validation item above passes.
+Any unexplained tail-latency, ordering, compatibility, or unchanged-path
+regression changes the production verdict to `NO GO`.

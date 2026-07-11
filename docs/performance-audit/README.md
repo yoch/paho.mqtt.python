@@ -29,7 +29,7 @@ acceptance requirements for these projects.
 | [13 - Reconnect Reset and Replay](13-reconnect-replay.md) | P2 | **Done** | reconnect reset, CONNACK replay | Remove repeated invariant work without a second queue. |
 | [14 - Contiguous Ingress Decoder](14-contiguous-ingress-decoder.md) | P0 | **GO with conditions** | built-in ingress pump, `loop_read()` | Direct buffered decode kept; public batching prototype rejected. |
 | [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **GO with conditions** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
-| [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Planned** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
+| [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Prototype branch; field validation required** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
 | [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **Planned** | successful CONNACK replay | Stage ordered retransmits before one drain. |
 | [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **Planned** | PUBLISH construction, vector writer | Avoid copying large immutable payloads. |
 | [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **Planned** | private built-in event loop | Bound and alternate read/write work. |
@@ -95,6 +95,10 @@ Third audit execution:
 - **15 GO with conditions:** one inflight refill per private ACK batch improves
   the permanent 100-PUBACK scenario by about 132%; retain the isolated-ACK
   guardrail after a measured sub-microsecond (~4.4%) internal-loop cost.
+- **16 prototype isolated:** `perf/plan16-sendmsg-prototype` at `25d75f9`
+  improves local TCP/Unix throughput and cuts writes by 98%, but is deliberately
+  absent here pending real workload, tail-latency, concurrency, and failure-mode
+  validation. The CPU-only control regressed, so no production `GO` is implied.
 
 Recommended follow-ups:
 
