@@ -457,7 +457,9 @@ class Properties:
         value_end = value_start + length
         if value_end > end:
             raise MalformedPacket("Length delimited string too long")
-        value = buffer[value_start:value_end].decode("utf-8")
+        # str(..., "utf-8") decodes bytes, bytearray and memoryview alike;
+        # unpack() may receive a memoryview slice of the read buffer.
+        value = str(buffer[value_start:value_end], "utf-8")
         if "\x00" in value:
             raise MalformedPacket("[MQTT-1.5.4-2] Null found in UTF-8 data")
         if "\ufeff" in value:
@@ -488,7 +490,8 @@ class Properties:
             value_end = value_start + length
             if value_end > end:
                 raise MalformedPacket("Length delimited binary data too long")
-            return buffer[value_start:value_end], value_end
+            # Copy out: the underlying read buffer is reused between packets.
+            return bytes(buffer[value_start:value_end]), value_end
         if property_type == self._TYPE_UTF8_STRING:
             return self._read_utf_at(buffer, pos, end)
         if property_type == self._TYPE_UTF8_STRING_PAIR:
