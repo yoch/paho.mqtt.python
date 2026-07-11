@@ -8,6 +8,9 @@ The first version is intentionally brokerless. It focuses on CPU-heavy paths
 that are useful before optimizing packet parsing, packet writing, MQTT v5
 properties, reason codes, callback matching, and logging.
 
+For end-to-end **client** benchmarks against a real broker (throughput, latency,
+integrity, A/B comparisons), see [`benchmarks/client/`](client/).
+
 ## Quick Start
 
 List scenarios:

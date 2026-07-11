@@ -1,0 +1,1562 @@
+{
+  "schema_version": 1,
+  "kind": "core_smoke_summary",
+  "source_file": "core-smoke-08d7b1e-20260711T194225Z.json",
+  "suite": "core",
+  "estimate": {
+    "estimated_minutes": 2.9,
+    "points": 41,
+    "runs_per_point": 1,
+    "scenarios": 12,
+    "suite": "core"
+  },
+  "environment": {
+    "cpu_count": 8,
+    "cpu_model": "Intel(R) Core(TM) i7-3770 CPU @ 3.40GHz",
+    "loadavg": [
+      2.73486328125,
+      2.37646484375,
+      2.5029296875
+    ],
+    "machine": "x86_64",
+    "physical_cpu_groups": [
+      [
+        0,
+        4
+      ],
+      [
+        1,
+        5
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        3,
+        7
+      ]
+    ],
+    "platform": "Linux-6.8.0-134-lowlatency-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "scaling_governor": "schedutil"
+  },
+  "broker": {
+    "managed_broker": true,
+    "image": "eclipse-mosquitto:2.0.20@sha256:21421af7b32bf9ce508e9090c8eb13bb81f410ca778dc205506180a6f862d0eb",
+    "image_digest": "eclipse-mosquitto@sha256:21421af7b32bf9ce508e9090c8eb13bb81f410ca778dc205506180a6f862d0eb",
+    "host": "127.0.0.1",
+    "port": 11883,
+    "tls_port": 11884,
+    "config_hash": "3f2ae52bdab8face0a6c9a4d1060486a93630477387c9bd5785bc24cefb51d0d"
+  },
+  "points": [
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "binary64",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 29592.254673590003,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 29592.254673590003,
+          "payload_bytes_per_s": 1893904.2991097602,
+          "completed_in_window": 88786,
+          "latency_summary": {
+            "max_ms": 5.719938,
+            "n_success": 50000,
+            "p50_ms": 1.010044,
+            "p95_ms": 1.730626,
+            "p99_ms": 2.1783,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "event1k",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 30648.637039573932,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 30648.637039573932,
+          "payload_bytes_per_s": 31384204.328523707,
+          "completed_in_window": 91946,
+          "latency_summary": {
+            "max_ms": 5.164034,
+            "n_success": 50000,
+            "p50_ms": 1.449603,
+            "p95_ms": 2.036875,
+            "p99_ms": 2.518441,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "record16k",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 21114.87394378108,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 21114.87394378108,
+          "payload_bytes_per_s": 345946094.6949092,
+          "completed_in_window": 63348,
+          "latency_summary": {
+            "max_ms": 6.395147,
+            "n_success": 50000,
+            "p50_ms": 2.760428,
+            "p95_ms": 3.716962,
+            "p99_ms": 4.277375,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 27110.294574627253,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 27110.294574627253,
+          "payload_bytes_per_s": 6940235.411104577,
+          "completed_in_window": 81331,
+          "latency_summary": {
+            "max_ms": 4.321376,
+            "n_success": 50000,
+            "p50_ms": 1.152219,
+            "p95_ms": 2.069126,
+            "p99_ms": 2.918639,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "blob1m",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "empty0",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 29980.91118386615,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 29980.91118386615,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 89991,
+          "latency_summary": {
+            "max_ms": 5.608827,
+            "n_success": 50000,
+            "p50_ms": 1.738746,
+            "p95_ms": 2.570618,
+            "p99_ms": 3.205678,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_payload_sweep_qos0",
+      "payload": "block64k",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 8702.018249870738,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 8702.018249870738,
+          "payload_bytes_per_s": 570295468.0235287,
+          "completed_in_window": 26109,
+          "latency_summary": {
+            "max_ms": 14.605206,
+            "n_success": 26129,
+            "p50_ms": 6.555328,
+            "p95_ms": 9.547475,
+            "p99_ms": 11.12754,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos_sweep_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 16293.308165607683,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 16293.308165607683,
+          "payload_bytes_per_s": 4171086.890395567,
+          "completed_in_window": 48880,
+          "latency_summary": {
+            "max_ms": 43.006639,
+            "n_success": 48934,
+            "p50_ms": 3.420942,
+            "p95_ms": 4.596345,
+            "p99_ms": 6.544559,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos_sweep_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 24579.799065285588,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 24579.799065285588,
+          "payload_bytes_per_s": 6292428.5607131105,
+          "completed_in_window": 73742,
+          "latency_summary": {
+            "max_ms": 15.478484,
+            "n_success": 50000,
+            "p50_ms": 1.173493,
+            "p95_ms": 3.762678,
+            "p99_ms": 6.534364,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos_sweep_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 2,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 10561.089167965214,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 10561.089167965214,
+          "payload_bytes_per_s": 2703638.826999095,
+          "completed_in_window": 31684,
+          "latency_summary": {
+            "max_ms": 43.982888,
+            "n_success": 31745,
+            "p50_ms": 5.721355,
+            "p95_ms": 9.88377,
+            "p99_ms": 13.345629,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos1_inflight",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 16448.632749640437,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 16448.632749640437,
+          "payload_bytes_per_s": 4210849.983907952,
+          "completed_in_window": 49346,
+          "latency_summary": {
+            "max_ms": 40.87705,
+            "n_success": 49365,
+            "p50_ms": 0.806969,
+            "p95_ms": 1.556953,
+            "p99_ms": 1.92936,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos1_inflight",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 1,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 5468.69053591621,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 5468.69053591621,
+          "payload_bytes_per_s": 1399984.7771945498,
+          "completed_in_window": 16407,
+          "latency_summary": {
+            "max_ms": 10.463655,
+            "n_success": 16414,
+            "p50_ms": 1.300915,
+            "p95_ms": 1.800996,
+            "p99_ms": 2.407724,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "pub_qos1_inflight",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 100,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 19968.561951509197,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 19968.561951509197,
+          "payload_bytes_per_s": 5111951.859586354,
+          "completed_in_window": 59906,
+          "latency_summary": {
+            "max_ms": 12.836036,
+            "n_success": 50000,
+            "p50_ms": 3.427768,
+            "p95_ms": 6.112424,
+            "p99_ms": 8.585536,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_16383",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 21192.964212134317,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 21192.964212134317,
+          "payload_bytes_per_s": 345699632.22833496,
+          "completed_in_window": 63579,
+          "latency_summary": {
+            "max_ms": 8.26788,
+            "n_success": 50000,
+            "p50_ms": 2.646354,
+            "p95_ms": 3.248114,
+            "p99_ms": 4.481268,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_127",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 29522.318694773592,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 29522.318694773592,
+          "payload_bytes_per_s": 1653249.8469073211,
+          "completed_in_window": 88578,
+          "latency_summary": {
+            "max_ms": 4.416352,
+            "n_success": 50000,
+            "p50_ms": 1.45535,
+            "p95_ms": 2.171281,
+            "p99_ms": 2.624307,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_128",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 28089.226762818467,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 28089.226762818467,
+          "payload_bytes_per_s": 1601085.9254806528,
+          "completed_in_window": 84268,
+          "latency_summary": {
+            "max_ms": 9.612183,
+            "n_success": 50000,
+            "p50_ms": 1.057184,
+            "p95_ms": 2.159065,
+            "p99_ms": 4.041043,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_16384",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 21507.618401829783,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 21507.618401829783,
+          "payload_bytes_per_s": 350853778.98904926,
+          "completed_in_window": 64528,
+          "latency_summary": {
+            "max_ms": 6.498595,
+            "n_success": 50000,
+            "p50_ms": 2.570632,
+            "p95_ms": 3.609289,
+            "p99_ms": 5.025677,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "remaining_length_boundaries",
+      "payload": "rl_126",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 29076.267157515023,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 29076.267157515023,
+          "payload_bytes_per_s": 1599194.6936633263,
+          "completed_in_window": 87236,
+          "latency_summary": {
+            "max_ms": 4.663089,
+            "n_success": 50000,
+            "p50_ms": 1.393131,
+            "p95_ms": 2.244923,
+            "p99_ms": 2.869532,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_exact_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3655.5069283263883,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 3655.5069283263883,
+          "payload_bytes_per_s": 935809.7736515554,
+          "completed_in_window": 10967,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "plus",
+      "topic_topology": "fleet4k_zipf",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3767.8777650279326,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 3767.8777650279326,
+          "payload_bytes_per_s": 964576.7078471507,
+          "completed_in_window": 11304,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3230.583840955546,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 3230.583840955546,
+          "payload_bytes_per_s": 827029.4632846197,
+          "completed_in_window": 9692,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_zipf",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3730.2102674833905,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 3730.2102674833905,
+          "payload_bytes_per_s": 954933.828475748,
+          "completed_in_window": 11191,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_hierarchy_telemetry",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "plus",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3678.9019646177376,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 3678.9019646177376,
+          "payload_bytes_per_s": 941798.9029421408,
+          "completed_in_window": 11037,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_callback_matching",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": 16,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 0,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_callback_matching",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": 1,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 0,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "sub_callback_matching",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "capacity",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": 256,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 0.0,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 0.0,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 0,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "duplex_gateway",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 1,
+      "cadence": "burst",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 28131.231179453054,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 28131.231179453054,
+          "payload_bytes_per_s": 7201595.181939982,
+          "completed_in_window": 84394,
+          "latency_summary": {
+            "max_ms": 5.415131,
+            "n_success": 50000,
+            "p50_ms": 1.051184,
+            "p95_ms": 1.859281,
+            "p99_ms": 2.46371,
+            "p99_published": true
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "duplex_gateway",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 1,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.0257862433962,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 999.0257862433962,
+          "payload_bytes_per_s": 255750.60127830942,
+          "completed_in_window": 2998,
+          "latency_summary": {
+            "max_ms": 5.48552,
+            "n_success": 2968,
+            "p50_ms": 0.158155,
+            "p95_ms": 0.755706,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "burst_recovery",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "burst",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "hash",
+      "topic_topology": "fleet4k_uniform",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 3715.904945901389,
+      "workers": [
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 3715.904945901389,
+          "payload_bytes_per_s": 951271.6661507556,
+          "completed_in_window": 11148,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "telemetry256",
+      "qos_publish": 2,
+      "qos_subscribe": 2,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.6314113339859,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 999.6314113339859,
+          "payload_bytes_per_s": 255905.64130150038,
+          "completed_in_window": 2999,
+          "latency_summary": {
+            "max_ms": 41.727563,
+            "n_success": 3000,
+            "p50_ms": 1.306558,
+            "p95_ms": 1.635324,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 1003.3118400556339,
+          "payload_bytes_per_s": 256847.83105424227,
+          "completed_in_window": 3010,
+          "latency_summary": {
+            "max_ms": 68.100854,
+            "n_success": 3010,
+            "p50_ms": 1.373649,
+            "p95_ms": 2.156532,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 51,
+            "out_of_order": 2,
+            "received": 3010,
+            "unexpected": 61,
+            "unique": 2949
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.6367572014428,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 999.6367572014428,
+          "payload_bytes_per_s": 255907.00984356937,
+          "completed_in_window": 2999,
+          "latency_summary": {
+            "max_ms": 40.406166,
+            "n_success": 3000,
+            "p50_ms": 1.172916,
+            "p95_ms": 1.31312,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 994.3080759217308,
+          "payload_bytes_per_s": 254542.8674359631,
+          "completed_in_window": 2983,
+          "latency_summary": {
+            "max_ms": 4.976519,
+            "n_success": 2983,
+            "p50_ms": 0.276935,
+            "p95_ms": 0.459339,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 52,
+            "out_of_order": 1,
+            "received": 2983,
+            "unexpected": 35,
+            "unique": 2948
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "empty0",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.9692302769197,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 999.9692302769197,
+          "payload_bytes_per_s": 0.0,
+          "completed_in_window": 3000,
+          "latency_summary": {
+            "max_ms": 1.546605,
+            "n_success": 3000,
+            "p50_ms": 0.135563,
+            "p95_ms": 0.240747,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 607.9704666188325,
+          "payload_bytes_per_s": 24318.818664753297,
+          "completed_in_window": 1824,
+          "latency_summary": {
+            "max_ms": 62.948067,
+            "n_success": 1824,
+            "p50_ms": 0.412455,
+            "p95_ms": 58.76938,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 2008,
+            "out_of_order": 1,
+            "received": 1824,
+            "unexpected": 832,
+            "unique": 992
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "e2e_integrity",
+      "payload": "telemetry256",
+      "qos_publish": 0,
+      "qos_subscribe": 0,
+      "cadence": "steady50",
+      "inflight": 20,
+      "load_fraction": null,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 999.9690722916731,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 999.9690722916731,
+          "payload_bytes_per_s": 255992.08250666832,
+          "completed_in_window": 3000,
+          "latency_summary": {
+            "max_ms": 4.479392,
+            "n_success": 2997,
+            "p50_ms": 0.146263,
+            "p95_ms": 0.321786,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "subscriber",
+          "ok": true,
+          "msgs_per_s": 426.98999590818767,
+          "payload_bytes_per_s": 109309.43895249604,
+          "completed_in_window": 1281,
+          "latency_summary": {
+            "max_ms": 47.899189,
+            "n_success": 1281,
+            "p50_ms": 0.33149,
+            "p95_ms": 46.342907,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": {
+            "duplicates": 0,
+            "expected": 3000,
+            "missing": 2004,
+            "out_of_order": 1,
+            "received": 1281,
+            "unexpected": 285,
+            "unique": 996
+          },
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.75,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 749.6519340067622,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 749.6519340067622,
+          "payload_bytes_per_s": 191910.89510573112,
+          "completed_in_window": 2249,
+          "latency_summary": {
+            "max_ms": 41.227327,
+            "n_success": 2250,
+            "p50_ms": 1.547998,
+            "p95_ms": 1.80886,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.5,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 499.9810482166625,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 499.9810482166625,
+          "payload_bytes_per_s": 127995.1483434656,
+          "completed_in_window": 1500,
+          "latency_summary": {
+            "max_ms": 2.258836,
+            "n_success": 1500,
+            "p50_ms": 0.302962,
+            "p95_ms": 0.479877,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.9,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 899.6163289315492,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 899.6163289315492,
+          "payload_bytes_per_s": 230301.7802064766,
+          "completed_in_window": 2699,
+          "latency_summary": {
+            "max_ms": 41.356194,
+            "n_success": 2700,
+            "p50_ms": 1.317061,
+            "p95_ms": 1.522545,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "puback_latency_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 0,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.25,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 249.99179568601807,
+      "workers": [
+        {
+          "role": "publisher",
+          "ok": true,
+          "msgs_per_s": 249.99179568601807,
+          "payload_bytes_per_s": 63997.899695620625,
+          "completed_in_window": 750,
+          "latency_summary": {
+            "max_ms": 3.047502,
+            "n_success": 750,
+            "p50_ms": 0.35739,
+            "p95_ms": 1.111826,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": null
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.75,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 747.9827235936402,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "msgs_per_s": 747.9827235936402,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 2244,
+          "latency_summary": {
+            "max_ms": 93.731512,
+            "n_success": 2244,
+            "p50_ms": 25.34679,
+            "p95_ms": 49.584314,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.5,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 502.98773665522873,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "msgs_per_s": 502.98773665522873,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 1509,
+          "latency_summary": {
+            "max_ms": 44.089814,
+            "n_success": 1509,
+            "p50_ms": 22.317028,
+            "p95_ms": 40.803814,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.9,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 899.6499145872772,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "msgs_per_s": 899.6499145872772,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 2699,
+          "latency_summary": {
+            "max_ms": 79.133442,
+            "n_success": 2699,
+            "p50_ms": 27.139375,
+            "p95_ms": 51.060326,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    },
+    {
+      "scenario": "application_rtt_qos1",
+      "payload": "telemetry256",
+      "qos_publish": 1,
+      "qos_subscribe": 1,
+      "cadence": "loaded75",
+      "inflight": 20,
+      "load_fraction": 0.25,
+      "subscription": "exact",
+      "topic_topology": "single",
+      "callback_filters": null,
+      "status": "valid",
+      "reasons": [],
+      "bottleneck": "sut_limited",
+      "primary_msgs_per_s": 251.99337862187593,
+      "workers": [
+        {
+          "role": "responder",
+          "ok": true,
+          "msgs_per_s": null,
+          "payload_bytes_per_s": null,
+          "completed_in_window": null,
+          "latency_summary": null,
+          "integrity": null,
+          "failure_rate": null
+        },
+        {
+          "role": "rtt_initiator",
+          "ok": true,
+          "msgs_per_s": 251.99337862187593,
+          "payload_bytes_per_s": null,
+          "completed_in_window": 756,
+          "latency_summary": {
+            "max_ms": 44.497759,
+            "n_success": 756,
+            "p50_ms": 22.368391,
+            "p95_ms": 40.449973,
+            "p99_ms": null,
+            "p99_published": false
+          },
+          "integrity": null,
+          "failure_rate": 0.0
+        }
+      ]
+    }
+  ],
+  "source_root": "/home/yoch/paho.mqtt.python",
+  "profile": "smoke"
+}
