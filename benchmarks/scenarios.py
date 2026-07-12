@@ -16,7 +16,7 @@ from paho.mqtt.properties import Properties
 from paho.mqtt.reasoncodes import ReasonCode
 
 from fakes import FakeRecvSocket, FakeSendSocket, NonBlockingRecvSocket, make_out_packet, packet_deque
-from harness import Scenario
+from micro_harness import Scenario
 
 
 TOPIC = b"devices/device-0001/telemetry"

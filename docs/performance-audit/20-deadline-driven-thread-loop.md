@@ -77,6 +77,10 @@ Prototype retained after component isolation:
   keepalive deadline. A keepalive-disabled client uses a one-hour interruptible
   upper bound. Public loop timeouts are unchanged.
 - Exit the thread promptly without waiting for `_out_messages` to become empty.
+  (Post-audit revision: the historical flush condition was restored to preserve
+  compatibility. Idle stop stays sub-millisecond because the selector wakeup
+  and empty queues make the flush check pass immediately; only clients with
+  pending outgoing traffic keep the historical drain-before-exit behaviour.)
 - Preserve all pending queues/state so a later loop/reconnect can continue.
 - Remove deadline-driven waiting if timer accuracy or active wakeup latency
   fails its guardrail.

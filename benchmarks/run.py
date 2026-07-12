@@ -8,12 +8,19 @@ import os
 import sys
 
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "src")
+# Prefer this directory for local modules (micro_harness, scenarios, fakes)
+# so imports do not collide with benchmarks/client/harness.py when both are
+# on sys.path (e.g. under pytest).
+if HERE in sys.path:
+    sys.path.remove(HERE)
+sys.path.insert(0, HERE)
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-from harness import build_result, write_json  # noqa: E402
+from micro_harness import build_result, write_json  # noqa: E402
 from scenarios import SCENARIOS  # noqa: E402
 
 

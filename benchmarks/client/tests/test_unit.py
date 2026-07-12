@@ -8,8 +8,12 @@ import unittest
 from pathlib import Path
 
 CLIENT_DIR = Path(__file__).resolve().parents[1]
-if str(CLIENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CLIENT_DIR))
+_client_dir = str(CLIENT_DIR)
+# Always pin client modules first: pytest prepends benchmarks/, which would
+# otherwise shadow client harness/scenarios with the brokerless microbench files.
+while _client_dir in sys.path:
+    sys.path.remove(_client_dir)
+sys.path.insert(0, _client_dir)
 
 from loadgen import parse_emqtt_output, nominal_rate, interval_for_rate  # noqa: E402
 from metrics import (  # noqa: E402
@@ -140,7 +144,7 @@ class WorkloadTests(unittest.TestCase):
         self.assertEqual(SCENARIO_BY_NAME["sub_exact_qos1_capacity"].qos_publish, 1)
         self.assertEqual(SCENARIO_BY_NAME["sub_exact_qos1_capacity"].qos_subscribe, 1)
         self.assertEqual(SCENARIO_BY_NAME["pub_qos1_sendmsg_capacity"].inflight, 100)
-        self.assertEqual(SCENARIO_BY_NAME["pub_segment_threshold_16k"].payload, "record16k")
+        self.assertEqual(SCENARIO_BY_NAME["pub_payload_16k"].payload, "record16k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_64k"].payload, "block64k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_128k"].payload, "block128k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_256k"].payload, "block256k")

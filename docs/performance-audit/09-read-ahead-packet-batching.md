@@ -37,7 +37,10 @@ Environment: CPython 3.12.3, Linux x86-64, 15 runs where applicable.
 - Added a 100-packet fairness cap per readiness event.
 - Short reads mark the transport drained, avoiding a final EAGAIN syscall/exception.
 - Buffered bytes count as pending for the next select iteration.
-- Public `loop_read()` keeps its existing behavior; WebSocket keeps its own buffering.
+- Public `loop_read()` keeps its existing behavior; WebSocket keeps its own
+  frame buffering (the batched parser still requests up to the read-ahead
+  chunk from the wrapper, which returns at most one frame per call, so the
+  64 KiB chunk sizing only applies to raw stream sockets).
 - Socket close/reconnect discards prefetched bytes.
 
 ## After Measurements

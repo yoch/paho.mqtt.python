@@ -2296,6 +2296,10 @@ class Client:
             if self._read_ahead_exhausted:
                 return MQTTErrorCode.MQTT_ERR_AGAIN
             try:
+                # The chunk size is an upper bound, not a raw socket read: the
+                # WebSocket wrapper returns at most one frame per recv() and
+                # keeps its own frame buffering, so read-ahead over WebSocket
+                # stays bounded by the wrapper rather than this constant.
                 data = self._sock_recv(_READAHEAD_CHUNK_SIZE)
             except BlockingIOError:
                 return MQTTErrorCode.MQTT_ERR_AGAIN
@@ -2554,7 +2558,12 @@ class Client:
                 # either called loop_forever() when in single threaded mode, or
                 # in multi threaded mode when loop_stop() has been called and
                 # so no other threads can access _out_packet or _messages.
-                if self._thread_terminate is True:
+                # Historical behaviour: keep looping until pending outgoing
+                # traffic is flushed. Stop stays fast for idle clients because
+                # loop_stop() wakes the selector and both queues are empty.
+                if (self._thread_terminate is True
+                    and len(self._out_packet) == 0
+                        and len(self._out_messages) == 0):
                     rc = MQTTErrorCode.MQTT_ERR_NOMEM
                     run = False
 

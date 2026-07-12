@@ -9,8 +9,10 @@ import sys
 from pathlib import Path
 
 CLIENT_DIR = Path(__file__).resolve().parent
-if str(CLIENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CLIENT_DIR))
+_client_dir = str(CLIENT_DIR)
+while _client_dir in sys.path:
+    sys.path.remove(_client_dir)
+sys.path.insert(0, _client_dir)
 
 from broker import broker_down, broker_up, ensure_certs  # noqa: E402
 from harness import calibrate, compare_sources, run_scenario, run_suite  # noqa: E402
