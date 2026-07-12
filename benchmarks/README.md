@@ -38,6 +38,12 @@ PYTHONPATH=src:benchmarks python benchmarks/segmented_payload_eval.py
 PYTHONPATH=src python benchmarks/segmented_payload_socket_eval.py
 ```
 
+Run the rejected project 19 starvation control:
+
+```bash
+PYTHONPATH=src:benchmarks python benchmarks/duplex_scheduler_eval.py
+```
+
 Save a baseline and a candidate:
 
 ```bash

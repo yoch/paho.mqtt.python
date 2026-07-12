@@ -32,7 +32,7 @@ acceptance requirements for these projects.
 | [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Prototype branch; field validation required** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
 | [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **GO with conditions** | successful CONNACK replay | Stage ordered retransmits in bounded drains. |
 | [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **GO with conditions** | PUBLISH construction, writer | Avoid copying large immutable payloads. |
-| [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **Planned** | private built-in event loop | Bound and alternate read/write work. |
+| [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **NO GO** | private built-in event loop | Synthetic fairness gain did not pass publish guardrails. |
 | [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **Planned** | `loop_start()`, `loop_stop()`, reconnect wait | Replace polling with timer/control wakeups. |
 | [21 - WebSocket Inbound Streaming](21-websocket-inbound-streaming.md) | P2 | **Planned** | `_WebsocketWrapper.recv()` / `pending()` | Decode frames from bounded read-ahead buffers. |
 | [22 - Callback and State-Lock Decoupling](22-callback-state-lock-decoupling.md) | P1 | **Planned** | PUBACK/PUBCOMP/PUBREL callbacks | Run user callbacks outside message-state mutexes. |
@@ -105,6 +105,9 @@ Third audit execution:
 - **18 GO with conditions:** immutable payload segmentation removes more than
   99.99% of Paho's additional 64-MiB allocation and starts socket writes about
   40 ms earlier; small, mutable, TLS, and WebSocket paths remain contiguous.
+- **19 NO GO:** bounded duplex turns reduce a synthetic 10,000-packet
+  starvation interval by about 90%, but realistic ABBA publish controls regress
+  from 2.3% to 18.5% depending on activation; all production code was removed.
 
 Recommended follow-ups:
 
