@@ -60,13 +60,13 @@ on Unix and 67.899 ms on TCP. Its first `send()` starts after 38.776 ms and
 
 ## Implementation
 
-- For immutable `bytes` of at least 16 KiB on plain TCP/Unix, retain a private
+- For immutable `bytes` of at least 1 MiB on plain TCP/Unix, retain a private
   `(header, payload)` tuple instead of extending one `bytearray`.
 - `_packet_write()` sends both segments immediately when writable; it never
   waits for another message or a batch.
 - The existing global packet position maps partial writes across the boundary;
   no second queue or packet class is introduced.
-- Payloads below 16 KiB, `bytearray`, TLS, and WebSocket retain the exact
+- Payloads below 1 MiB, `bytearray`, TLS, and WebSocket retain the exact
   contiguous builder.
 - QoS 0 releases the payload reference at packet completion. QoS 1/2 retain it
   in the authoritative message until ACK completion for retransmission.
@@ -96,9 +96,27 @@ Paired local-socket results (two warmups, seven ABBA runs):
 | TCP, 1 MiB | 0.717 ms | 0.399 ms | **+79.8%** | 0.143 -> 0.018 ms | 1 -> 2 |
 | TCP, 64 MiB | 67.899 ms | 21.425 ms | **+216.9%** | 40.764 -> 0.032 ms | 1 -> 2 |
 
-The 128-byte path is unchanged by construction. Its socket/thread harness time
-is too small and noisy to use as a regression signal; the 16-KiB threshold
-prevents it from entering segmented code.
+The original 16-KiB threshold failed later realistic validation. Dedicated
+ABBA smoke controls measured **-7.64% at 16 KiB** with an entirely negative
+confidence interval, and a noisy **-5.32% at 64 KiB**. At 1 MiB, six-block
+ABBA smoke measured **+5.14%** in the median, with a wide interval spanning
+zero. Repeating the 16-KiB comparison after raising the threshold restored the
+contiguous path and improved median capacity by **13.84%** over the segmented
+variant; all 24 runs were valid and the confidence interval excluded zero.
+
+Four-block ABBA probes then checked the intermediate boundary. Results below
+compare the retained contiguous path against the old segmented path:
+
+| Payload | Contiguous vs segmented | Confidence interval | Interpretation |
+| ---: | ---: | ---: | --- |
+| 128 KiB | **+0.08%** | -20.71% to +3.03% | no detectable difference; noisy |
+| 256 KiB | **-3.48%** | -5.79% to +1.05% | possible segmentation benefit; inconclusive |
+| 512 KiB | **-1.83%** | -4.73% to -0.11% | segmentation slightly faster, below 3% practical threshold |
+
+The retained production threshold remains 1 MiB for now. The 512-KiB result
+makes it a credible later boundary, but capacity alone does not establish
+single-message latency or QoS 1 replay behaviour. Payloads below 1 MiB
+therefore remain on the contiguous path until those checks are made.
 
 Focused tests passed 25/25. The enlarged suite passed **196 tests with 21
 skipped**.
@@ -114,15 +132,15 @@ first byte improves by one to three orders of magnitude because the header can
 be submitted without copying the payload. This benefit is independent of
 project 16 and does not rely on `sendmsg()`.
 
-The threshold isolates the small-message workloads that dominate realistic
-publish smoke results. TLS and WebSocket are unchanged. Remaining risk is
+The corrected 1-MiB threshold isolates the small and medium messages for which
+the second syscall has a confirmed or suspected cost. TLS and WebSocket are unchanged. Remaining risk is
 transport realism: a broker-backed run should confirm RSS, QoS 1 ACK/replay,
 connection loss, and p95/p99 latency before upstream submission.
 
 ## Verdict
 
 **GO with conditions.** Keep segmentation only for immutable `bytes` payloads
-of at least 16 KiB on plain TCP/Unix. Before upstream submission, validate
-16 KiB, 1 MiB, and 64 MiB QoS 0/QoS 1 against a real broker, including slow
+of at least 1 MiB on plain TCP/Unix. Before upstream submission, validate
+1 MiB and 64 MiB QoS 0/QoS 1 against a real broker, including slow
 receivers, disconnect/replay, RSS, and tail latency. Any mutation, ordering,
 lifecycle, or small-message regression changes the verdict to `NO GO`.

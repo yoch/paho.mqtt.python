@@ -104,7 +104,10 @@ Third audit execution:
   1,000 to 16; the faster but unbounded single-drain variant was rejected.
 - **18 GO with conditions:** immutable payload segmentation removes more than
   99.99% of Paho's additional 64-MiB allocation and starts socket writes about
-  40 ms earlier; small, mutable, TLS, and WebSocket paths remain contiguous.
+  40 ms earlier. Follow-up ABBA found -7.6% at 16 KiB, so the threshold is now
+  1 MiB. Probes at 128/256/512 KiB found no reason to reopen the smaller
+  boundaries yet; 512 KiB remains a plausible follow-up after latency and QoS 1
+  validation. Smaller, mutable, TLS, and WebSocket paths remain contiguous.
 - **19 NO GO:** bounded duplex turns reduce a synthetic 10,000-packet
   starvation interval by about 90%, but realistic ABBA publish controls regress
   from 2.3% to 18.5% depending on activation; all production code was removed.

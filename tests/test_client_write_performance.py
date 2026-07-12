@@ -243,7 +243,7 @@ def test_large_immutable_publish_queues_header_and_payload_segments():
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     mqttc._sock = FakeSendSocket()
     mqttc._thread = threading.Thread(target=lambda: None)
-    payload = b"x" * 16384
+    payload = b"x" * (1024 * 1024)
 
     info = mqttc.publish("large/topic", payload, qos=0)
 
@@ -256,9 +256,9 @@ def test_large_immutable_publish_queues_header_and_payload_segments():
 
 
 def test_segmented_publish_partial_writes_preserve_exact_wire_bytes():
-    payload = b"0123456789abcdef" * 1024
+    payload = b"0123456789abcdef" * (64 * 1024)
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
-    mqttc._sock = RecordingPartialSendSocket(chunk=7)
+    mqttc._sock = RecordingPartialSendSocket(chunk=4096)
     mqttc._thread = threading.Thread(target=lambda: None)
 
     info = mqttc.publish("large/topic", payload, qos=0)
@@ -271,7 +271,7 @@ def test_segmented_publish_partial_writes_preserve_exact_wire_bytes():
 
 
 def test_mutable_and_websocket_payloads_keep_contiguous_snapshot():
-    mutable = bytearray(b"x" * 16384)
+    mutable = bytearray(b"x" * (1024 * 1024))
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     mqttc._sock = FakeSendSocket()
     mqttc._thread = threading.Thread(target=lambda: None)
@@ -280,7 +280,7 @@ def test_mutable_and_websocket_payloads_keep_contiguous_snapshot():
     packet = mqttc._out_packet[0]["packet"]
     assert isinstance(packet, bytearray)
     mutable[:] = b"y" * len(mutable)
-    assert packet.endswith(b"x" * 16384)
+    assert packet.endswith(b"x" * (1024 * 1024))
 
     websocket_client = client.Client(
         callback_api_version=CallbackAPIVersion.VERSION2,
@@ -288,7 +288,7 @@ def test_mutable_and_websocket_payloads_keep_contiguous_snapshot():
     )
     websocket_client._sock = FakeSendSocket()
     websocket_client._thread = threading.Thread(target=lambda: None)
-    websocket_client.publish("large/topic", b"z" * 16384, qos=0)
+    websocket_client.publish("large/topic", b"z" * (1024 * 1024), qos=0)
     assert isinstance(websocket_client._out_packet[0]["packet"], bytearray)
 
 
@@ -306,7 +306,7 @@ def test_segmented_payload_reference_is_released_after_completion():
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     mqttc._sock = FakeSendSocket()
     mqttc._thread = threading.Thread(target=lambda: None)
-    payload = b"x" * 16384
+    payload = b"x" * (1024 * 1024)
     initial_references = sys.getrefcount(payload)
 
     mqttc.publish("large/topic", payload, qos=0)
@@ -317,7 +317,7 @@ def test_segmented_payload_reference_is_released_after_completion():
 
 
 def test_segmented_payload_eagain_after_header_resumes_at_payload():
-    payload = b"x" * 16384
+    payload = b"x" * (1024 * 1024)
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     first_socket = FailOnSecondSendSocket()
     mqttc._sock = first_socket

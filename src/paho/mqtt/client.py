@@ -3726,7 +3726,7 @@ class Client:
             packet.extend(packed_properties)
 
         if (
-            payloadlen >= 16384
+            payloadlen >= 1024 * 1024
             and isinstance(payload, bytes)
             and self._transport != "websockets"
             and not isinstance(self._sock, ssl.SSLSocket)
