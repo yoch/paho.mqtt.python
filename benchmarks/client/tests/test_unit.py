@@ -85,6 +85,9 @@ class WorkloadTests(unittest.TestCase):
         self.assertEqual(build_payload("empty0"), b"")
         self.assertEqual(len(build_payload("binary64")), 64)
         self.assertEqual(len(build_payload("telemetry256")), 256)
+        self.assertEqual(len(build_payload("block128k")), 128 * 1024)
+        self.assertEqual(len(build_payload("block256k")), 256 * 1024)
+        self.assertEqual(len(build_payload("block512k")), 512 * 1024)
         self.assertIsInstance(build_payload("telemetry256_str"), str)
 
     def test_header_roundtrip(self):
@@ -136,6 +139,9 @@ class WorkloadTests(unittest.TestCase):
     def test_regression_audit_scenarios_are_individually_addressable(self):
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_threshold_16k"].payload, "record16k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_64k"].payload, "block64k")
+        self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_128k"].payload, "block128k")
+        self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_256k"].payload, "block256k")
+        self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_512k"].payload, "block512k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_blob_1m"].payload, "blob1m")
         self.assertEqual(SCENARIO_BY_NAME["rtt_capacity_qos1"].cadence, "capacity")
 
