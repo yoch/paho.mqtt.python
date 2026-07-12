@@ -288,6 +288,7 @@ def run_point(
                 "load_fraction", "target_rate", "session_persistent", "callback_filters",
                 "overlapping_callbacks", "subscription", "topic_topology", "subscription_count",
                 "keepalive", "batch_size",
+                "count_socket_writes",
             ) if k in point or point.get(k) is not None},
         }
         # Fill defaults from point always.
@@ -435,7 +436,7 @@ def run_point(
             # Capacity points must exceed the historical ~5k delivery ceiling
             # even in smoke runs, otherwise A/B ingress optimisations are hidden
             # behind the offered rate and incorrectly labelled SUT-limited.
-            target = 40000.0
+            target = float(point.get("target_rate") or 40000.0)
             if point.get("fanin_mode") == "per_publisher":
                 target = clients * 1000.0
             if cadence == "periodic10":
@@ -453,7 +454,7 @@ def run_point(
                     # which also records the delivery. Cap avoids a connection storm.
                     clients = max(clients, min(callback_filters, 256))
                 # Keep aggregate offered load stable when client count grows with filters.
-                target = 40000.0
+                target = float(point.get("target_rate") or 40000.0)
             elif point.get("subscription") in ("plus", "hash") or str(point.get("topic_topology", "")).startswith("fleet"):
                 lg_topic = f"bench/{run_id}/org/acme/site/s0000/device/d0000/telemetry/temperature"
             else:
@@ -869,6 +870,7 @@ def compare_sources(
     scenario: str,
     *,
     blocks: int = 4,
+    point_index: int = 0,
     profile: str = "smoke",
     output: Optional[str] = None,
     load_profile_path: Optional[str] = None,
@@ -884,8 +886,13 @@ def compare_sources(
 
     scenario_obj = SCENARIO_BY_NAME[scenario]
     points = expand_scenario(scenario_obj, profile)
-    # Compare first variant only for focused A/B.
-    point = points[0]
+    if point_index < 0 or point_index >= len(points):
+        raise IndexError(
+            "point_index {} outside scenario {!r} range 0..{}".format(
+                point_index, scenario, len(points) - 1,
+            )
+        )
+    point = points[point_index]
     load_profile = read_json(load_profile_path) if load_profile_path else None
 
     baseline_rates = []
@@ -926,6 +933,7 @@ def compare_sources(
     payload = {
         "schema_version": 1,
         "scenario": scenario,
+        "point_index": point_index,
         "point": point,
         "order": order,
         "baseline_source": str(Path(baseline_source).resolve()),

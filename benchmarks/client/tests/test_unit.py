@@ -137,6 +137,9 @@ class WorkloadTests(unittest.TestCase):
         self.assertEqual(len(set(overlap)), 8)
 
     def test_regression_audit_scenarios_are_individually_addressable(self):
+        self.assertEqual(SCENARIO_BY_NAME["sub_exact_qos1_capacity"].qos_publish, 1)
+        self.assertEqual(SCENARIO_BY_NAME["sub_exact_qos1_capacity"].qos_subscribe, 1)
+        self.assertEqual(SCENARIO_BY_NAME["pub_qos1_sendmsg_capacity"].inflight, 100)
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_threshold_16k"].payload, "record16k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_64k"].payload, "block64k")
         self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_128k"].payload, "block128k")

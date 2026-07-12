@@ -87,6 +87,11 @@ Required real-usage validation before considering a merge:
 - run sustained broker tests and check CPU, RSS, tail latency, reconnect,
   callback ordering, and external-loop write registration.
 
+The prototype was rebased onto the completed audit branch for this validation
+on `perf/plan16-sendmsg-evaluation`: commit `86fb6ca` ports the original work,
+and `2560a02` restores the exact legacy completion path after realistic tests
+exposed its accidental overhead.
+
 ## After Measurements
 
 Exploratory results from the isolated branch (two warmups, 15 runs):
@@ -105,6 +110,28 @@ signals are why the prototype is not enabled on the current branch.
 Prototype validation completed so far: 40 focused tests passed; the enlarged
 suite passed **188 tests with 21 skipped**.
 
+Real-broker re-evaluation with the fixed client harness:
+
+| Scenario | Throughput effect | Network-write effect | Interpretation |
+| --- | ---: | ---: | --- |
+| QoS 0 unchanged-path, original port | **-16.31%**, CI excludes zero | not instrumented | real regression caused by an unnecessary completion-helper call |
+| QoS 0 unchanged-path, corrected port | **-6.28%**, CI -10.35% to +5.39% | unchanged | inconclusive and still outside the median guardrail; CPU-only control was -0.83% |
+| QoS 1 ingress, 10k msg/s | **-0.06%**, CI -1.75% to +0.66% | about **-78%** calls | delivered rate unchanged at fixed load |
+| QoS 1 ingress, 15k msg/s | **-0.36%**, CI -1.48% to +0.26% | **-79.7%** calls | no application gain; some runs approach broker saturation |
+| QoS 1 publish capacity, 12 A/B runs | **+4.37%**, CI -7.33% to +12.33% | **-42.2%** calls | positive median, not statistically established |
+| QoS 1 64-KiB fallback | **+9.35%**, CI -3.79% to +20.72% | unchanged path | wide positive noise on a path the prototype does not optimize |
+
+For QoS 1 publish, median latency moved from 3.56 to 3.52 ms at p50,
+6.41 to 5.78 ms at p95, and 8.26 to 6.91 ms at p99. These are encouraging
+secondary signals, but their throughput series remains inconclusive and the
+accepted-call reduction does not by itself satisfy a user-visible objective.
+
+The realistic instrumentation counts both `send()` and `sendmsg()` without
+changing Paho. At 10k QoS 1 ingress, the candidate typically groups about five
+PUBACK packets per `sendmsg()`. At publish capacity, individual sends remain
+common even though each actual `sendmsg()` groups roughly 35--42 PUBLISH
+packets; total write-call reduction is therefore only about 42%.
+
 ## Results Analysis
 
 The reduction from 100 writes to 2 is real and explains the strong loopback
@@ -113,15 +140,31 @@ is grouped. Nevertheless, the cost of constructing memoryviews is also real,
 and loopback throughput cannot establish that production tail latency,
 concurrency, socket-adapter compatibility, and failure behavior are unchanged.
 
-The current evidence supports preserving the experiment, not merging it.
-Production acceptance requires the real-usage matrix above to show no
-meaningful throughput, latency, CPU, memory, ordering, or lifecycle regression.
-TLS and WebSocket remain separate decisions and unchanged implementations.
+The new evidence explains why the large synthetic result does not transfer.
+The synthetic test preloads 100 four-byte packets and guarantees a full batch;
+real clients drain promptly and commonly expose only small batches. Reducing
+syscalls by 42--80% is real, but the remaining work is dominated by MQTT
+handling, callbacks, broker processing, and scheduling, so delivered throughput
+is neutral or statistically unresolved.
+
+The initial QoS 0 regression was also real and came from refactoring legacy
+completion into a Python helper. The evaluation branch fixes it by restoring
+the original inline path, yet the realistic unchanged-path control remains too
+noisy to certify the strict guardrail. The 64-KiB fallback's unexplained +9.35%
+is further evidence that effects of this size cannot be attributed reliably in
+the short broker profile.
+
+There is no justification for adding scatter/gather state, capability gating,
+partial multi-packet accounting, and custom-socket compatibility risk when the
+primary application metrics do not cross their thresholds. TLS and WebSocket
+remain unchanged and are not reopened.
 
 ## Verdict
 
-**GO with conditions (prototype only).** Preserve commit `25d75f9` on branch
-`perf/plan16-sendmsg-prototype` for real-world evaluation. Do not merge or
-enable it on the main audit branch until every validation item above passes.
-Any unexplained tail-latency, ordering, compatibility, or unchanged-path
-regression changes the production verdict to `NO GO`.
+**NO GO.** Do not merge the `sendmsg()` backend. It does not reach the required
+15% real TCP/Unix throughput improvement, and its syscall reduction is not a
+sufficient product outcome on its own. Preserve the corrected experiment on
+`perf/plan16-sendmsg-evaluation` at `2560a02`, plus the realistic scenarios and
+socket-call instrumentation, so a future profile with demonstrable
+write-syscall domination can revisit the decision without reconstructing the
+prototype.

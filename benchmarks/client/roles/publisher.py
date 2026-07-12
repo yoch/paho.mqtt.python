@@ -37,6 +37,26 @@ def _protocol_const(mqtt, name: str):
     return getattr(mqtt, name)
 
 
+class _CountingSocket:
+    def __init__(self, sock):
+        self._sock = sock
+        self.send_calls = 0
+        self.sendmsg_calls = 0
+        self.sendmsg_iovecs = 0
+
+    def send(self, data):
+        self.send_calls += 1
+        return self._sock.send(data)
+
+    def sendmsg(self, buffers, *args):
+        self.sendmsg_calls += 1
+        self.sendmsg_iovecs += len(buffers)
+        return self._sock.sendmsg(buffers, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -144,6 +164,14 @@ def main(argv=None) -> int:
     client.max_queued_messages = max_queued
     client.on_connect = on_connect
     client.on_publish = on_publish
+    counted_socket = None
+    if cfg.get("count_socket_writes"):
+        def on_socket_open(opened_client, userdata, sock):
+            nonlocal counted_socket
+            counted_socket = _CountingSocket(sock)
+            opened_client._sock = counted_socket
+
+        client.on_socket_open = on_socket_open
 
     if cfg.get("tls"):
         client.tls_set(ca_certs=cfg["ca_certs"])
@@ -221,6 +249,10 @@ def main(argv=None) -> int:
         state["socket_completed_qos0"] = 0
         state["mid_send_ns"].clear()
         state["inflight_local"] = 0
+    if counted_socket is not None:
+        counted_socket.send_calls = 0
+        counted_socket.sendmsg_calls = 0
+        counted_socket.sendmsg_iovecs = 0
 
     state["phase"] = "measure"
     t0 = time.perf_counter()
@@ -305,6 +337,9 @@ def main(argv=None) -> int:
         "scheduler_lags_ns": lags[:50000],
         "gc_count_start": list(gc_start),
         "gc_count_end": list(gc.get_count()),
+        "socket_send_calls": counted_socket.send_calls if counted_socket is not None else None,
+        "socket_sendmsg_calls": counted_socket.sendmsg_calls if counted_socket is not None else None,
+        "socket_sendmsg_iovecs": counted_socket.sendmsg_iovecs if counted_socket is not None else None,
         **counters,
     }
     write_json(cfg["result_path"], result)

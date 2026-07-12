@@ -112,6 +112,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         args.candidate_source,
         args.scenario,
         blocks=args.blocks,
+        point_index=args.point_index,
         profile=args.profile,
         output=args.output,
         load_profile_path=args.load_profile,
@@ -157,6 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
     cmp_p.add_argument("--candidate-source", required=True)
     cmp_p.add_argument("--scenario", required=True)
     cmp_p.add_argument("--blocks", type=int, default=4)
+    cmp_p.add_argument("--point-index", type=int, default=0)
     cmp_p.add_argument("--profile", choices=["standard", "smoke"], default="smoke")
     cmp_p.add_argument("--load-profile")
     cmp_p.add_argument("--output")

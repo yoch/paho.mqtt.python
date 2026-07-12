@@ -130,6 +130,7 @@ python benchmarks/client/run.py compare \
   --baseline-source ../paho-baseline \
   --candidate-source . \
   --scenario pub_qos_sweep_telemetry \
+  --point-index 1 \
   --blocks 4 \
   --load-profile /tmp/load.json \
   --output /tmp/ab.json
@@ -137,6 +138,8 @@ python benchmarks/client/run.py compare \
 
 ABBA ordering reduces thermal/order bias. Verdict requires a bootstrap CI that
 excludes zero **and** an absolute effect above 3%.
+`--point-index` selects a resolved scenario variant (zero-based); it defaults
+to the first variant for compatibility.
 
 ## Reproducibility checklist
 

@@ -37,6 +37,26 @@ from workloads import (  # noqa: E402
 )
 
 
+class _CountingSocket:
+    def __init__(self, sock):
+        self._sock = sock
+        self.send_calls = 0
+        self.sendmsg_calls = 0
+        self.sendmsg_iovecs = 0
+
+    def send(self, data):
+        self.send_calls += 1
+        return self._sock.send(data)
+
+    def sendmsg(self, buffers, *args):
+        self.sendmsg_calls += 1
+        self.sendmsg_iovecs += len(buffers)
+        return self._sock.sendmsg(buffers, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -145,6 +165,14 @@ def main(argv=None) -> int:
     client.on_connect = on_connect
     client.on_subscribe = on_subscribe
     client.on_message = on_message
+    counted_socket = None
+    if cfg.get("count_socket_writes"):
+        def on_socket_open(opened_client, userdata, sock):
+            nonlocal counted_socket
+            counted_socket = _CountingSocket(sock)
+            opened_client._sock = counted_socket
+
+        client.on_socket_open = on_socket_open
 
     # Local callback matching.
     # Paho skips on_message when at least one message_callback_add filter matches,
@@ -214,6 +242,10 @@ def main(argv=None) -> int:
         state["latencies_ns"].clear()
         state["callback_invocations"] = 0
         state["subscriber_delivered"] = 0
+    if counted_socket is not None:
+        counted_socket.send_calls = 0
+        counted_socket.sendmsg_calls = 0
+        counted_socket.sendmsg_iovecs = 0
 
     state["phase"] = "measure"
     t0 = time.perf_counter()
@@ -262,6 +294,9 @@ def main(argv=None) -> int:
         "callback_invocations": callback_invocations,
         "sequences": sequences[:200000],
         "latencies_ns": latencies[:50000],
+        "socket_send_calls": counted_socket.send_calls if counted_socket is not None else None,
+        "socket_sendmsg_calls": counted_socket.sendmsg_calls if counted_socket is not None else None,
+        "socket_sendmsg_iovecs": counted_socket.sendmsg_iovecs if counted_socket is not None else None,
     }
     write_json(cfg["result_path"], result)
     return 0

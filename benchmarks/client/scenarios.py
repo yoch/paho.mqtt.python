@@ -25,6 +25,7 @@ class Scenario:
     outstanding: int = 64
     publishers: int = 1
     subscribers: int = 0
+    count_socket_writes: bool = False
     loadgen_clients: int = 0
     duration_s: float = 60.0
     warmup_s: float = 15.0
@@ -174,6 +175,21 @@ SCENARIOS: List[Scenario] = [
         estimated_minutes=4.0,
     ),
     Scenario(
+        name="pub_qos1_sendmsg_capacity",
+        suite="full",
+        tags=("diagnostic",),
+        topology="publisher_only",
+        description="QoS 1 publish capacity with outbound write-call accounting.",
+        qos_publish=1,
+        payload="telemetry256",
+        cadence="capacity",
+        inflight=100,
+        max_queued=1000,
+        outstanding=100,
+        count_socket_writes=True,
+        estimated_minutes=3.0,
+    ),
+    Scenario(
         name="remaining_length_boundaries",
         suite="core",
         tags=("diagnostic",),
@@ -199,6 +215,26 @@ SCENARIOS: List[Scenario] = [
         subscription="exact",
         loadgen_clients=32,
         subscribers=1,
+        estimated_minutes=3.0,
+    ),
+    Scenario(
+        name="sub_exact_qos1_capacity",
+        suite="full",
+        tags=("diagnostic",),
+        topology="subscriber_ingress",
+        description="QoS 1 ingress capacity and outbound PUBACK batching.",
+        qos_publish=1,
+        qos_subscribe=1,
+        payload="telemetry256",
+        cadence="capacity",
+        topic_topology="single",
+        subscription="exact",
+        loadgen_clients=32,
+        subscribers=1,
+        variants=tuple(
+            {"target_rate": rate, "count_socket_writes": True}
+            for rate in (5000, 10000, 15000, 20000)
+        ),
         estimated_minutes=3.0,
     ),
     Scenario(
