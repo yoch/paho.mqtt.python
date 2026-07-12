@@ -133,6 +133,27 @@ class WorkloadTests(unittest.TestCase):
         self.assertEqual(len(overlap), 8)
         self.assertEqual(len(set(overlap)), 8)
 
+    def test_regression_audit_scenarios_are_individually_addressable(self):
+        self.assertEqual(SCENARIO_BY_NAME["pub_segment_threshold_16k"].payload, "record16k")
+        self.assertEqual(SCENARIO_BY_NAME["pub_segment_block_64k"].payload, "block64k")
+        self.assertEqual(SCENARIO_BY_NAME["pub_segment_blob_1m"].payload, "blob1m")
+        self.assertEqual(SCENARIO_BY_NAME["rtt_capacity_qos1"].cadence, "capacity")
+
+    def test_capacity_extraction_works_for_smoke_runs(self):
+        from harness import _capacity_from_result, source_identity  # noqa: PLC0415
+
+        result = {
+            "results": [{
+                "point": {"qos_publish": 1},
+                "summary": {"median": None},
+                "runs": [{"status": "valid", "primary_msgs_per_s": 1234.0}],
+            }],
+        }
+        self.assertEqual(_capacity_from_result(result, qos=1), 1234.0)
+        identity = source_identity(str(CLIENT_DIR.parent.parent))
+        self.assertEqual(identity["version"], "2.1.1.dev0")
+        self.assertTrue(identity["module"].endswith("src/paho/mqtt/__init__.py"))
+
 
 class LoadgenParserTests(unittest.TestCase):
     def test_parse_fixture(self):

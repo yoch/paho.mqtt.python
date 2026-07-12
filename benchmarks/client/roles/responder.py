@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -68,6 +69,14 @@ def main(argv=None) -> int:
     if cfg.get("protocol", "MQTTv311") != "MQTTv5":
         kwargs["clean_session"] = True
     client = mqtt.Client(**kwargs)
+
+    def set_tcp_nodelay(client, userdata, sock):
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    client.on_socket_open = set_tcp_nodelay
     client.on_connect = on_connect
     client.on_subscribe = on_subscribe
     client.on_message = on_message

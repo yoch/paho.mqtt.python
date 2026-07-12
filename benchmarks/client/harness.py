@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import random
@@ -17,6 +18,7 @@ from broker import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     DEFAULT_TLS_PORT,
+    broker_container_name,
     broker_down,
     broker_up,
     ensure_certs,
@@ -30,6 +32,7 @@ from metrics import (
     compare_verdict,
     integrity_counts,
     latency_summary,
+    median,
     sanitize_number,
     summarize_runs,
 )
@@ -56,6 +59,21 @@ ROLES = CLIENT_DIR / "roles"
 def make_run_id() -> str:
     # Fixed 8-char ascii id to keep topic sizes stable.
     return secrets.token_hex(4)
+
+
+def source_identity(source_root: str) -> dict:
+    """Record the exact source module and declared version used by workers."""
+    module = Path(source_root).resolve() / "src" / "paho" / "mqtt" / "__init__.py"
+    version = None
+    try:
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets):
+                version = ast.literal_eval(node.value)
+                break
+    except (OSError, SyntaxError, ValueError):
+        pass
+    return {"module": str(module), "version": version}
 
 
 def _python() -> str:
@@ -147,6 +165,15 @@ def validate_run(point: dict, worker_results: List[dict], loadgen_stats: Optiona
         for name, stats in (sample.get("containers") or {}).items():
             if stats and stats.get("cpu_pct") is not None and stats["cpu_pct"] >= 85.0:
                 reasons.append(f"container_cpu_high:{name}")
+    watched_any = False
+    watched_ok = False
+    for sample in telemetry_samples:
+        for stats in (sample.get("containers") or {}).values():
+            watched_any = True
+            if stats is not None:
+                watched_ok = True
+    if watched_any and not watched_ok:
+        reasons.append("broker_telemetry_missing")
 
     if loadgen_stats and loadgen_stats.get("parsed") and point.get("cadence") not in ("burst", "microburst"):
         parsed = loadgen_stats["parsed"]
@@ -158,7 +185,7 @@ def validate_run(point: dict, worker_results: List[dict], loadgen_stats: Optiona
 
     status = "valid" if not reasons else "inconclusive"
     bottleneck = "bottleneck_unattributed"
-    if any(r.startswith("container_cpu_high:mosquitto") for r in reasons):
+    if any(r.startswith("container_cpu_high:") and "mosquitto" in r for r in reasons):
         bottleneck = "broker_limited"
     elif any(r.startswith("loadgen_") for r in reasons):
         bottleneck = "loadgen_limited"
@@ -197,9 +224,24 @@ def run_point(
         }
 
     if load_profile and point.get("load_fraction") is not None:
-        capacity = load_profile.get("capacity_msgs_per_s")
+        capacity = (
+            load_profile.get("rtt_capacity_msgs_per_s")
+            if point.get("topology") == "application_rtt"
+            else load_profile.get("capacity_msgs_per_s")
+        )
         if capacity:
             point["target_rate"] = float(capacity) * float(point["load_fraction"])
+            point["calibration_kind"] = "rtt" if point.get("topology") == "application_rtt" else "publish"
+    if point.get("load_fraction") is not None and not point.get("target_rate"):
+        kind = "rtt" if point.get("topology") == "application_rtt" else "publish"
+        return {
+            "schema_version": 1,
+            "run_id": run_id,
+            "point": point,
+            "status": "inconclusive",
+            "reasons": [f"load_fraction_without_{kind}_calibration"],
+            "workers": [],
+        }
 
     network = point.get("network", "localhost")
     net_result = apply_profile(network)
@@ -390,8 +432,10 @@ def run_point(
             clients = int(point.get("loadgen_clients", 32) or 32)
             payload = point.get("payload", "telemetry256")
             size = PAYLOAD_SPECS.get(payload, {"size": 256})["size"]
-            # Target an aggressive interval; for smoke keep mild.
-            target = 5000.0 if profile == "smoke" else 20000.0
+            # Capacity points must exceed the historical ~5k delivery ceiling
+            # even in smoke runs, otherwise A/B ingress optimisations are hidden
+            # behind the offered rate and incorrectly labelled SUT-limited.
+            target = 40000.0
             if point.get("fanin_mode") == "per_publisher":
                 target = clients * 1000.0
             if cadence == "periodic10":
@@ -409,7 +453,7 @@ def run_point(
                     # which also records the delivery. Cap avoids a connection storm.
                     clients = max(clients, min(callback_filters, 256))
                 # Keep aggregate offered load stable when client count grows with filters.
-                target = 5000.0 if profile == "smoke" else 20000.0
+                target = 40000.0
             elif point.get("subscription") in ("plus", "hash") or str(point.get("topic_topology", "")).startswith("fleet"):
                 lg_topic = f"bench/{run_id}/org/acme/site/s0000/device/d0000/telemetry/temperature"
             else:
@@ -467,7 +511,10 @@ def run_point(
             # Let the loadgen connect ramp finish outside the measure window.
             ramp_s = min(loadgen.spec.clients * loadgen.spec.connect_interval_ms / 1000.0 + 0.5, 15.0)
             time.sleep(ramp_s)
-        sampler = TelemetrySampler(pids={f"w{i}": w.pid for i, w in enumerate(workers) if w.pid}, containers=["mosquitto"] if managed_broker else [])
+        sampler = TelemetrySampler(
+            pids={f"w{i}": w.pid for i, w in enumerate(workers) if w.pid},
+            containers=[broker_container_name()] if managed_broker else [],
+        )
         sampler.start()
         barrier.broadcast("T0")
         if burst_ingress and loadgen is not None:
@@ -734,6 +781,7 @@ def run_scenario(
         "runs": runs,
         "seed": seed,
         "source_root": str(Path(source_root).resolve()),
+        "source_identity": source_identity(source_root),
         "broker": meta,
         "results": all_results,
         "environment": environment_metadata(),
@@ -761,33 +809,55 @@ def run_suite(suite: str, **kwargs) -> dict:
     return {"suite": suite, "estimate": estimate, "scenarios": outputs}
 
 
+def _capacity_from_result(result: dict, qos: Optional[int] = None) -> Optional[float]:
+    rates = []
+    for block in result.get("results", []):
+        point = block.get("point") or {}
+        if qos is not None and int(point.get("qos_publish", -1)) != qos:
+            continue
+        summary = block.get("summary") or {}
+        if summary.get("median") is not None:
+            rates.append(float(summary["median"]))
+            continue
+        for run in block.get("runs") or []:
+            if run.get("status") == "valid" and run.get("primary_msgs_per_s") is not None:
+                rates.append(float(run["primary_msgs_per_s"]))
+    return median(rates)
+
+
+def _fraction_map(capacity: Optional[float]) -> dict:
+    return {
+        "0.25": None if capacity is None else capacity * 0.25,
+        "0.50": None if capacity is None else capacity * 0.50,
+        "0.75": None if capacity is None else capacity * 0.75,
+        "0.90": None if capacity is None else capacity * 0.90,
+    }
+
+
 def calibrate(source_root: str, output: str, profile: str = "smoke") -> dict:
-    """Measure publisher capacity on telemetry QoS1 and emit open-loop fractions."""
-    result = run_scenario(
+    """Measure independent publish and RTT capacities for open-loop fractions."""
+    publish_result = run_scenario(
         "pub_qos_sweep_telemetry",
         source_root=source_root,
         profile=profile,
         runs=1,
     )
-    capacity = None
-    for block in result.get("results", []):
-        point = block["point"]
-        if int(point.get("qos_publish", -1)) == 1:
-            capacity = block["summary"].get("median")
-            break
-    if capacity is None and result.get("results"):
-        capacity = result["results"][0]["summary"].get("median")
+    rtt_result = run_scenario(
+        "rtt_capacity_qos1",
+        source_root=source_root,
+        profile=profile,
+        runs=1,
+    )
+    capacity = _capacity_from_result(publish_result, qos=1)
+    rtt_capacity = _capacity_from_result(rtt_result)
     payload = {
         "schema_version": 1,
         "source_root": str(Path(source_root).resolve()),
         "capacity_msgs_per_s": capacity,
-        "fractions": {
-            "0.25": None if capacity is None else capacity * 0.25,
-            "0.50": None if capacity is None else capacity * 0.50,
-            "0.75": None if capacity is None else capacity * 0.75,
-            "0.90": None if capacity is None else capacity * 0.90,
-        },
-        "raw": result,
+        "rtt_capacity_msgs_per_s": rtt_capacity,
+        "fractions": _fraction_map(capacity),
+        "rtt_fractions": _fraction_map(rtt_capacity),
+        "raw": {"publish": publish_result, "rtt": rtt_result},
     }
     write_json(output, payload)
     return payload
@@ -860,6 +930,8 @@ def compare_sources(
         "order": order,
         "baseline_source": str(Path(baseline_source).resolve()),
         "candidate_source": str(Path(candidate_source).resolve()),
+        "baseline_identity": source_identity(baseline_source),
+        "candidate_identity": source_identity(candidate_source),
         "baseline_rates": baseline_rates,
         "candidate_rates": candidate_rates,
         "verdict": verdict,

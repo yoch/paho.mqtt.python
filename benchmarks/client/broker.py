@@ -67,7 +67,8 @@ def ensure_certs(force: bool = False) -> dict:
     server_crt = CERT_DIR / "server.crt"
     openssl_cfg = CERT_DIR / "openssl.cnf"
 
-    if server_crt.exists() and ca_crt.exists() and not force:
+    if server_crt.exists() and ca_crt.exists() and server_key.exists() and ca_key.exists() and not force:
+        os.chmod(server_key, 0o644)
         return {
             "ca_crt": str(ca_crt),
             "server_crt": str(server_crt),
@@ -131,6 +132,8 @@ IP.1 = 127.0.0.1
         ]
     )
     _run(["openssl", "genrsa", "-out", str(server_key), "2048"])
+    # The container runs as uid 1883 and must be able to read the throwaway key.
+    os.chmod(server_key, 0o644)
     csr = CERT_DIR / "server.csr"
     _run(
         [
@@ -187,9 +190,60 @@ def compose_cmd(*args: str) -> list:
     return ["docker", "compose", "-f", str(COMPOSE_FILE), *args]
 
 
+_BROKER_CONTAINER_CACHE: Optional[str] = None
+
+
+def broker_container_name() -> str:
+    """Return the actual compose container name for the mosquitto service."""
+    global _BROKER_CONTAINER_CACHE
+    if _BROKER_CONTAINER_CACHE is not None:
+        return _BROKER_CONTAINER_CACHE
+    for args in (("ps", "-a", "--format", "{{.Name}}", "mosquitto"), ("ps", "-a", "-q", "mosquitto")):
+        try:
+            proc = _run(compose_cmd(*args), check=False)
+        except FileNotFoundError:
+            break
+        lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+        if proc.returncode == 0 and lines:
+            _BROKER_CONTAINER_CACHE = lines[0]
+            return lines[0]
+    return "mosquitto"
+
+
+def _container_state(name: str) -> Optional[str]:
+    try:
+        proc = _run(["docker", "inspect", "--format", "{{.State.Status}}", name], check=False)
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return (proc.stdout or "").strip() or None
+
+
 def broker_up(wait: bool = True, timeout_s: float = 30.0) -> dict:
     ensure_certs()
     _run(compose_cmd("up", "-d", "mosquitto"))
+    container = broker_container_name()
+    deadline = time.time() + 10.0
+    state = _container_state(container)
+    while state != "running" and time.time() < deadline:
+        time.sleep(0.5)
+        state = _container_state(container)
+    if state == "running":
+        time.sleep(1.5)
+        state = _container_state(container)
+    if state != "running":
+        logs = _run(["docker", "logs", "--tail", "5", container], check=False)
+        raise RuntimeError(
+            "managed mosquitto container {!r} is {}; another broker may hold ports {}/{}. "
+            "Last logs: {!r}".format(
+                container,
+                state or "absent",
+                DEFAULT_PORT,
+                DEFAULT_TLS_PORT,
+                (logs.stdout or logs.stderr or "").strip(),
+            )
+        )
     meta = {
         "managed_broker": True,
         "image": MOSQUITTO_IMAGE,
@@ -198,6 +252,7 @@ def broker_up(wait: bool = True, timeout_s: float = 30.0) -> dict:
         "host": DEFAULT_HOST,
         "port": DEFAULT_PORT,
         "tls_port": DEFAULT_TLS_PORT,
+        "container_name": container,
         "certs": ensure_certs(),
     }
     if wait:

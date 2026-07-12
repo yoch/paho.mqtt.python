@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -36,7 +37,14 @@ def main(argv=None) -> int:
     warmup_s = float(cfg.get("warmup_s", 1))
     drain_s = float(cfg.get("drain_s", 2))
     outstanding = int(cfg.get("outstanding", 32))
-    target_rate = float(cfg.get("target_rate") or (1000.0 * float(cfg.get("load_fraction", 0.5))))
+    cadence = str(cfg.get("cadence", "capacity"))
+    if cadence == "capacity":
+        target_rate = None
+    elif cfg.get("target_rate") is not None:
+        target_rate = float(cfg["target_rate"])
+    else:
+        write_json(cfg["result_path"], {"ok": False, "error": "open_loop_without_target_rate", "paho_file": paho_file})
+        return 1
     run_id = cfg["run_id"].encode("ascii")
 
     state = {
@@ -87,6 +95,14 @@ def main(argv=None) -> int:
     if cfg.get("protocol", "MQTTv311") != "MQTTv5":
         kwargs["clean_session"] = True
     client = mqtt.Client(**kwargs)
+
+    def set_tcp_nodelay(client, userdata, sock):
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    client.on_socket_open = set_tcp_nodelay
     client.max_inflight_messages = int(cfg.get("inflight", 20))
     client.on_connect = on_connect
     client.on_subscribe = on_subscribe
@@ -150,7 +166,7 @@ def main(argv=None) -> int:
 
 
 def _send_loop(client, state, topic, qos, run_id, outstanding, target_rate, until):
-    interval = 1.0 / target_rate if target_rate > 0 else 0.0
+    interval = (1.0 / target_rate) if target_rate and target_rate > 0 else 0.0
     next_send = time.perf_counter()
     seq = 0
     while time.perf_counter() < until:

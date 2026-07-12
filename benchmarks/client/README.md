@@ -92,6 +92,18 @@ A run is `valid` only if barriers succeed, no unexpected disconnects occur, and
 loadgen/broker are not saturated. Otherwise the run is kept as `inconclusive`
 with explicit reasons. Do not treat inconclusive rates as Paho scores.
 
+Additional A/B safeguards:
+
+- Managed-broker runs resolve and observe the real compose container name and
+  fail closed if another checkout already owns ports 11883/11884.
+- Ingress capacity offers up to 40k msg/s in smoke as well as standard; a 5k
+  offer was insufficient to expose receive-path differences.
+- RTT load fractions are calibrated from closed-loop RTT capacity, independently
+  from publisher capacity, and both RTT endpoints use `TCP_NODELAY`.
+- Every result records the resolved Paho source module and declared version.
+- Dedicated 16-KiB, 64-KiB, and 1-MiB scenarios isolate segmented-payload
+  thresholds instead of relying on one shuffled sweep point.
+
 ## Known limitations (not yet implemented)
 
 Points using the following knobs are refused with `not_implemented:*` reasons
