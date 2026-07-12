@@ -84,6 +84,16 @@ class FakeSendSocket:
         return None
 
 
+class RecordingSendSocket(FakeSendSocket):
+    def __init__(self):
+        super().__init__()
+        self.packets = []
+
+    def send(self, data):
+        self.packets.append(bytes(data))
+        return super().send(data)
+
+
 def test_message_info_condition_is_lazy():
     info = client.MQTTMessageInfo(1)
 
@@ -456,3 +466,142 @@ def test_update_inflight_reuses_internal_topic_bytes():
     assert mqttc._update_inflight() == client.MQTT_ERR_SUCCESS
     assert message.state == client.mqtt_ms_wait_for_puback
     assert mqttc._inflight_messages == 1
+
+
+def test_connack_replay_staging_is_bounded_and_preserves_order_and_dup():
+    mqttc = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="replay-test",
+        clean_session=False,
+    )
+    mqttc._sock = RecordingSendSocket()
+    mqttc._max_inflight_messages = 130
+    topic = b"devices/topic"
+    for mid in range(1, 131):
+        message = client.MQTTMessage(mid=mid, topic=topic)
+        message.payload = b"payload"
+        message.qos = 1
+        message.state = client.mqtt_ms_publish
+        message.dup = True
+        mqttc._out_messages[mid] = message
+
+    mqttc._in_packet.packet = bytearray((0, 0))
+    mqttc._in_packet.remaining_length = 2
+    real_loop_write = mqttc.loop_write
+    queue_depths = []
+
+    def counting_loop_write():
+        queue_depths.append(len(mqttc._out_packet))
+        return real_loop_write()
+
+    mqttc.loop_write = counting_loop_write
+
+    assert mqttc._handle_connack() == client.MQTT_ERR_SUCCESS
+    assert queue_depths == [64, 64, 2]
+    assert mqttc._inflight_messages == 130
+    assert all(message.state == client.mqtt_ms_wait_for_puback for message in mqttc._out_messages.values())
+    assert all(packet[0] & 0x08 for packet in mqttc._sock.packets)
+
+    mids = []
+    for packet in mqttc._sock.packets:
+        topic_length = int.from_bytes(packet[2:4], "big")
+        mid_pos = 4 + topic_length
+        mids.append(int.from_bytes(packet[mid_pos:mid_pos + 2], "big"))
+    assert mids == list(range(1, 131))
+
+
+def test_connack_replay_staging_is_bounded_by_payload_bytes():
+    mqttc = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="replay-large-test",
+        clean_session=False,
+    )
+    mqttc._sock = FakeSendSocket()
+    mqttc._max_inflight_messages = 3
+    for mid in range(1, 4):
+        message = client.MQTTMessage(mid=mid, topic=b"t")
+        message.payload = b"x" * 40000
+        message.qos = 1
+        message.state = client.mqtt_ms_publish
+        mqttc._out_messages[mid] = message
+
+    mqttc._in_packet.packet = bytearray((0, 0))
+    mqttc._in_packet.remaining_length = 2
+    real_loop_write = mqttc.loop_write
+    queue_depths = []
+
+    def counting_loop_write():
+        queue_depths.append(len(mqttc._out_packet))
+        return real_loop_write()
+
+    mqttc.loop_write = counting_loop_write
+
+    assert mqttc._handle_connack() == client.MQTT_ERR_SUCCESS
+    assert queue_depths == [2, 1]
+
+
+def test_connack_replay_preserves_qos2_publish_and_pubrel_states():
+    mqttc = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="replay-qos2-test",
+        clean_session=False,
+    )
+    mqttc._sock = RecordingSendSocket()
+    mqttc._max_inflight_messages = 2
+
+    publish = client.MQTTMessage(mid=1, topic=b"t")
+    publish.payload = b"payload"
+    publish.qos = 2
+    publish.state = client.mqtt_ms_publish
+    publish.dup = True
+    mqttc._out_messages[1] = publish
+
+    pubrel = client.MQTTMessage(mid=2, topic=b"t")
+    pubrel.qos = 2
+    pubrel.state = client.mqtt_ms_resend_pubrel
+    mqttc._out_messages[2] = pubrel
+
+    mqttc._in_packet.packet = bytearray((0, 0))
+    mqttc._in_packet.remaining_length = 2
+
+    assert mqttc._handle_connack() == client.MQTT_ERR_SUCCESS
+    assert publish.state == client.mqtt_ms_wait_for_pubrec
+    assert pubrel.state == client.mqtt_ms_wait_for_pubcomp
+    assert mqttc._inflight_messages == 2
+    assert [packet[0] & 0xF0 for packet in mqttc._sock.packets] == [client.PUBLISH, client.PUBREL]
+    assert mqttc._sock.packets[0][0] & 0x08
+
+
+def test_connack_replay_pack_failure_flushes_prior_packets_and_stops():
+    mqttc = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="replay-failure-test",
+        clean_session=False,
+    )
+    mqttc._sock = FakeSendSocket()
+    mqttc._max_inflight_messages = 4
+    for mid in range(1, 5):
+        message = client.MQTTMessage(mid=mid, topic=b"t")
+        message.payload = b"payload"
+        message.qos = 1
+        message.state = client.mqtt_ms_publish
+        mqttc._out_messages[mid] = message
+
+    mqttc._in_packet.packet = bytearray((0, 0))
+    mqttc._in_packet.remaining_length = 2
+    real_send_publish = mqttc._send_publish
+    calls = []
+
+    def failing_send_publish(mid, *args, **kwargs):
+        calls.append(mid)
+        if mid == 3:
+            return client.MQTT_ERR_NOMEM
+        return real_send_publish(mid, *args, **kwargs)
+
+    mqttc._send_publish = failing_send_publish
+
+    assert mqttc._handle_connack() == client.MQTT_ERR_NOMEM
+    assert calls == [1, 2, 3]
+    assert len(mqttc._out_packet) == 0
+    assert mqttc._sock.calls == 2
+    assert mqttc._out_messages[4].state == client.mqtt_ms_publish

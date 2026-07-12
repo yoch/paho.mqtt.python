@@ -30,7 +30,7 @@ acceptance requirements for these projects.
 | [14 - Contiguous Ingress Decoder](14-contiguous-ingress-decoder.md) | P0 | **GO with conditions** | built-in ingress pump, `loop_read()` | Direct buffered decode kept; public batching prototype rejected. |
 | [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **GO with conditions** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
 | [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Prototype branch; field validation required** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
-| [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **Planned** | successful CONNACK replay | Stage ordered retransmits before one drain. |
+| [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **GO with conditions** | successful CONNACK replay | Stage ordered retransmits in bounded drains. |
 | [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **Planned** | PUBLISH construction, vector writer | Avoid copying large immutable payloads. |
 | [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **Planned** | private built-in event loop | Bound and alternate read/write work. |
 | [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **Planned** | `loop_start()`, `loop_stop()`, reconnect wait | Replace polling with timer/control wakeups. |
@@ -99,6 +99,9 @@ Third audit execution:
   improves local TCP/Unix throughput and cuts writes by 98%, but is deliberately
   absent here pending real workload, tail-latency, concurrency, and failure-mode
   validation. The CPU-only control regressed, so no production `GO` is implied.
+- **17 GO with conditions:** bounded reconnect replay staging improves the
+  1,000-message QoS 1 scenario by about 51% and reduces explicit drains from
+  1,000 to 16; the faster but unbounded single-drain variant was rejected.
 
 Recommended follow-ups:
 

@@ -569,6 +569,46 @@ def reconnect_reset_qos2_1000(iterations):
         client._messages_reconnect_reset_out()
 
 
+def _new_reconnect_replay_client(message_count=1000, qos=1):
+    client = mqtt.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        client_id="benchmark-replay",
+        clean_session=False,
+    )
+    client._sock = FakeSendSocket()
+    client._max_inflight_messages = message_count
+    for mid in range(1, message_count + 1):
+        message = mqtt.MQTTMessage(mid=mid, topic=TOPIC)
+        message.payload = PAYLOAD_SMALL
+        message.qos = qos
+        message.state = mqtt.mqtt_ms_publish
+        message.dup = True
+        client._out_messages[mid] = message
+    client._in_packet.packet = bytearray((0, 0))
+    client._in_packet.remaining_length = 2
+    client._replay_loop_write_calls = 0
+    real_loop_write = client.loop_write
+
+    def counting_loop_write():
+        client._replay_loop_write_calls += 1
+        return real_loop_write()
+
+    client.loop_write = counting_loop_write
+    return client
+
+
+def reconnect_replay_qos1_1000(iterations):
+    for _ in range(iterations):
+        client = _new_reconnect_replay_client()
+        rc = client._handle_connack()
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError("CONNACK replay failed: {}".format(rc))
+        if client._inflight_messages != 1000 or client._out_packet:
+            raise RuntimeError("replay did not drain all eligible messages")
+        if client._replay_loop_write_calls != 16:
+            raise RuntimeError("expected 16 bounded replay drains, got {}".format(client._replay_loop_write_calls))
+
+
 def _websocket_frame(iterations, size):
     wrapper = mqtt._WebsocketWrapper.__new__(mqtt._WebsocketWrapper)
     for _ in range(iterations):
@@ -624,6 +664,7 @@ SCENARIOS = [
     Scenario("puback_qos1_no_callback", "ack-completion", "ack", 3000, puback_qos1_no_callback),
     Scenario("puback_batch_refill_qos1", "ack-completion", "ack", 20, puback_batch_refill_qos1, operations_per_iteration=100),
     Scenario("reconnect_reset_qos2_1000", "reconnect", "reset", 100, reconnect_reset_qos2_1000),
+    Scenario("reconnect_replay_qos1_1000", "reconnect", "replay", 20, reconnect_replay_qos1_1000),
     Scenario("websocket_frame_16", "websocket", "frame", 10000, websocket_frame_16),
     Scenario("websocket_frame_128", "websocket", "frame", 5000, websocket_frame_128),
     Scenario("websocket_frame_1024", "websocket", "frame", 1000, websocket_frame_1024),

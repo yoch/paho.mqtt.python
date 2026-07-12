@@ -4231,8 +4231,11 @@ class Client:
             rc = MQTTErrorCode.MQTT_ERR_SUCCESS
             with self._out_message_mutex:
                 reconnect_timestamp = time_func()
+                staged_packets = 0
+                staged_bytes = 0
                 for m in self._out_messages.values():
                     m.timestamp = reconnect_timestamp
+                    packet_size = 0
                     if m.state == mqtt_ms_queued:
                         self.loop_write()  # Process outgoing messages that have just been queued up
                         return MQTT_ERR_SUCCESS
@@ -4249,7 +4252,9 @@ class Client:
                                 properties=m.properties
                             )
                         if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                            self.loop_write()
                             return rc
+                        packet_size = len(m._topic) + len(m.payload) + 16
                     elif m.qos == 1:
                         if m.state == mqtt_ms_publish:
                             self._inflight_messages += 1
@@ -4265,7 +4270,9 @@ class Client:
                                     properties=m.properties
                                 )
                             if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                                self.loop_write()
                                 return rc
+                            packet_size = len(m._topic) + len(m.payload) + 16
                     elif m.qos == 2:
                         if m.state == mqtt_ms_publish:
                             self._inflight_messages += 1
@@ -4281,15 +4288,31 @@ class Client:
                                     properties=m.properties
                                 )
                             if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                                self.loop_write()
                                 return rc
+                            packet_size = len(m._topic) + len(m.payload) + 16
                         elif m.state == mqtt_ms_resend_pubrel:
                             self._inflight_messages += 1
                             m.state = mqtt_ms_wait_for_pubcomp
                             with self._in_callback_mutex:  # Don't call loop_write after _send_publish()
                                 rc = self._send_pubrel(m.mid)
                             if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                                self.loop_write()
                                 return rc
-                    self.loop_write()  # Process outgoing messages that have just been queued up
+                            packet_size = 4
+
+                    if packet_size:
+                        staged_packets += 1
+                        staged_bytes += packet_size
+                        if staged_packets >= 64 or staged_bytes >= 65536:
+                            # Preserve the historical best-effort replay
+                            # semantics: loop_write() errors were ignored here.
+                            self.loop_write()
+                            staged_packets = 0
+                            staged_bytes = 0
+
+                if staged_packets:
+                    self.loop_write()
 
             return rc
         elif result > 0 and result < 6:
