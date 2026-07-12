@@ -528,6 +528,100 @@ def test_loop_start_does_not_lose_wakeup_to_concurrent_packet_queue(monkeypatch)
     mqttc.loop_stop()
 
 
+def test_loop_stop_sets_event_and_coalesces_selector_wakeup():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    sockpair = CountingSockpair()
+    mqttc._sockpairR = sockpair
+    mqttc._sockpairW = sockpair
+    stopped = threading.Event()
+
+    def wait_for_stop():
+        mqttc._thread_terminate_event.wait(1.0)
+        stopped.set()
+
+    mqttc._thread = threading.Thread(target=wait_for_stop)
+    mqttc._thread.start()
+
+    started = time.perf_counter()
+    assert mqttc.loop_stop() == client.MQTT_ERR_SUCCESS
+
+    assert time.perf_counter() - started < 0.05
+    assert stopped.is_set()
+    assert sockpair.sends == 1
+    assert mqttc._sockpair_wakeup_pending is True
+
+
+def test_loop_stop_joins_captured_thread_when_worker_clears_client_reference(monkeypatch):
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    release = threading.Event()
+
+    def clear_thread_reference():
+        release.wait(1.0)
+        mqttc._thread = None
+
+    thread = threading.Thread(target=clear_thread_reference)
+    mqttc._thread = thread
+    thread.start()
+
+    def wake_and_allow_worker_exit():
+        release.set()
+        thread.join(1.0)
+
+    monkeypatch.setattr(mqttc, "_wake_thread", wake_and_allow_worker_exit)
+
+    assert mqttc.loop_stop() == client.MQTT_ERR_SUCCESS
+    assert not thread.is_alive()
+
+
+def test_reconnect_wait_is_interrupted_by_thread_stop():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._reconnect_min_delay = 60
+    mqttc._reconnect_max_delay = 60
+    waiter = threading.Thread(target=mqttc._reconnect_wait)
+    waiter.start()
+    time.sleep(0.01)
+
+    started = time.perf_counter()
+    mqttc._thread_terminate = True
+    mqttc._thread_terminate_event.set()
+    waiter.join(0.05)
+
+    assert not waiter.is_alive()
+    assert time.perf_counter() - started < 0.05
+
+
+def test_internal_thread_uses_keepalive_as_interruptible_loop_deadline(monkeypatch):
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._keepalive = 300
+    call = {}
+
+    def fake_loop_forever(timeout=1.0, retry_first_connection=False):
+        call["timeout"] = timeout
+        call["retry_first_connection"] = retry_first_connection
+
+    monkeypatch.setattr(mqttc, "loop_forever", fake_loop_forever)
+
+    mqttc._thread_main()
+
+    assert call == {"timeout": 300.0, "retry_first_connection": True}
+
+
+def test_thread_loop_timeout_preserves_active_tick_and_idle_deadline(monkeypatch):
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._keepalive = 60
+    mqttc._last_msg_in = 100.0
+    mqttc._last_msg_out = 100.0
+
+    monkeypatch.setattr(client, "time_func", lambda: 100.5)
+    assert mqttc._thread_loop_timeout(60.0) == 1.0
+
+    monkeypatch.setattr(client, "time_func", lambda: 110.0)
+    assert mqttc._thread_loop_timeout(60.0) == 50.0
+
+    monkeypatch.setattr(client, "time_func", lambda: 160.0)
+    assert mqttc._thread_loop_timeout(60.0) == 0.0
+
+
 def test_pack_remaining_length_fast_path_and_size_limit():
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
 

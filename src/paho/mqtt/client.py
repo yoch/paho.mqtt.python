@@ -942,6 +942,8 @@ class Client:
         self._mid_generate_mutex = threading.Lock()
         self._thread: threading.Thread | None = None
         self._thread_terminate = False
+        self._thread_terminate_event = threading.Event()
+        self._threaded_loop = False
         self._ssl = False
         self._ssl_context: ssl.SSLContext | None = None
         # Only used when SSL context does not have check_hostname attribute
@@ -2546,14 +2548,13 @@ class Client:
         while run:
             rc = MQTTErrorCode.MQTT_ERR_SUCCESS
             while rc == MQTTErrorCode.MQTT_ERR_SUCCESS:
-                rc = self._loop(timeout)
+                loop_timeout = self._thread_loop_timeout(timeout) if self._threaded_loop else timeout
+                rc = self._loop(loop_timeout)
                 # We don't need to worry about locking here, because we've
                 # either called loop_forever() when in single threaded mode, or
                 # in multi threaded mode when loop_stop() has been called and
                 # so no other threads can access _out_packet or _messages.
-                if (self._thread_terminate is True
-                    and len(self._out_packet) == 0
-                        and len(self._out_messages) == 0):
+                if self._thread_terminate is True:
                     rc = MQTTErrorCode.MQTT_ERR_NOMEM
                     run = False
 
@@ -2613,6 +2614,7 @@ class Client:
             old_w.close()
 
         self._thread_terminate = False
+        self._thread_terminate_event.clear()
         self._thread = threading.Thread(target=self._thread_main, name=f"paho-mqtt-client-{self._client_id.decode()}")
         self._thread.daemon = True
         self._thread.start()
@@ -2627,12 +2629,15 @@ class Client:
         This don't guarantee that publish packet are sent, use `wait_for_publish` or
         `on_publish` to ensure `publish` are sent.
         """
-        if self._thread is None:
+        thread = self._thread
+        if thread is None:
             return MQTTErrorCode.MQTT_ERR_INVAL
 
         self._thread_terminate = True
-        if threading.current_thread() != self._thread:
-            self._thread.join()
+        self._thread_terminate_event.set()
+        self._wake_thread()
+        if threading.current_thread() != thread:
+            thread.join()
 
         return MQTTErrorCode.MQTT_ERR_SUCCESS
 
@@ -4075,15 +4080,7 @@ class Client:
         # Write a single byte to sockpairW (connected to sockpairR) to break
         # out of select() if in threaded mode. Coalesce while a previous wakeup
         # is still pending so publish bursts do not flood the socketpair.
-        if self._sockpairW is not None:
-            with self._sockpair_wakeup_mutex:
-                if not self._sockpair_wakeup_pending:
-                    try:
-                        self._sockpairW.send(sockpair_data)
-                    except BlockingIOError:
-                        # Buffer already has unread wakeup bytes; treat as pending.
-                        pass
-                    self._sockpair_wakeup_pending = True
+        self._wake_thread()
 
         # If we have an external event loop registered, use that instead
         # of calling loop_write() directly.
@@ -4887,10 +4884,38 @@ class Client:
                         MQTT_LOG_ERR, 'Caught exception in on_connect_fail: %s', err)
 
     def _thread_main(self) -> None:
+        self._threaded_loop = True
         try:
-            self.loop_forever(retry_first_connection=True)
+            timeout = float(self._keepalive) if self._keepalive > 0 else 3600.0
+            self.loop_forever(timeout=timeout, retry_first_connection=True)
         finally:
+            self._threaded_loop = False
             self._thread = None
+
+    def _thread_loop_timeout(self, deadline_timeout: float) -> float:
+        """Keep active behaviour while extending genuinely idle waits."""
+        # A slightly stale value is harmless: at worst it keeps the historical
+        # one-second timeout for one more turn. Avoid contending with the hot
+        # send/receive timestamp updates merely to choose a sleep upper bound.
+        last_activity = max(self._last_msg_in, self._last_msg_out)
+        idle_for = max(0.0, time_func() - last_activity)
+        if idle_for < 1.0:
+            return min(1.0, deadline_timeout)
+        if self._keepalive > 0:
+            return max(0.0, min(deadline_timeout, self._keepalive - idle_for))
+        return deadline_timeout
+
+    def _wake_thread(self) -> None:
+        """Wake the internal selector once, coalescing concurrent requests."""
+        if self._sockpairW is not None:
+            with self._sockpair_wakeup_mutex:
+                if not self._sockpair_wakeup_pending:
+                    try:
+                        self._sockpairW.send(sockpair_data)
+                    except BlockingIOError:
+                        # Buffer already has unread wakeup bytes; treat as pending.
+                        pass
+                    self._sockpair_wakeup_pending = True
 
     def _reconnect_wait(self) -> None:
         # See reconnect_delay_set for details
@@ -4911,7 +4936,7 @@ class Client:
                 and not self._thread_terminate
                 and remaining > 0):
 
-            time.sleep(min(remaining, 1))
+            self._thread_terminate_event.wait(min(remaining, 1))
             remaining = target_time - time_func()
 
     @staticmethod

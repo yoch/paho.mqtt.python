@@ -33,7 +33,7 @@ acceptance requirements for these projects.
 | [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **GO with conditions** | successful CONNACK replay | Stage ordered retransmits in bounded drains. |
 | [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **GO with conditions** | PUBLISH construction, writer | Avoid copying large immutable payloads. |
 | [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **NO GO** | private built-in event loop | Synthetic fairness gain did not pass publish guardrails. |
-| [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **Planned** | `loop_start()`, `loop_stop()`, reconnect wait | Replace polling with timer/control wakeups. |
+| [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **GO with conditions** | `loop_start()`, `loop_stop()`, reconnect wait | Adaptive idle deadlines and interruptible lifecycle waits; long CPU/timer validation remains. |
 | [21 - WebSocket Inbound Streaming](21-websocket-inbound-streaming.md) | P2 | **Planned** | `_WebsocketWrapper.recv()` / `pending()` | Decode frames from bounded read-ahead buffers. |
 | [22 - Callback and State-Lock Decoupling](22-callback-state-lock-decoupling.md) | P1 | **Planned** | PUBACK/PUBCOMP/PUBREL callbacks | Run user callbacks outside message-state mutexes. |
 | [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **Planned** | one-shot publish helper | Use a bounded 20-message completion window. |
@@ -111,6 +111,11 @@ Third audit execution:
 - **19 NO GO:** bounded duplex turns reduce a synthetic 10,000-packet
   starvation interval by about 90%, but realistic ABBA publish controls regress
   from 2.3% to 18.5% depending on activation; all production code was removed.
+- **20 GO with conditions:** adaptive idle deadlines cut selector returns by
+  93.4%, CPU by 76.2%, and voluntary context switches by 85% for 100 clients in
+  the 30-second control. Stop and reconnect-backoff latency become
+  sub-millisecond for one client, while final active publish is neutral at
+  +0.39%. A ten-minute CPU/RSS and keepalive-drift run remains required.
 
 Recommended follow-ups:
 
