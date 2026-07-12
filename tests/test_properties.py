@@ -18,6 +18,23 @@ def test_empty_properties_pack_unpack_tracking():
     assert properties.isEmpty()
 
 
+def test_unpack_accepts_memoryview_and_detaches_binary_properties():
+    source = Properties(PacketTypes.PUBLISH)
+    source.CorrelationData = b"binary-data"
+    source.UserProperty = ("key", "value")
+    packet = bytearray(source.pack())
+
+    decoded = Properties(PacketTypes.PUBLISH)
+    decoded.unpack(memoryview(packet))
+
+    assert decoded.CorrelationData == b"binary-data"
+    assert type(decoded.CorrelationData) is bytes
+    assert decoded.UserProperty == [("key", "value")]
+
+    packet[:] = b"\x00" * len(packet)
+    assert decoded.CorrelationData == b"binary-data"
+
+
 def test_user_property_allows_multiple_and_clear_updates_tracking():
     properties = Properties(PacketTypes.PUBLISH)
 
