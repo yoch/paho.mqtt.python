@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 
@@ -59,6 +60,30 @@ class PartialSendSocket:
 
     def setblocking(self, flag):
         return None
+
+
+class RecordingPartialSendSocket(PartialSendSocket):
+    def __init__(self, chunk=4):
+        super().__init__(chunk)
+        self.data = bytearray()
+
+    def send(self, data):
+        n = min(self.chunk, len(data))
+        self.calls += 1
+        self.bytes_sent += n
+        self.data.extend(data[:n])
+        return n
+
+
+class FailOnSecondSendSocket(RecordingPartialSendSocket):
+    def __init__(self):
+        super().__init__(chunk=1 << 30)
+
+    def send(self, data):
+        if self.calls == 1:
+            self.calls += 1
+            raise BlockingIOError()
+        return super().send(data)
 
 
 class FakeSendSocket:
@@ -212,6 +237,103 @@ def test_partial_socket_writes_preserve_packet_and_publish_state():
     assert info.is_published() is True
     assert mqttc.want_write() is False
     assert mqttc._sock.bytes_sent > 0
+
+
+def test_large_immutable_publish_queues_header_and_payload_segments():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._thread = threading.Thread(target=lambda: None)
+    payload = b"x" * 16384
+
+    info = mqttc.publish("large/topic", payload, qos=0)
+
+    assert info.rc == client.MQTT_ERR_SUCCESS
+    assert len(mqttc._out_packet) == 1
+    packet = mqttc._out_packet[0]
+    assert isinstance(packet["packet"], tuple)
+    assert packet["packet"][1] is payload
+    assert packet["to_process"] == sum(len(segment) for segment in packet["packet"])
+
+
+def test_segmented_publish_partial_writes_preserve_exact_wire_bytes():
+    payload = b"0123456789abcdef" * 1024
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = RecordingPartialSendSocket(chunk=7)
+    mqttc._thread = threading.Thread(target=lambda: None)
+
+    info = mqttc.publish("large/topic", payload, qos=0)
+    header = mqttc._out_packet[0]["packet"][0]
+
+    assert mqttc.loop_write() == client.MQTT_ERR_SUCCESS
+    assert bytes(mqttc._sock.data) == header + payload
+    assert info.is_published()
+    assert not mqttc._out_packet
+
+
+def test_mutable_and_websocket_payloads_keep_contiguous_snapshot():
+    mutable = bytearray(b"x" * 16384)
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._thread = threading.Thread(target=lambda: None)
+
+    mqttc.publish("large/topic", mutable, qos=0)
+    packet = mqttc._out_packet[0]["packet"]
+    assert isinstance(packet, bytearray)
+    mutable[:] = b"y" * len(mutable)
+    assert packet.endswith(b"x" * 16384)
+
+    websocket_client = client.Client(
+        callback_api_version=CallbackAPIVersion.VERSION2,
+        transport="websockets",
+    )
+    websocket_client._sock = FakeSendSocket()
+    websocket_client._thread = threading.Thread(target=lambda: None)
+    websocket_client.publish("large/topic", b"z" * 16384, qos=0)
+    assert isinstance(websocket_client._out_packet[0]["packet"], bytearray)
+
+
+def test_small_immutable_publish_keeps_contiguous_packet():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._thread = threading.Thread(target=lambda: None)
+
+    mqttc.publish("small/topic", b"x" * 1024, qos=0)
+
+    assert isinstance(mqttc._out_packet[0]["packet"], bytearray)
+
+
+def test_segmented_payload_reference_is_released_after_completion():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._sock = FakeSendSocket()
+    mqttc._thread = threading.Thread(target=lambda: None)
+    payload = b"x" * 16384
+    initial_references = sys.getrefcount(payload)
+
+    mqttc.publish("large/topic", payload, qos=0)
+    assert sys.getrefcount(payload) == initial_references + 1
+
+    assert mqttc.loop_write() == client.MQTT_ERR_SUCCESS
+    assert sys.getrefcount(payload) == initial_references
+
+
+def test_segmented_payload_eagain_after_header_resumes_at_payload():
+    payload = b"x" * 16384
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    first_socket = FailOnSecondSendSocket()
+    mqttc._sock = first_socket
+    mqttc._thread = threading.Thread(target=lambda: None)
+
+    mqttc.publish("large/topic", payload, qos=0)
+    header = mqttc._out_packet[0]["packet"][0]
+
+    assert mqttc.loop_write() == client.MQTT_ERR_SUCCESS
+    assert first_socket.data == header
+    assert mqttc._out_packet[0]["pos"] == len(header)
+
+    second_socket = RecordingPartialSendSocket(chunk=4096)
+    mqttc._sock = second_socket
+    assert mqttc.loop_write() == client.MQTT_ERR_SUCCESS
+    assert second_socket.data == payload
 
 
 def test_qos0_on_publish_ordering():

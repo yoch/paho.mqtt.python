@@ -31,6 +31,13 @@ Run the paired same-process project 14 evaluation:
 PYTHONPATH=src python benchmarks/ingress_decoder_eval.py
 ```
 
+Run the project 18 construction/allocation and local-socket evaluations:
+
+```bash
+PYTHONPATH=src:benchmarks python benchmarks/segmented_payload_eval.py
+PYTHONPATH=src python benchmarks/segmented_payload_socket_eval.py
+```
+
 Save a baseline and a candidate:
 
 ```bash

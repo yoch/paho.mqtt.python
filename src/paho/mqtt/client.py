@@ -67,7 +67,7 @@ if TYPE_CHECKING:
         qos: int
         pos: int
         to_process: int
-        packet: bytes | bytearray
+        packet: bytes | bytearray | tuple[bytes, bytes]
         info: MQTTMessageInfo | None
 
     class SocketLike(Protocol):
@@ -3437,7 +3437,16 @@ class Client:
                 # Avoid a full-buffer copy when the whole packet is still pending.
                 pos = packet['pos']
                 buf = packet['packet']
-                write_length = self._sock_send(buf if pos == 0 else buf[pos:])
+                if isinstance(buf, tuple):
+                    header, payload = buf
+                    if pos < len(header):
+                        pending = header[pos:]
+                    else:
+                        payload_pos = pos - len(header)
+                        pending = payload if payload_pos == 0 else payload[payload_pos:]
+                    write_length = self._sock_send(pending)
+                else:
+                    write_length = self._sock_send(buf if pos == 0 else buf[pos:])
             except (AttributeError, ValueError):
                 self._out_packet.appendleft(packet)
                 return MQTTErrorCode.MQTT_ERR_SUCCESS
@@ -3715,6 +3724,17 @@ class Client:
 
         if self._protocol == MQTTv5:
             packet.extend(packed_properties)
+
+        if (
+            payloadlen >= 16384
+            and isinstance(payload, bytes)
+            and self._transport != "websockets"
+            and not isinstance(self._sock, ssl.SSLSocket)
+        ):
+            # Plain stream sockets can retain a large immutable payload as a
+            # second segment. No batching delay is introduced: _packet_write()
+            # sends the header and payload as soon as the socket is writable.
+            return self._packet_queue(PUBLISH, (bytes(packet), payload), mid, qos, info)
 
         packet.extend(payload)
 
@@ -4034,17 +4054,18 @@ class Client:
     def _packet_queue(
         self,
         command: int,
-        packet: bytes | bytearray,
+        packet: bytes | bytearray | tuple[bytes, bytes],
         mid: int,
         qos: int,
         info: MQTTMessageInfo | None = None,
     ) -> MQTTErrorCode:
+        packet_length = sum(len(segment) for segment in packet) if isinstance(packet, tuple) else len(packet)
         mpkt: _OutPacket = {
             "command": command,
             "mid": mid,
             "qos": qos,
             "pos": 0,
-            "to_process": len(packet),
+            "to_process": packet_length,
             "packet": packet,
             "info": info,
         }

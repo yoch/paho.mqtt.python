@@ -31,7 +31,7 @@ acceptance requirements for these projects.
 | [15 - Batched ACK Inflight Refill](15-batched-ack-inflight-refill.md) | P0 | **GO with conditions** | ACK completion, `_update_inflight()` | Refill all slots once per ACK batch. |
 | [16 - Transport-Aware Batched Writer](16-transport-aware-batched-writer.md) | P0 | **Prototype branch; field validation required** | `_packet_write()`, transport send paths | Submit several queued packets per transport write. |
 | [17 - Reconnect Replay Staging](17-reconnect-replay-staging.md) | P1 | **GO with conditions** | successful CONNACK replay | Stage ordered retransmits in bounded drains. |
-| [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **Planned** | PUBLISH construction, vector writer | Avoid copying large immutable payloads. |
+| [18 - Segmented Outbound Payloads](18-segmented-outbound-payloads.md) | P1/P2 | **GO with conditions** | PUBLISH construction, writer | Avoid copying large immutable payloads. |
 | [19 - Duplex Loop Scheduler](19-duplex-loop-scheduler.md) | P1 | **Planned** | private built-in event loop | Bound and alternate read/write work. |
 | [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **Planned** | `loop_start()`, `loop_stop()`, reconnect wait | Replace polling with timer/control wakeups. |
 | [21 - WebSocket Inbound Streaming](21-websocket-inbound-streaming.md) | P2 | **Planned** | `_WebsocketWrapper.recv()` / `pending()` | Decode frames from bounded read-ahead buffers. |
@@ -102,6 +102,9 @@ Third audit execution:
 - **17 GO with conditions:** bounded reconnect replay staging improves the
   1,000-message QoS 1 scenario by about 51% and reduces explicit drains from
   1,000 to 16; the faster but unbounded single-drain variant was rejected.
+- **18 GO with conditions:** immutable payload segmentation removes more than
+  99.99% of Paho's additional 64-MiB allocation and starts socket writes about
+  40 ms earlier; small, mutable, TLS, and WebSocket paths remain contiguous.
 
 Recommended follow-ups:
 
