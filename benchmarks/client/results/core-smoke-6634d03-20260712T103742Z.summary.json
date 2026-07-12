@@ -1,0 +1,346 @@
+{
+  "estimate": {
+    "estimated_minutes": 2.9,
+    "points": 41,
+    "runs_per_point": 1,
+    "scenarios": 12,
+    "suite": "core"
+  },
+  "points": [
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=binary64 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 24817.17122572457,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=event1k \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 25422.959255624057,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=record16k \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 16974.97266461857,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 23901.945645335658,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=blob1m \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 539.9178487995805,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=empty0 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 29417.94411575467,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_payload_sweep_qos0 \u00b7 payload=block64k \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 7134.624217843257,
+      "runs": 1,
+      "scenario": "pub_payload_sweep_qos0",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_qos_sweep_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 13645.459961190149,
+      "runs": 1,
+      "scenario": "pub_qos_sweep_telemetry",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_qos_sweep_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 20920.75734993245,
+      "runs": 1,
+      "scenario": "pub_qos_sweep_telemetry",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_qos_sweep_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=2 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 11360.80716161484,
+      "runs": 1,
+      "scenario": "pub_qos_sweep_telemetry",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_qos1_inflight \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 17356.80752368735,
+      "runs": 1,
+      "scenario": "pub_qos1_inflight",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_qos1_inflight \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=1 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 5569.194914715814,
+      "runs": 1,
+      "scenario": "pub_qos1_inflight",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "pub_qos1_inflight \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=100 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 21799.92446336332,
+      "runs": 1,
+      "scenario": "pub_qos1_inflight",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "remaining_length_boundaries \u00b7 payload=rl_16383 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 20193.81174651702,
+      "runs": 1,
+      "scenario": "remaining_length_boundaries",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "remaining_length_boundaries \u00b7 payload=rl_127 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 27460.29640843727,
+      "runs": 1,
+      "scenario": "remaining_length_boundaries",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "remaining_length_boundaries \u00b7 payload=rl_128 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 25283.46580664342,
+      "runs": 1,
+      "scenario": "remaining_length_boundaries",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "remaining_length_boundaries \u00b7 payload=rl_16384 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 9898.905092612462,
+      "runs": 1,
+      "scenario": "remaining_length_boundaries",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "remaining_length_boundaries \u00b7 payload=rl_126 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 25414.420114443164,
+      "runs": 1,
+      "scenario": "remaining_length_boundaries",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "sub_exact_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 3885.3496650100583,
+      "runs": 1,
+      "scenario": "sub_exact_telemetry",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "sub_hierarchy_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=plus \u00b7 topic_topology=fleet4k_zipf \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": null,
+      "runs": 1,
+      "scenario": "sub_hierarchy_telemetry",
+      "status": "inconclusive",
+      "valid_runs": 0
+    },
+    {
+      "key": "sub_hierarchy_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=hash \u00b7 topic_topology=fleet4k_uniform \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 4296.870452246119,
+      "runs": 1,
+      "scenario": "sub_hierarchy_telemetry",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "sub_hierarchy_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=hash \u00b7 topic_topology=fleet4k_zipf \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": null,
+      "runs": 1,
+      "scenario": "sub_hierarchy_telemetry",
+      "status": "inconclusive",
+      "valid_runs": 0
+    },
+    {
+      "key": "sub_hierarchy_telemetry \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=plus \u00b7 topic_topology=fleet4k_uniform \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 4569.270419662309,
+      "runs": 1,
+      "scenario": "sub_hierarchy_telemetry",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "sub_callback_matching \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=hash \u00b7 topic_topology=fleet4k_uniform \u00b7 callback_filters=16 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 5153.2107401759395,
+      "runs": 1,
+      "scenario": "sub_callback_matching",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "sub_callback_matching \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=hash \u00b7 topic_topology=fleet4k_uniform \u00b7 callback_filters=1 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 5160.231583467863,
+      "runs": 1,
+      "scenario": "sub_callback_matching",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "sub_callback_matching \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=capacity \u00b7 inflight=20 \u00b7 subscription=hash \u00b7 topic_topology=fleet4k_uniform \u00b7 callback_filters=256 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 4955.206438750313,
+      "runs": 1,
+      "scenario": "sub_callback_matching",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "duplex_gateway \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=1 \u00b7 cadence=burst \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 2337.573277499334,
+      "runs": 1,
+      "scenario": "duplex_gateway",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "duplex_gateway \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=1 \u00b7 cadence=steady50 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 998.9601867820907,
+      "runs": 1,
+      "scenario": "duplex_gateway",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "burst_recovery \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=burst \u00b7 inflight=20 \u00b7 subscription=hash \u00b7 topic_topology=fleet4k_uniform \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 4997.780081038266,
+      "runs": 1,
+      "scenario": "burst_recovery",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "e2e_integrity \u00b7 payload=telemetry256 \u00b7 qos_publish=2 \u00b7 qos_subscribe=2 \u00b7 cadence=steady50 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 999.6338526888732,
+      "runs": 1,
+      "scenario": "e2e_integrity",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "e2e_integrity \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=1 \u00b7 cadence=steady50 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 999.6335904613755,
+      "runs": 1,
+      "scenario": "e2e_integrity",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "e2e_integrity \u00b7 payload=empty0 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=steady50 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 999.9677460411584,
+      "runs": 1,
+      "scenario": "e2e_integrity",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "e2e_integrity \u00b7 payload=telemetry256 \u00b7 qos_publish=0 \u00b7 qos_subscribe=0 \u00b7 cadence=steady50 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 999.1311175226311,
+      "runs": 1,
+      "scenario": "e2e_integrity",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "puback_latency_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.75 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 749.6438410160397,
+      "runs": 1,
+      "scenario": "puback_latency_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "puback_latency_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.5 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 499.9852547657277,
+      "runs": 1,
+      "scenario": "puback_latency_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "puback_latency_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.9 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 899.6362667587217,
+      "runs": 1,
+      "scenario": "puback_latency_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "puback_latency_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=0 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.25 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 249.99194450847662,
+      "runs": 1,
+      "scenario": "puback_latency_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "application_rtt_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=1 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.75 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 746.6502348907471,
+      "runs": 1,
+      "scenario": "application_rtt_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "application_rtt_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=1 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.5 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 500.9845252536401,
+      "runs": 1,
+      "scenario": "application_rtt_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "application_rtt_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=1 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.9 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 899.2660826188056,
+      "runs": 1,
+      "scenario": "application_rtt_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    },
+    {
+      "key": "application_rtt_qos1 \u00b7 payload=telemetry256 \u00b7 qos_publish=1 \u00b7 qos_subscribe=1 \u00b7 cadence=loaded75 \u00b7 inflight=20 \u00b7 subscription=exact \u00b7 topic_topology=single \u00b7 load_fraction=0.25 \u00b7 protocol=MQTTv311",
+      "median_msgs_per_s": 247.65998257124434,
+      "runs": 1,
+      "scenario": "application_rtt_qos1",
+      "status": "valid",
+      "valid_runs": 1
+    }
+  ],
+  "profile": "smoke",
+  "seed": 42,
+  "sha": "6634d03",
+  "source_root": "/tmp/paho-sut-chain/6634d03",
+  "subject": "perf: segment large immutable publish payloads",
+  "suite": "core",
+  "timestamp": "20260712T103742Z"
+}
