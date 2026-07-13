@@ -7,8 +7,11 @@ Properties instance reuse, malformed variable byte integers, and socketpair
 wakeup re-arming.
 """
 
+import builtins
 import struct
 import threading
+import urllib.request
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +20,79 @@ from paho.mqtt.client import _READAHEAD_CHUNK_SIZE
 from paho.mqtt.enums import CallbackAPIVersion, MQTTErrorCode
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import MalformedPacket, Properties, VariableByteIntegers
+
+
+def _fake_socks(default_proxy=None):
+    return SimpleNamespace(
+        HTTP=1,
+        SOCKS4=2,
+        SOCKS5=3,
+        get_default_proxy=lambda: default_proxy,
+    )
+
+
+def test_get_proxy_without_pysocks_does_not_import_urllib(monkeypatch):
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    monkeypatch.setattr(client, "socks", None)
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("urllib"):
+            raise AssertionError("urllib must stay lazy without PySocks")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    assert mqttc._get_proxy() is None
+
+
+def test_get_proxy_explicit_configuration_stays_on_fast_path(monkeypatch):
+    fake_socks = _fake_socks()
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    explicit = {
+        "proxy_type": fake_socks.HTTP,
+        "proxy_addr": "proxy.example",
+        "proxy_port": 8080,
+    }
+    mqttc._proxy = explicit
+    monkeypatch.setattr(client, "socks", fake_socks)
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("urllib"):
+            raise AssertionError("explicit proxy must not discover environment proxies")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    assert mqttc._get_proxy() is explicit
+
+
+def test_get_proxy_preserves_environment_and_no_proxy_behaviour(monkeypatch):
+    fake_socks = _fake_socks((3, "default.example", 1080, True, "user", "pass"))
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+    mqttc._host = "broker.example"
+    monkeypatch.setattr(client, "socks", fake_socks)
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
+    monkeypatch.setattr(
+        urllib.request,
+        "getproxies",
+        lambda: {"mqtt": "http://env-proxy.example:3128"},
+    )
+
+    assert mqttc._get_proxy() == {
+        "proxy_type": fake_socks.HTTP,
+        "proxy_addr": "env-proxy.example",
+        "proxy_port": 3128,
+    }
+
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: True)
+    assert mqttc._get_proxy() == {
+        "proxy_type": fake_socks.SOCKS5,
+        "proxy_addr": "default.example",
+        "proxy_port": 1080,
+        "proxy_rdns": True,
+        "proxy_username": "user",
+        "proxy_password": "pass",
+    }
 
 
 class BurstSocket:

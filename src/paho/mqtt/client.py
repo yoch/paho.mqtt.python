@@ -32,8 +32,6 @@ import string
 import struct
 import threading
 import time
-import urllib.parse
-import urllib.request
 import uuid
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, NamedTuple, Sequence, Tuple, Union, cast, overload
@@ -5077,6 +5075,9 @@ class Client:
         # First, check if the user explicitly passed us a proxy to use
         if self._proxy_is_valid(self._proxy):
             return self._proxy
+
+        import urllib.parse
+        import urllib.request
 
         # Next, check for an mqtt_proxy environment variable as long as the host
         # we're trying to connect to isn't listed under the no_proxy environment

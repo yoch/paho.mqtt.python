@@ -40,7 +40,7 @@ metadata is Python 3.9. Retained production changes must be validated on Python
 | [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **GO with conditions** | TLS handshake/reconnect | Reuse TLS 1.3 sessions and TLS 1.2 sessions only on preconfigured `TCP_NODELAY` sockets. |
 | [26 - Ordered State Dictionaries](26-ordered-state-dicts.md) | P1 | **GO with conditions** | `_out_messages`, `_in_messages` | Cut mapping memory by 53--61% and stable reconnect-scan CPU by about 16%. |
 | [27 - Native Socket Pair](27-native-socketpair.md) | P2 | **GO with conditions** | threaded-loop wakeup lifecycle | Use the runtime's portable primitive; Windows Python 3.9 validation remains. |
-| [28 - Cold Start and Imports](28-cold-start-imports.md) | P2 | **Planned** | module imports, proxy discovery | Defer proxy-only imports and remove measured cold-start work. |
+| [28 - Cold Start and Imports](28-cold-start-imports.md) | P2 | **GO** | module imports, proxy discovery | Avoid 28--30% of cold-start time when PySocks is absent. |
 
 Runtime-floor maintenance and later-runtime ideas are tracked separately in
 [Python Runtime Opportunities](python-runtime-opportunities.md).
@@ -157,8 +157,10 @@ Python 3.9 runtime audit (2026-07-13):
   emulation with `socket.socketpair()`. Pair and prepared-client lifecycle fall
   by about 85% and 74% locally, with fewer syscalls and no descriptor leak; no
   MQTT throughput gain is claimed, and Windows Python 3.9 validation remains.
-- **28 planned:** defer `urllib` until proxy discovery. Cold-start, normal
-  connection, and full proxy behavior need paired validation before a verdict.
+- **28 GO:** lazy `urllib` imports cut no-PySocks client/helper cold-start wall
+  and CPU by 28--30%, avoid 25 imported modules, and reduce process peak RSS by
+  about 6%. Import plus first real proxy lookup is neutral at +0.74%; explicit,
+  environment, `no_proxy`, and default-proxy behavior is covered.
 - [Future runtime opportunities](python-runtime-opportunities.md) records
   `eventfd`, free-threading, and deliberately closed architectural ideas so
   they are not reopened without a new profile.
