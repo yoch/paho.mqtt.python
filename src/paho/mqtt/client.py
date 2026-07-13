@@ -2391,6 +2391,13 @@ class Client:
             return MQTTErrorCode.MQTT_ERR_NO_CONN
 
         try:
+            if isinstance(self._sock, _WebsocketWrapper) and self._sock.pending_write():
+                try:
+                    self._sock.flush()
+                except BlockingIOError:
+                    return MQTTErrorCode.MQTT_ERR_SUCCESS
+                if self._sock.pending_write():
+                    return MQTTErrorCode.MQTT_ERR_SUCCESS
             rc = self._packet_write()
             if rc == MQTTErrorCode.MQTT_ERR_AGAIN:
                 return MQTTErrorCode.MQTT_ERR_SUCCESS
@@ -2408,7 +2415,11 @@ class Client:
         """Call to determine if there is network data waiting to be written.
         Useful if you are calling select() yourself rather than using `loop()`, `loop_start()` or `loop_forever()`.
         """
-        return len(self._out_packet) > 0
+        websocket_pending = (
+            isinstance(self._sock, _WebsocketWrapper)
+            and self._sock.pending_write()
+        )
+        return len(self._out_packet) > 0 or websocket_pending
 
     def loop_misc(self) -> MQTTErrorCode:
         """Process miscellaneous network events. Use in place of calling `loop()` if you
@@ -5211,11 +5222,9 @@ class _WebsocketWrapper:
 
         self._sendbuffer = bytearray()
         self._sendbuffer_head = 0
-        self._readbuffer = bytearray()
 
         self._requested_size = 0
-        self._payload_head = 0
-        self._readbuffer_head = 0
+        self._reset_inbound()
 
         self._do_handshake(extra_headers)
 
@@ -5223,6 +5232,8 @@ class _WebsocketWrapper:
         self._sendbuffer = bytearray()
         self._sendbuffer_head = 0
         self._readbuffer = bytearray()
+        self._decoded_buffer = bytearray()
+        self._control_sendbuffer = bytearray()
 
     def _do_handshake(self, extra_headers: WebSocketHeaders | None) -> None:
 
@@ -5382,104 +5393,263 @@ class _WebsocketWrapper:
             masked[offset:end] = value.to_bytes(chunk_length, "little")
         return masked
 
-    def _buffered_read(self, length: int) -> bytearray:
+    def _reset_inbound(self) -> None:
+        self._readbuffer = bytearray()
+        self._readbuffer_head = 0
+        self._decoded_buffer = bytearray()
+        self._decoded_head = 0
+        self._frame_opcode = None
+        self._frame_final = True
+        self._frame_payload_remaining = 0
+        self._frame_large = False
+        self._fragmented = False
+        self._control_payload = bytearray()
+        self._control_sendbuffer = bytearray()
+        self._control_sendbuffer_head = 0
 
-        # try to recv and store needed bytes
-        wanted_bytes = length - (len(self._readbuffer) - self._readbuffer_head)
-        if wanted_bytes > 0:
+    def _raw_pending(self) -> int:
+        return len(self._readbuffer) - self._readbuffer_head
 
-            data = self._socket.recv(wanted_bytes)
+    def _decoded_pending(self) -> int:
+        return len(self._decoded_buffer) - self._decoded_head
 
-            if not data:
-                raise ConnectionAbortedError
-            else:
-                self._readbuffer.extend(data)
-
-            if len(data) < wanted_bytes:
-                raise BlockingIOError
-
-        self._readbuffer_head += length
-        return self._readbuffer[self._readbuffer_head - length:self._readbuffer_head]
-
-    def _recv_impl(self, length: int) -> bytes:
-
-        # try to decode websocket payload part from data
-        try:
-
+    def _compact_inbound(self) -> None:
+        if self._readbuffer_head == len(self._readbuffer):
+            self._readbuffer.clear()
+            self._readbuffer_head = 0
+        elif self._readbuffer_head >= _READAHEAD_CHUNK_SIZE:
+            del self._readbuffer[:self._readbuffer_head]
             self._readbuffer_head = 0
 
-            result = b""
+    def _protocol_error(self) -> None:
+        raise WebsocketConnectionError("WebSocket protocol error")
 
-            chunk_startindex = self._payload_head
-            chunk_endindex = self._payload_head + length
+    def _parse_frame_header(self) -> bool:
+        available = self._raw_pending()
+        if available < 2:
+            return False
 
-            header1 = self._buffered_read(1)
-            header2 = self._buffered_read(1)
+        position = self._readbuffer_head
+        first = self._readbuffer[position]
+        second = self._readbuffer[position + 1]
+        if first & 0x70:
+            self._protocol_error()
 
-            opcode = (header1[0] & 0x0f)
-            maskbit = (header2[0] & 0x80) == 0x80
-            lengthbits = (header2[0] & 0x7f)
-            payload_length = lengthbits
-            mask_key = None
+        final = bool(first & 0x80)
+        opcode = first & 0x0f
+        masked = bool(second & 0x80)
+        length_code = second & 0x7f
+        header_length = 2
+        if length_code == 126:
+            header_length += 2
+        elif length_code == 127:
+            header_length += 8
+        if masked:
+            header_length += 4
+        if available < header_length:
+            return False
 
-            # read length
-            if lengthbits == 0x7e:
+        cursor = position + 2
+        if length_code == 126:
+            payload_length = _PACK_U16.unpack_from(self._readbuffer, cursor)[0]
+            if payload_length < 126:
+                self._protocol_error()
+        elif length_code == 127:
+            payload_length = _PACK_U64.unpack_from(self._readbuffer, cursor)[0]
+            if payload_length < 65536 or payload_length & (1 << 63):
+                self._protocol_error()
+        else:
+            payload_length = length_code
 
-                value = self._buffered_read(2)
-                payload_length, = struct.unpack("!H", value)
+        # Server-to-client frames must not be masked (RFC 6455 section 5.1).
+        if masked:
+            self._protocol_error()
 
-            elif lengthbits == 0x7f:
+        is_control = opcode >= self.OPCODE_CONNCLOSE
+        if is_control and (not final or payload_length > 125):
+            self._protocol_error()
+        if opcode == self.OPCODE_BINARY:
+            if self._fragmented:
+                self._protocol_error()
+        elif opcode == self.OPCODE_CONTINUATION:
+            if not self._fragmented:
+                self._protocol_error()
+        elif opcode not in (self.OPCODE_CONNCLOSE, self.OPCODE_PING, self.OPCODE_PONG):
+            self._protocol_error()
 
-                value = self._buffered_read(8)
-                payload_length, = struct.unpack("!Q", value)
+        self._readbuffer_head += header_length
+        self._frame_opcode = opcode
+        self._frame_final = final
+        self._frame_payload_remaining = payload_length
+        self._frame_large = payload_length >= _READAHEAD_CHUNK_SIZE
+        self._control_payload.clear()
+        return True
 
-            # read mask
-            if maskbit:
-                mask_key = self._buffered_read(4)
+    def _queue_control(self, opcode: int, payload: bytearray) -> None:
+        self._control_sendbuffer.extend(self._create_frame(opcode, payload, 0))
+        if self._sendbuffer_head == len(self._sendbuffer):
+            try:
+                self.flush()
+            except BlockingIOError:
+                pass
 
-            # if frame payload is shorter than the requested data, read only the possible part
-            readindex = chunk_endindex
-            if payload_length < readindex:
-                readindex = payload_length
+    def _finish_frame(self) -> None:
+        opcode = self._frame_opcode
+        if opcode == self.OPCODE_BINARY:
+            if not self._frame_final:
+                self._fragmented = True
+        elif opcode == self.OPCODE_CONTINUATION:
+            if self._frame_final:
+                self._fragmented = False
+        elif opcode == self.OPCODE_PING:
+            self._queue_control(self.OPCODE_PONG, self._control_payload)
+        elif opcode == self.OPCODE_CONNCLOSE:
+            self._queue_control(self.OPCODE_CONNCLOSE, self._control_payload)
+        self._frame_opcode = None
+        self._frame_payload_remaining = 0
+        self._frame_large = False
+        self._control_payload.clear()
 
-            if readindex > 0:
-                # get payload chunk
-                payload = self._buffered_read(readindex)
+    def _parse_inbound(self, target: int) -> None:
+        while self._decoded_pending() < target:
+            if self._frame_opcode is None:
+                if not self._parse_frame_header():
+                    break
+                if self._frame_payload_remaining == 0:
+                    self._finish_frame()
+                    continue
 
-                # unmask only the needed part
-                if mask_key is not None:
-                    for index in range(chunk_startindex, readindex):
-                        payload[index] ^= mask_key[index % 4]
+            # Large data frames can be returned directly from the raw buffer,
+            # avoiding a second 64-KiB copy through _decoded_buffer.
+            if self._frame_large and self._decoded_pending() == 0:
+                break
 
-                result = bytes(payload[chunk_startindex:readindex])
-                self._payload_head = readindex
+            available = self._raw_pending()
+            if available == 0:
+                break
+            count = min(available, self._frame_payload_remaining)
+            start = self._readbuffer_head
+            end = start + count
+            if self._frame_opcode in (self.OPCODE_BINARY, self.OPCODE_CONTINUATION):
+                self._decoded_buffer.extend(self._readbuffer[start:end])
             else:
-                payload = bytearray()
+                self._control_payload.extend(self._readbuffer[start:end])
+            self._readbuffer_head = end
+            self._frame_payload_remaining -= count
+            if self._frame_payload_remaining == 0:
+                self._finish_frame()
+        self._compact_inbound()
 
-            # check if full frame arrived and reset readbuffer and payloadhead if needed
-            if readindex == payload_length:
-                self._readbuffer = bytearray()
-                self._payload_head = 0
+    def _take_large_payload(self, length: int) -> bytes | None:
+        if (
+            not self._frame_large
+            or self._frame_opcode not in (self.OPCODE_BINARY, self.OPCODE_CONTINUATION)
+            or self._decoded_pending()
+            or self._raw_pending() == 0
+        ):
+            return None
+        count = min(length, self._frame_payload_remaining)
+        if length >= _READAHEAD_CHUNK_SIZE and self._raw_pending() < count:
+            return None
+        count = min(count, self._raw_pending())
+        start = self._readbuffer_head
+        end = start + count
+        result = bytes(memoryview(self._readbuffer)[start:end])
+        self._readbuffer_head = end
+        self._frame_payload_remaining -= count
+        if self._frame_payload_remaining == 0:
+            self._finish_frame()
+        self._compact_inbound()
+        return result
 
-                # respond to non-binary opcodes, their arrival is not guaranteed because of non-blocking sockets
-                if opcode == _WebsocketWrapper.OPCODE_CONNCLOSE:
-                    frame = self._create_frame(
-                        _WebsocketWrapper.OPCODE_CONNCLOSE, payload, 0)
-                    self._socket.send(frame)
+    def _header_bytes_needed(self) -> int:
+        available = self._raw_pending()
+        if available < 2:
+            return 2 - available
+        position = self._readbuffer_head
+        second = self._readbuffer[position + 1]
+        header_length = 2
+        if second & 0x7f == 126:
+            header_length += 2
+        elif second & 0x7f == 127:
+            header_length += 8
+        if second & 0x80:
+            header_length += 4
+        return max(1, header_length - available)
 
-                if opcode == _WebsocketWrapper.OPCODE_PING:
-                    frame = self._create_frame(
-                        _WebsocketWrapper.OPCODE_PONG, payload, 0)
-                    self._socket.send(frame)
+    def _take_decoded(self, length: int) -> bytes:
+        count = min(length, self._decoded_pending())
+        start = self._decoded_head
+        end = start + count
+        result = bytes(self._decoded_buffer[start:end])
+        self._decoded_head = end
+        if end == len(self._decoded_buffer):
+            self._decoded_buffer.clear()
+            self._decoded_head = 0
+        elif self._decoded_head >= _READAHEAD_CHUNK_SIZE:
+            del self._decoded_buffer[:self._decoded_head]
+            self._decoded_head = 0
+        return result
 
-            # This isn't *proper* handling of continuation frames, but given
-            # that we only support binary frames, it is *probably* good enough.
-            if (opcode == _WebsocketWrapper.OPCODE_BINARY or opcode == _WebsocketWrapper.OPCODE_CONTINUATION) \
-                    and payload_length > 0:
-                return result
-            else:
-                raise BlockingIOError
+    def _recv_impl(self, length: int) -> bytes:
+        if length <= 0:
+            return b""
 
+        read_ahead = length >= _READAHEAD_CHUNK_SIZE
+        received = 0
+        try:
+            while self._decoded_pending() < length:
+                self._parse_inbound(length)
+                direct = self._take_large_payload(length)
+                if direct is not None:
+                    return direct
+                if self._decoded_pending() >= length:
+                    break
+
+                if (
+                    read_ahead
+                    and received
+                    and self._frame_opcode is None
+                    and self._decoded_pending()
+                ):
+                    break
+                if self._frame_opcode is None:
+                    read_size = (
+                        _READAHEAD_CHUNK_SIZE
+                        if read_ahead and received == 0
+                        else self._header_bytes_needed()
+                    )
+                else:
+                    missing = length - self._decoded_pending()
+                    if self._frame_opcode in (self.OPCODE_BINARY, self.OPCODE_CONTINUATION):
+                        if self._frame_large:
+                            desired = min(length, self._frame_payload_remaining)
+                            read_size = desired - self._raw_pending()
+                        else:
+                            read_size = min(self._frame_payload_remaining, missing)
+                    else:
+                        read_size = self._frame_payload_remaining
+                    read_size = max(1, read_size)
+
+                try:
+                    data = self._socket.recv(read_size)
+                except BlockingIOError:
+                    break
+                if not data:
+                    self.connected = False
+                    break
+                self._readbuffer.extend(data)
+                received += len(data)
+
+            self._parse_inbound(length)
+            direct = self._take_large_payload(length)
+            if direct is not None:
+                return direct
+            if self._decoded_pending():
+                return self._take_decoded(length)
+            if not self.connected:
+                return b""
+            raise BlockingIOError
         except ConnectionError:
             self.connected = False
             return b''
@@ -5488,6 +5658,10 @@ class _WebsocketWrapper:
 
         # if previous frame was sent successfully
         if self._sendbuffer_head == len(self._sendbuffer):
+            if self.pending_write():
+                self.flush()
+                if self.pending_write():
+                    return 0
             self._sendbuffer.clear()
             self._sendbuffer_head = 0
             # create websocket frame
@@ -5505,6 +5679,11 @@ class _WebsocketWrapper:
         if self._sendbuffer_head == len(self._sendbuffer):
             self._sendbuffer.clear()
             self._sendbuffer_head = 0
+            if self.pending_write():
+                try:
+                    self.flush()
+                except BlockingIOError:
+                    pass
             # buffer sent out completely, return with payload's size
             return self._requested_size
         else:
@@ -5530,6 +5709,24 @@ class _WebsocketWrapper:
         return self._socket.fileno()
 
     def pending(self) -> int:
+        decoded = self._decoded_pending()
+        if decoded:
+            return decoded
+        raw = self._raw_pending()
+        if self._frame_opcode is not None and raw:
+            return raw
+        if self._frame_opcode is None and raw >= 2:
+            position = self._readbuffer_head
+            second = self._readbuffer[position + 1]
+            header_length = 2
+            if second & 0x7f == 126:
+                header_length += 2
+            elif second & 0x7f == 127:
+                header_length += 8
+            if second & 0x80:
+                header_length += 4
+            if raw >= header_length:
+                return 1
         # Fix for bug #131: a SSL socket may still have data available
         # for reading without select() being aware of it.
         if self._ssl:
@@ -5537,6 +5734,24 @@ class _WebsocketWrapper:
         else:
             # normal socket rely only on select()
             return 0
+
+    def pending_write(self) -> bool:
+        return self._control_sendbuffer_head < len(self._control_sendbuffer)
+
+    def flush(self) -> None:
+        if self._sendbuffer_head < len(self._sendbuffer) or not self.pending_write():
+            return
+        pending = memoryview(self._control_sendbuffer)[self._control_sendbuffer_head:]
+        try:
+            count = self._socket.send(pending)  # type: ignore[arg-type]
+        finally:
+            del pending
+        if count == 0:
+            raise BlockingIOError
+        self._control_sendbuffer_head += count
+        if self._control_sendbuffer_head == len(self._control_sendbuffer):
+            self._control_sendbuffer.clear()
+            self._control_sendbuffer_head = 0
 
     def setblocking(self, flag: bool) -> None:
         self._socket.setblocking(flag)
