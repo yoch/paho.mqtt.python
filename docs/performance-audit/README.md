@@ -5,10 +5,11 @@ Python client. It is written as a set of independent project files so each
 suspected bottleneck can be profiled, prototyped, accepted, or rejected without
 coupling it to unrelated work.
 
-The audit is intentionally compatible with the package baseline
-(`requires-python >=3.7`). The local tox matrix may start on a newer version,
-but Python 3.12+ implementation ideas are optional notes and cannot become
-acceptance requirements for these projects.
+The actual compatibility floor used by this audit is Python 3.9. The package
+metadata still declares `requires-python >=3.7`; that stale declaration must
+not force optimization prototypes to carry Python 3.7/3.8 compatibility paths.
+Retained production changes must be validated on Python 3.9 and the current
+Python.
 
 ## Project Index
 
@@ -38,7 +39,7 @@ acceptance requirements for these projects.
 | [22 - Callback and State-Lock Decoupling](22-callback-state-lock-decoupling.md) | P1 | **GO with conditions** | PUBACK/PUBCOMP/PUBREL callbacks | Remove callback-induced producer/reset lock latency. |
 | [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **GO with conditions** | one-shot publish helper | Use a bounded 20-message completion window. |
 | [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **NO GO** | CONNACK capabilities, PUBLISH packing | Wire savings do not justify common-case CPU and concurrency cost; use explicit aliases. |
-| [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **Planned** | TLS handshake/reconnect | Reuse verified TLS sessions when supported. |
+| [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **GO with conditions** | TLS handshake/reconnect | Reuse TLS 1.3 sessions and TLS 1.2 sessions only on preconfigured `TCP_NODELAY` sockets. |
 
 ## Progress Snapshot (2026-07-09)
 
@@ -135,12 +136,19 @@ Third audit execution:
   by roughly 6--17%. Results for 1-KiB and larger topics are unstable, while
   concurrency-safe ordering and adaptive high-cardinality avoidance add too
   much policy for a niche already covered by explicit `TopicAlias` properties.
+- **25 GO with conditions:** verified TLS 1.3 resumption cuts reconnect wall
+  time by 41% on MQTT/TCP and 48% on WSS, with CPU reductions of 38% and 47%.
+  TLS 1.2 reuse is strictly conditional on the new raw socket already having
+  `TCP_NODELAY`; final runs improve wall time by 69% on TCP and 61% on WSS,
+  while the default Nagle path performs no reuse or session extraction.
 
 Recommended follow-ups:
 
 1. Optional local-broker TCP/TLS/WS system-CPU profiles.
 2. Do not reopen the topic cache without a new profile or explicit opt-in design.
 3. Do not reopen rejected 02/05 structures without contradictory evidence.
+4. Validate plan 25 on Python 3.9 and a real TLS broker before removing its
+   environmental conditions.
 
 Do not reopen rejected 02 tracks (`_OutPacket` slots shim, PUBLISH prealloc, fire-and-forget `MQTTMessageInfo`) unless a new profile contradicts the earlier NO GO evidence.
 

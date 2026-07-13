@@ -155,6 +155,10 @@ _READ_BATCH_MAX_PACKETS = 100
 _WEBSOCKET_MASK_CHUNK_SIZE = 64 * 1024
 
 
+class _RetryTLSWithoutSession(Exception):
+    """Request one fresh TCP connection after a local session mismatch."""
+
+
 class _InPacketState:
     """Reusable inbound packet parse state (hot receive path)."""
 
@@ -961,6 +965,12 @@ class Client:
         self._threaded_loop = False
         self._ssl = False
         self._ssl_context: ssl.SSLContext | None = None
+        self._tls_session: Any = None
+        self._tls_session_key: tuple[Any, str, int, str] | None = None
+        self._tls_session_protocol: str | None = None
+        self._tls_session_disabled_key: tuple[Any, str, int, str] | None = None
+        self._tls_socket_session_key: tuple[Any, str, int, str] | None = None
+        self._tls_socket_session_protocol: str | None = None
         # Only used when SSL context does not have check_hostname attribute
         self._tls_insecure = False
         self._logger: logging.Logger | None = None
@@ -1277,6 +1287,8 @@ class Client:
 
         try:
             sock = self._sock
+            if self._tls_socket_session_key is not None:
+                self._cache_tls_session(sock)
             self._sock = None
             self._call_socket_unregister_write(sock)
             self._call_socket_close(sock)
@@ -5120,13 +5132,15 @@ class Client:
         return None
 
     def _create_socket(self) -> SocketLike:
-        if self._transport == "unix":
-            sock = self._create_unix_socket_connection()
-        else:
-            sock = self._create_socket_connection()
+        sock = self._create_raw_socket()
 
         if self._ssl:
-            sock = self._ssl_wrap_socket(sock)
+            try:
+                sock = self._ssl_wrap_socket(sock)
+            except _RetryTLSWithoutSession:
+                sock.close()
+                sock = self._create_raw_socket()
+                sock = self._ssl_wrap_socket(sock, use_cached_session=False)
 
         if self._transport == "websockets":
             sock.settimeout(self._keepalive)
@@ -5140,6 +5154,11 @@ class Client:
             )
 
         return sock
+
+    def _create_raw_socket(self) -> _socket.socket:
+        if self._transport == "unix":
+            return self._create_unix_socket_connection()
+        return self._create_socket_connection()
 
     def _create_unix_socket_connection(self) -> _socket.socket:
         unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -5156,42 +5175,143 @@ class Client:
         else:
             return socket.create_connection(addr, timeout=self._connect_timeout, source_address=source)
 
-    def _ssl_wrap_socket(self, tcp_sock: _socket.socket) -> ssl.SSLSocket:
+    def _tls_session_target(self) -> tuple[Any, str, int, str]:
+        return (self._ssl_context, self._host, self._port, self._transport)
+
+    def _clear_tls_session(self) -> None:
+        self._tls_session = None
+        self._tls_session_key = None
+        self._tls_session_protocol = None
+
+    @staticmethod
+    def _socket_has_tcp_nodelay(sock: _socket.socket) -> bool:
+        try:
+            return bool(sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+        except (AttributeError, OSError):
+            return False
+
+    def _cache_tls_session(self, sock: SocketLike) -> None:
+        target = self._tls_socket_session_key
+        protocol = self._tls_socket_session_protocol
+        self._tls_socket_session_key = None
+        self._tls_socket_session_protocol = None
+        if target is None or protocol is None or self._tls_insecure:
+            return
+        if self._tls_session_disabled_key == target:
+            return
+        if isinstance(sock, _WebsocketWrapper):
+            sock = sock._socket
+        if not isinstance(sock, ssl.SSLSocket):
+            return
+        try:
+            session = sock.session
+        except (AttributeError, ValueError):
+            return
+        if session is not None:
+            self._tls_session = session
+            self._tls_session_key = target
+            self._tls_session_protocol = protocol
+
+    def _ssl_wrap_socket(
+        self,
+        tcp_sock: _socket.socket,
+        use_cached_session: bool = True,
+    ) -> ssl.SSLSocket:
         if self._ssl_context is None:
             raise ValueError(
                 "Impossible condition. _ssl_context should never be None if _ssl is True"
             )
 
         verify_host = not self._tls_insecure
+        session = None
+        target = None
+        tcp_nodelay = False
+        self._tls_socket_session_key = None
+        self._tls_socket_session_protocol = None
+        if self._tls_session_disabled_key is not None or self._tls_session is not None:
+            target = self._tls_session_target()
+            if (
+                self._tls_session_disabled_key is not None
+                and self._tls_session_disabled_key != target
+            ):
+                self._tls_session_disabled_key = None
+        if use_cached_session and self._tls_session is not None and target is not None:
+            if self._tls_session_key == target:
+                if self._tls_session_protocol == "TLSv1.2":
+                    tcp_nodelay = self._socket_has_tcp_nodelay(tcp_sock)
+                if (
+                    self._tls_session_protocol != "TLSv1.2"
+                    or tcp_nodelay
+                ):
+                    session = self._tls_session
+            else:
+                self._clear_tls_session()
+
+        wrap_options: dict[str, Any] = {
+            "do_handshake_on_connect": False,
+        }
+        if session is not None:
+            wrap_options["session"] = session
         try:
             # Try with server_hostname, even it's not supported in certain scenarios
             ssl_sock = self._ssl_context.wrap_socket(
                 tcp_sock,
                 server_hostname=self._host,
-                do_handshake_on_connect=False,
+                **wrap_options,
             )
         except ssl.CertificateError:
             # CertificateError is derived from ValueError
+            self._clear_tls_session()
             raise
         except ValueError:
             # Python version requires SNI in order to handle server_hostname, but SNI is not available
-            ssl_sock = self._ssl_context.wrap_socket(
-                tcp_sock,
-                do_handshake_on_connect=False,
-            )
+            try:
+                ssl_sock = self._ssl_context.wrap_socket(tcp_sock, **wrap_options)
+            except ValueError as error:
+                if session is not None:
+                    self._clear_tls_session()
+                    raise _RetryTLSWithoutSession() from error
+                raise
         else:
             # If SSL context has already checked hostname, then don't need to do it again
             if getattr(self._ssl_context, 'check_hostname', False):  # type: ignore
                 verify_host = False
 
-        ssl_sock.settimeout(self._keepalive)
-        ssl_sock.do_handshake()
+        try:
+            ssl_sock.settimeout(self._keepalive)
+            ssl_sock.do_handshake()
 
-        if verify_host:
-            # TODO: this type error is a true error:
-            # error: Module has no attribute "match_hostname"  [attr-defined]
-            # Python 3.12 no longer have this method.
-            ssl.match_hostname(ssl_sock.getpeercert(), self._host)  # type: ignore
+            if session is not None and not ssl_sock.session_reused:
+                # The peer performed a full handshake despite the offered
+                # ticket. Do not impose that rejection cost on every reconnect
+                # to this target; target/context changes clear the circuit.
+                self._clear_tls_session()
+                self._tls_session_disabled_key = target
+
+            if verify_host:
+                # TODO: this type error is a true error:
+                # error: Module has no attribute "match_hostname"  [attr-defined]
+                # Python 3.12 no longer have this method.
+                ssl.match_hostname(ssl_sock.getpeercert(), self._host)  # type: ignore
+
+            protocol = ssl_sock.version()
+            if protocol == "TLSv1.2" and session is None:
+                tcp_nodelay = self._socket_has_tcp_nodelay(ssl_sock)
+            if not self._tls_insecure and (
+                protocol == "TLSv1.3"
+                or (protocol == "TLSv1.2" and tcp_nodelay)
+            ):
+                # TLS 1.2 reuse is selected on the next raw socket only when
+                # that socket already has TCP_NODELAY. Otherwise the first
+                # application write can wait behind the final handshake
+                # flight until the peer's delayed ACK.
+                if target is None:
+                    target = self._tls_session_target()
+                self._tls_socket_session_key = target
+                self._tls_socket_session_protocol = protocol
+        except ssl.CertificateError:
+            self._clear_tls_session()
+            raise
 
         return ssl_sock
 
