@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, List, Tuple, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from paho.mqtt.enums import CallbackAPIVersion, MQTTProtocolVersion
 from paho.mqtt.properties import Properties
@@ -31,21 +31,15 @@ from paho.mqtt.reasoncodes import ReasonCode
 from .. import mqtt
 from . import client as paho
 
-
 _PUBLISH_WINDOW = 20
 
 if TYPE_CHECKING:
-    try:
-        from typing import NotRequired, Required, TypedDict  # type: ignore
-    except ImportError:
-        from typing_extensions import NotRequired, Required, TypedDict
+    from typing import Literal, TypedDict
 
     try:
-        from typing import Literal
+        from typing import NotRequired, Required  # type: ignore
     except ImportError:
-        from typing_extensions import Literal  # type: ignore
-
-
+        from typing_extensions import NotRequired, Required
 
     class AuthParameter(TypedDict, total=False):
         username: Required[str]
@@ -67,9 +61,9 @@ if TYPE_CHECKING:
         qos: NotRequired[int]
         retain: NotRequired[bool]
 
-    MessageTuple = Tuple[str, paho.PayloadType, int, bool]
+    MessageTuple = tuple[str, paho.PayloadType, int, bool]
 
-    MessagesList = List[Union[MessageDict, MessageTuple]]
+    MessagesList = list[Union[MessageDict, MessageTuple]]
 
 
 def _publish_message(client: paho.Client, message):

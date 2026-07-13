@@ -1,5 +1,6 @@
-import paho.mqtt.client as mqtt
 import pytest
+
+import paho.mqtt.client as mqtt
 
 
 class FakeSSLSocket:
@@ -68,6 +69,41 @@ def tls_client(context):
     client._host = "broker.example"
     client._port = 8883
     return client
+
+
+def test_tls_defaults_use_modern_client_context():
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+    client.tls_set()
+
+    assert client._ssl is True
+    assert client._ssl_context.protocol == mqtt.ssl.PROTOCOL_TLS_CLIENT
+    assert client._ssl_context.verify_mode == mqtt.ssl.CERT_REQUIRED
+    assert client._ssl_context.check_hostname is True
+    assert client._tls_insecure is False
+
+    client.tls_insecure_set(True)
+    assert client._ssl_context.check_hostname is False
+    assert client._tls_insecure is True
+
+
+def test_tls_cert_none_disables_hostname_check_before_verify_mode():
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+    client.tls_set(cert_reqs=mqtt.ssl.CERT_NONE)
+
+    assert client._ssl_context.protocol == mqtt.ssl.PROTOCOL_TLS_CLIENT
+    assert client._ssl_context.verify_mode == mqtt.ssl.CERT_NONE
+    assert client._ssl_context.check_hostname is False
+    assert client._tls_insecure is True
+
+
+def test_tls_set_still_rejects_build_without_ssl(monkeypatch):
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    monkeypatch.setattr(mqtt, "ssl", None)
+
+    with pytest.raises(ValueError, match="no SSL/TLS"):
+        client.tls_set()
 
 
 def test_close_caches_session_and_matching_target_reuses_it(monkeypatch):

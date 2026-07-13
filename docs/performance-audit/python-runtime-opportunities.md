@@ -16,6 +16,26 @@ fallbacks, and `socket.socketpair()` on all supported platforms. The first two
 are primarily opportunities to remove compatibility code; the mapping and
 socket-pair projects have their own measurable performance plans.
 
+The initial Python 3.9 cleanup is complete:
+
+- `Literal`, `Protocol`, and `TypedDict` come directly from `typing`;
+- callback aliases use built-in `dict`, `list`, and `tuple` generics;
+- `Iterator` and `Sequence` come from `collections.abc`;
+- the client selects `time.monotonic` directly;
+- TLS uses the guaranteed `SSLContext`, `load_default_certs`,
+  `PROTOCOL_TLS_CLIENT`, and `check_hostname` facilities without historical
+  capability branches.
+
+This is maintenance, not a performance result. The optional `ssl` import
+guard remains for Python builds without OpenSSL. The wrap-without-SNI retry and
+legacy hostname-verification fallback remain because they concern runtime TLS
+contexts and builds rather than the declared Python version. `Union` remains
+where a type alias is evaluated at runtime: replacing it with `|` would require
+careful Python 3.9 runtime evaluation checks, not a mechanical syntax rewrite.
+The `Required` / `NotRequired` fallback in `publish.py` also remains because
+those two primitives are not available from `typing` until Python 3.11;
+`Literal` and `TypedDict` no longer share that fallback.
+
 `asyncio.to_thread()` does not justify a new asynchronous public API. It runs a
 blocking call in a worker thread and does not replace Paho's existing external
 event-loop integration or solve callback scheduling by itself. Reconsider it

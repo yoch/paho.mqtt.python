@@ -100,8 +100,11 @@ explicit-proxy paths, and that HTTP environment proxy, `no_proxy`, and PySocks
 default-proxy results remain unchanged.
 
 `ssl` remains eager. Obsolete Python compatibility branches and typing aliases
-are deliberately not part of this measured diff; they remain a separate
-maintenance commit after the performance decision.
+are deliberately not part of this measured diff. A separate maintenance
+follow-up directly imports the Python 3.9 typing primitives, uses built-in
+generic containers, selects `time.monotonic` directly, and removes TLS
+capability tests that are guaranteed on the supported floor. None of the
+cold-start gain above is attributed to that follow-up.
 
 ## After Measurements
 
@@ -173,6 +176,6 @@ without PySocks improve by 28--30 percent, process peak RSS falls by about 6
 percent, and the first real proxy-discovery path remains neutral within the 2
 percent guardrail. All targeted and main tests pass.
 
-No MQTT throughput gain is claimed. Commit obsolete typing and runtime
-fallback cleanup separately as maintenance, and do not make `ssl` lazy without
-a new profile and plan.
+No MQTT throughput gain is claimed. The obsolete typing and runtime fallback
+cleanup is kept in a separate maintenance commit, and `ssl` must not become
+lazy without a new profile and plan.

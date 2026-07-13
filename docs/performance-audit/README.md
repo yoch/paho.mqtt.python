@@ -161,6 +161,10 @@ Python 3.9 runtime audit (2026-07-13):
   and CPU by 28--30%, avoid 25 imported modules, and reduce process peak RSS by
   about 6%. Import plus first real proxy lookup is neutral at +0.74%; explicit,
   environment, `no_proxy`, and default-proxy behavior is covered.
+- **Python 3.9 maintenance:** direct typing primitives, built-in generic
+  containers, monotonic clock, and modern TLS capabilities replace obsolete
+  version fallbacks in a separate non-performance change. Optional-SSL and
+  runtime TLS-context fallbacks remain intentionally.
 - [Future runtime opportunities](python-runtime-opportunities.md) records
   `eventfd`, free-threading, and deliberately closed architectural ideas so
   they are not reopened without a new profile.

@@ -34,7 +34,8 @@ import threading
 import time
 import uuid
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, NamedTuple, Sequence, Tuple, Union, cast, overload
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, NamedTuple, Union, cast, overload
 
 from paho.mqtt.packettypes import PacketTypes
 
@@ -44,21 +45,8 @@ from .properties import Properties
 from .reasoncodes import ReasonCode, ReasonCodes
 from .subscribeoptions import SubscribeOptions
 
-try:
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal  # type: ignore
-
 if TYPE_CHECKING:
-    try:
-        from typing import TypedDict  # type: ignore
-    except ImportError:
-        from typing_extensions import TypedDict
-
-    try:
-        from typing import Protocol  # type: ignore
-    except ImportError:
-        from typing_extensions import Protocol  # type: ignore
+    from typing import Protocol, TypedDict
 
     class _OutPacket(TypedDict):
         command: int
@@ -94,11 +82,7 @@ except ImportError:
     socks = None  # type: ignore[assignment]
 
 
-try:
-    # Use monotonic clock if available
-    time_func = time.monotonic
-except AttributeError:
-    time_func = time.time
+time_func = time.monotonic
 
 try:
     import dns.resolver
@@ -268,7 +252,7 @@ sockpair_data = b"0"
 # * None is converted to a zero-length payload (i.e. b"")
 PayloadType = Union[str, bytes, bytearray, int, float, None]
 
-HTTPHeader = Dict[str, str]
+HTTPHeader = dict[str, str]
 WebSocketHeaders = Union[Callable[[HTTPHeader], HTTPHeader], HTTPHeader]
 
 CleanStartOption = Union[bool, Literal[3]]
@@ -299,8 +283,8 @@ class DisconnectFlags(NamedTuple):
     """
 
 
-CallbackOnConnect_v1_mqtt3 = Callable[["Client", Any, Dict[str, Any], MQTTErrorCode], None]
-CallbackOnConnect_v1_mqtt5 = Callable[["Client", Any, Dict[str, Any], ReasonCode, Union[Properties, None]], None]
+CallbackOnConnect_v1_mqtt3 = Callable[["Client", Any, dict[str, Any], MQTTErrorCode], None]
+CallbackOnConnect_v1_mqtt5 = Callable[["Client", Any, dict[str, Any], ReasonCode, Union[Properties, None]], None]
 CallbackOnConnect_v1 = Union[CallbackOnConnect_v1_mqtt5, CallbackOnConnect_v1_mqtt3]
 CallbackOnConnect_v2 = Callable[["Client", Any, ConnectFlags, ReasonCode, Union[Properties, None]], None]
 CallbackOnConnect = Union[CallbackOnConnect_v1, CallbackOnConnect_v2]
@@ -317,15 +301,15 @@ CallbackOnPublish_v1 = Callable[["Client", Any, int], None]
 CallbackOnPublish_v2 = Callable[["Client", Any, int, ReasonCode, Properties], None]
 CallbackOnPublish = Union[CallbackOnPublish_v1, CallbackOnPublish_v2]
 CallbackOnSocket = Callable[["Client", Any, "SocketLike"], None]
-CallbackOnSubscribe_v1_mqtt3 = Callable[["Client", Any, int, Tuple[int, ...]], None]
-CallbackOnSubscribe_v1_mqtt5 = Callable[["Client", Any, int, List[ReasonCode], Properties], None]
+CallbackOnSubscribe_v1_mqtt3 = Callable[["Client", Any, int, tuple[int, ...]], None]
+CallbackOnSubscribe_v1_mqtt5 = Callable[["Client", Any, int, list[ReasonCode], Properties], None]
 CallbackOnSubscribe_v1 = Union[CallbackOnSubscribe_v1_mqtt3, CallbackOnSubscribe_v1_mqtt5]
-CallbackOnSubscribe_v2 = Callable[["Client", Any, int, List[ReasonCode], Union[Properties, None]], None]
+CallbackOnSubscribe_v2 = Callable[["Client", Any, int, list[ReasonCode], Union[Properties, None]], None]
 CallbackOnSubscribe = Union[CallbackOnSubscribe_v1, CallbackOnSubscribe_v2]
 CallbackOnUnsubscribe_v1_mqtt3 = Callable[["Client", Any, int], None]
-CallbackOnUnsubscribe_v1_mqtt5 = Callable[["Client", Any, int, Properties, Union[ReasonCode, List[ReasonCode]]], None]
+CallbackOnUnsubscribe_v1_mqtt5 = Callable[["Client", Any, int, Properties, Union[ReasonCode, list[ReasonCode]]], None]
 CallbackOnUnsubscribe_v1 = Union[CallbackOnUnsubscribe_v1_mqtt3, CallbackOnUnsubscribe_v1_mqtt5]
-CallbackOnUnsubscribe_v2 = Callable[["Client", Any, int, List[ReasonCode], Union[Properties, None]], None]
+CallbackOnUnsubscribe_v2 = Callable[["Client", Any, int, list[ReasonCode], Union[Properties, None]], None]
 CallbackOnUnsubscribe = Union[CallbackOnUnsubscribe_v1, CallbackOnUnsubscribe_v2]
 
 # This is needed for typing because class Client redefined the name "socket"
@@ -951,7 +935,6 @@ class Client:
         self._tls_session_disabled_key: tuple[Any, str, int, str] | None = None
         self._tls_socket_session_key: tuple[Any, str, int, str] | None = None
         self._tls_socket_session_protocol: str | None = None
-        # Only used when SSL context does not have check_hostname attribute
         self._tls_insecure = False
         self._logger: logging.Logger | None = None
         self._registered_write = False
@@ -1342,9 +1325,7 @@ class Client:
         self._ssl = True
         self._ssl_context = context
 
-        # Ensure _tls_insecure is consistent with check_hostname attribute
-        if hasattr(context, 'check_hostname'):
-            self._tls_insecure = not context.check_hostname
+        self._tls_insecure = not context.check_hostname
 
     def tls_set(
         self,
@@ -1402,23 +1383,10 @@ class Client:
         if ssl is None:
             raise ValueError('This platform has no SSL/TLS.')
 
-        if not hasattr(ssl, 'SSLContext'):
-            # Require Python version that has SSL context support in standard library
-            raise ValueError(
-                'Python 2.7.9 and 3.2 are the minimum supported versions for TLS.')
-
-        if ca_certs is None and not hasattr(ssl.SSLContext, 'load_default_certs'):
-            raise ValueError('ca_certs must not be None.')
-
         # Create SSLContext object
         if tls_version is None:
-            tls_version = ssl.PROTOCOL_TLSv1_2
-            # If the python version supports it, use highest TLS version automatically
-            if hasattr(ssl, "PROTOCOL_TLS_CLIENT"):
-                # This also enables CERT_REQUIRED and check_hostname by default.
-                tls_version = ssl.PROTOCOL_TLS_CLIENT
-            elif hasattr(ssl, "PROTOCOL_TLS"):
-                tls_version = ssl.PROTOCOL_TLS
+            # This also enables CERT_REQUIRED and check_hostname by default.
+            tls_version = ssl.PROTOCOL_TLS_CLIENT
         context = ssl.SSLContext(tls_version)
 
         # Configure context
@@ -1428,7 +1396,7 @@ class Client:
         if certfile is not None:
             context.load_cert_chain(certfile, keyfile, keyfile_password)
 
-        if cert_reqs == ssl.CERT_NONE and hasattr(context, 'check_hostname'):
+        if cert_reqs == ssl.CERT_NONE:
             context.check_hostname = False
 
         context.verify_mode = ssl.CERT_REQUIRED if cert_reqs is None else cert_reqs
@@ -1474,11 +1442,8 @@ class Client:
 
         self._tls_insecure = value
 
-        # Ensure check_hostname is consistent with _tls_insecure attribute
-        if hasattr(self._ssl_context, 'check_hostname'):
-            # Rely on SSLContext to check host name
-            # If verify_mode is CERT_NONE then the host name will never be checked
-            self._ssl_context.check_hostname = not value
+        # If verify_mode is CERT_NONE then the host name will never be checked.
+        self._ssl_context.check_hostname = not value
 
     def proxy_set(self, **proxy_args: Any) -> None:
         """Configure proxying of MQTT connection. Enables support for SOCKS or
@@ -5257,7 +5222,7 @@ class Client:
                 raise
         else:
             # If SSL context has already checked hostname, then don't need to do it again
-            if getattr(self._ssl_context, 'check_hostname', False):  # type: ignore
+            if self._ssl_context.check_hostname:
                 verify_host = False
 
         try:
