@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import collections
+import enum
 import errno
 import hashlib
 import logging
@@ -213,6 +214,20 @@ mqtt_ms_resend_pubcomp = MessageState.MQTT_MS_RESEND_PUBCOMP
 mqtt_ms_wait_for_pubcomp = MessageState.MQTT_MS_WAIT_FOR_PUBCOMP
 mqtt_ms_send_pubrec = MessageState.MQTT_MS_SEND_PUBREC
 mqtt_ms_queued = MessageState.MQTT_MS_QUEUED
+
+
+class _OutgoingCallbackState(enum.IntEnum):
+    """Private transient states; deliberately absent from public MessageState."""
+
+    # Public MessageState values are non-negative. Keeping transient values
+    # negative makes one cheap range check sufficient and avoids collisions if
+    # new protocol states are added later.
+    WAIT_FOR_CALLBACK = -2
+    WAIT_FOR_CALLBACK_AFTER_RESET = -1
+
+
+_mqtt_ms_wait_for_publish_callback = _OutgoingCallbackState.WAIT_FOR_CALLBACK
+_mqtt_ms_wait_for_publish_callback_reset = _OutgoingCallbackState.WAIT_FOR_CALLBACK_AFTER_RESET
 
 MQTT_ERR_AGAIN = MQTTErrorCode.MQTT_ERR_AGAIN
 MQTT_ERR_SUCCESS = MQTTErrorCode.MQTT_ERR_SUCCESS
@@ -4025,6 +4040,15 @@ class Client:
             self._inflight_messages = 0
             clean_session = self._check_clean_session()
             for m in self._out_messages.values():
+                if m.state == _mqtt_ms_wait_for_publish_callback:
+                    # The broker has already ACKed this message. Keep it
+                    # authoritative until its synchronous callback finishes,
+                    # but do not count it in the new connection's inflight
+                    # epoch or stage it for retransmission.
+                    m.state = _mqtt_ms_wait_for_publish_callback_reset
+                    continue
+                if m.state == _mqtt_ms_wait_for_publish_callback_reset:
+                    continue
                 m.timestamp = 0
                 if self._max_inflight_messages == 0 or self._inflight_messages < self._max_inflight_messages:
                     if m.qos == 0:
@@ -4261,6 +4285,11 @@ class Client:
                 staged_packets = 0
                 staged_bytes = 0
                 for m in self._out_messages.values():
+                    if m.state < 0:
+                        # ACK completion is reserved by a callback running on
+                        # another thread. It must neither be replayed nor
+                        # overtake earlier queued messages on this connection.
+                        continue
                     m.timestamp = reconnect_timestamp
                     packet_size = 0
                     if m.state == mqtt_ms_queued:
@@ -4551,16 +4580,18 @@ class Client:
         self._easy_log(MQTT_LOG_DEBUG, "Received PUBREL (Mid: %d)", mid)
 
         with self._in_message_mutex:
-            if mid in self._in_messages:
-                # Only pass the message on if we have removed it from the queue - this
-                # prevents multiple callbacks for the same message.
-                message = self._in_messages.pop(mid)
-                self._handle_on_message(message)
-                if self._max_inflight_messages > 0:
-                    with self._out_message_mutex:
-                        rc = self._update_inflight()
-                    if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
-                        return rc
+            # Removing under the state lock prevents duplicate delivery. User
+            # code runs after releasing it so reconnect/reset cannot inherit
+            # arbitrary callback latency.
+            message = self._in_messages.pop(mid, None)
+
+        if message is not None:
+            self._handle_on_message(message)
+            if self._max_inflight_messages > 0:
+                with self._out_message_mutex:
+                    rc = self._update_inflight()
+                if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
+                    return rc
 
         # FIXME: this should only be done if the message is known
         # If unknown it's a protocol error and we should close the connection.
@@ -4771,7 +4802,7 @@ class Client:
                     if not self.suppress_exceptions:
                         raise
 
-        return self._complete_outgoing_publish(mid)
+        return MQTTErrorCode.MQTT_ERR_SUCCESS
 
     def _complete_outgoing_publish(self, mid: int) -> MQTTErrorCode:
         """Complete an outgoing QoS flow while _out_message_mutex is held."""
@@ -4788,6 +4819,43 @@ class Client:
                 rc = self._update_inflight()
                 if rc != MQTTErrorCode.MQTT_ERR_SUCCESS:
                     return rc
+        return MQTTErrorCode.MQTT_ERR_SUCCESS
+
+    def _complete_outgoing_publish_after_reset(self, mid: int) -> MQTTErrorCode:
+        """Complete an ACK whose reconnect epoch already reset inflight."""
+        msg = self._out_messages.pop(mid)
+        msg.info._set_as_published()
+        return MQTTErrorCode.MQTT_ERR_SUCCESS
+
+    def _finish_outgoing_publish_callback(
+        self,
+        mid: int,
+        previous_state: MessageState,
+        *,
+        callback_succeeded: bool,
+    ) -> MQTTErrorCode:
+        """Release a callback reservation and, on success, complete its ACK."""
+        reconnect_reset = False
+        message_still_present = False
+        with self._out_message_mutex:
+            message = self._out_messages.get(mid)
+            message_still_present = message is not None
+            if message is not None:
+                reconnect_reset = (
+                    message.state == _mqtt_ms_wait_for_publish_callback_reset
+                )
+            if callback_succeeded and message_still_present:
+                if reconnect_reset:
+                    return self._complete_outgoing_publish_after_reset(mid)
+                return self._complete_outgoing_publish(mid)
+            if message is not None:
+                message.state = previous_state
+
+        if reconnect_reset and message_still_present:
+            # An unsuppressed callback exception keeps the message recoverable,
+            # matching the historical behavior. Reapply the reset that skipped
+            # the reserved message so its state is valid for the next replay.
+            self._messages_reconnect_reset_out()
         return MQTTErrorCode.MQTT_ERR_SUCCESS
 
     def _handle_pubackcomp(
@@ -4814,10 +4882,25 @@ class Client:
                     on_publish = self._on_publish
                 if on_publish is None:
                     return self._complete_outgoing_publish(mid)
+                message = self._out_messages[mid]
+                if message.state < 0:
+                    return MQTTErrorCode.MQTT_ERR_SUCCESS
 
-                reason_code = ReasonCode(packet_type)
-                properties = Properties(packet_type)
-                return self._do_on_publish(mid, reason_code, properties)
+                previous_state = message.state
+                message.state = _mqtt_ms_wait_for_publish_callback
+
+            reason_code = ReasonCode(packet_type)
+            properties = Properties(packet_type)
+            try:
+                self._do_on_publish(mid, reason_code, properties)
+            except BaseException:
+                self._finish_outgoing_publish_callback(
+                    mid, previous_state, callback_succeeded=False
+                )
+                raise
+            return self._finish_outgoing_publish_callback(
+                mid, previous_state, callback_succeeded=True
+            )
 
         reason_code = ReasonCode(packet_type)
         properties = Properties(packet_type)
@@ -4828,11 +4911,32 @@ class Client:
                     properties.unpack(self._in_packet.packet[3:])
         self._easy_log(MQTT_LOG_DEBUG, "Received %s (Mid: %d)", cmd, mid)
 
+        callback_reserved = False
         with self._out_message_mutex:
             if mid in self._out_messages:
+                with self._callback_mutex:
+                    on_publish = self._on_publish
+                if on_publish is None:
+                    return self._complete_outgoing_publish(mid)
+                message = self._out_messages[mid]
+                if message.state < 0:
+                    return MQTTErrorCode.MQTT_ERR_SUCCESS
                 # Only inform the client the message has been sent once.
-                rc = self._do_on_publish(mid, reason_code, properties)
-                return rc
+                previous_state = message.state
+                message.state = _mqtt_ms_wait_for_publish_callback
+                callback_reserved = True
+
+        if callback_reserved:
+            try:
+                self._do_on_publish(mid, reason_code, properties)
+            except BaseException:
+                self._finish_outgoing_publish_callback(
+                    mid, previous_state, callback_succeeded=False
+                )
+                raise
+            return self._finish_outgoing_publish_callback(
+                mid, previous_state, callback_succeeded=True
+            )
 
         return MQTTErrorCode.MQTT_ERR_SUCCESS
 
