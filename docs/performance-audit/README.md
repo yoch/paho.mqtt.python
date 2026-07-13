@@ -39,7 +39,7 @@ metadata is Python 3.9. Retained production changes must be validated on Python
 | [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **NO GO** | CONNACK capabilities, PUBLISH packing | Wire savings do not justify common-case CPU and concurrency cost; use explicit aliases. |
 | [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **GO with conditions** | TLS handshake/reconnect | Reuse TLS 1.3 sessions and TLS 1.2 sessions only on preconfigured `TCP_NODELAY` sockets. |
 | [26 - Ordered State Dictionaries](26-ordered-state-dicts.md) | P1 | **GO with conditions** | `_out_messages`, `_in_messages` | Cut mapping memory by 53--61% and stable reconnect-scan CPU by about 16%. |
-| [27 - Native Socket Pair](27-native-socketpair.md) | P2 | **Planned** | threaded-loop wakeup lifecycle | Replace loopback TCP emulation with the portable native primitive. |
+| [27 - Native Socket Pair](27-native-socketpair.md) | P2 | **GO with conditions** | threaded-loop wakeup lifecycle | Use the runtime's portable primitive; Windows Python 3.9 validation remains. |
 | [28 - Cold Start and Imports](28-cold-start-imports.md) | P2 | **Planned** | module imports, proxy discovery | Defer proxy-only imports and remove measured cold-start work. |
 
 Runtime-floor maintenance and later-runtime ideas are tracked separately in
@@ -153,9 +153,10 @@ Python 3.9 runtime audit (2026-07-13):
   scan CPU by 15.7%. ACK/promotion and replay improve only 1.4--3.0%, so no
   general publish-throughput gain is claimed; standard broker and Python 3.9
   guardrails remain.
-- **27 planned:** replace the loopback TCP socket-pair emulation with
-  `socket.socketpair()`, now guaranteed throughout the supported runtime
-  range. Lifecycle and Windows validation remain acceptance gates.
+- **27 GO with conditions:** runtime-floor cleanup replaces the loopback TCP
+  emulation with `socket.socketpair()`. Pair and prepared-client lifecycle fall
+  by about 85% and 74% locally, with fewer syscalls and no descriptor leak; no
+  MQTT throughput gain is claimed, and Windows Python 3.9 validation remains.
 - **28 planned:** defer `urllib` until proxy discovery. Cold-start, normal
   connection, and full proxy behavior need paired validation before a verdict.
 - [Future runtime opportunities](python-runtime-opportunities.md) records

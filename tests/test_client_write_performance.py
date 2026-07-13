@@ -1,3 +1,4 @@
+import socket
 import sys
 import threading
 import time
@@ -84,6 +85,53 @@ class FailOnSecondSendSocket(RecordingPartialSendSocket):
             self.calls += 1
             raise BlockingIOError()
         return super().send(data)
+
+
+def test_native_socketpair_is_nonblocking_and_duplex():
+    sock1, sock2 = client._socketpair_compat()
+    try:
+        assert isinstance(sock1, socket.socket)
+        assert isinstance(sock2, socket.socket)
+        assert sock1.getblocking() is False
+        assert sock2.getblocking() is False
+
+        assert sock1.send(b"a") == 1
+        assert sock2.recv(1) == b"a"
+        assert sock2.send(b"b") == 1
+        assert sock1.recv(1) == b"b"
+        with pytest.raises(BlockingIOError):
+            sock1.recv(1)
+    finally:
+        sock1.close()
+        sock2.close()
+
+
+def test_loop_start_replaces_and_closes_native_socketpairs(monkeypatch):
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+
+    def wait_until_stopped(*args, **kwargs):
+        mqttc._thread_terminate_event.wait(1.0)
+
+    monkeypatch.setattr(mqttc, "loop_forever", wait_until_stopped)
+    previous = None
+    try:
+        for _ in range(20):
+            assert mqttc.loop_start() == client.MQTT_ERR_SUCCESS
+            current = (mqttc._sockpairR, mqttc._sockpairW)
+            assert current[0] is not None and current[1] is not None
+            assert current[0].getblocking() is False
+            assert current[1].getblocking() is False
+            if previous is not None:
+                assert previous[0].fileno() == -1
+                assert previous[1].fileno() == -1
+            assert mqttc.loop_stop() == client.MQTT_ERR_SUCCESS
+            previous = current
+    finally:
+        mqttc._reset_sockets(sockpair_only=True)
+
+    assert previous is not None
+    assert previous[0].fileno() == -1
+    assert previous[1].fileno() == -1
 
 
 class FakeSendSocket:
