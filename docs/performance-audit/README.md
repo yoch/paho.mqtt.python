@@ -37,7 +37,7 @@ acceptance requirements for these projects.
 | [21 - WebSocket Inbound Streaming](21-websocket-inbound-streaming.md) | P2 | **GO with conditions** | `_WebsocketWrapper.recv()` / `pending()` | Decode frames from bounded read-ahead buffers. |
 | [22 - Callback and State-Lock Decoupling](22-callback-state-lock-decoupling.md) | P1 | **GO with conditions** | PUBACK/PUBCOMP/PUBREL callbacks | Remove callback-induced producer/reset lock latency. |
 | [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **GO with conditions** | one-shot publish helper | Use a bounded 20-message completion window. |
-| [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **Planned** | CONNACK capabilities, PUBLISH packing | Reduce repeated topic bytes with a strict bounded table. |
+| [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **NO GO** | CONNACK capabilities, PUBLISH packing | Wire savings do not justify common-case CPU and concurrency cost; use explicit aliases. |
 | [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **Planned** | TLS handshake/reconnect | Reuse verified TLS sessions when supported. |
 
 ## Progress Snapshot (2026-07-09)
@@ -130,6 +130,11 @@ Third audit execution:
   one-message-per-frame path by 53% (63% through a real TLS socketpair), cuts
   raw reads by more than 99%, and improves 64-KiB messages by 12%. Wrapper
   buffers peak at 104 KiB; a long external-broker RSS/fairness run remains.
+- **24 NO GO:** automatic aliases remove 84--98% of repeated-topic wire bytes
+  and reduce queued memory, but regress common 32--512-byte publish construction
+  by roughly 6--17%. Results for 1-KiB and larger topics are unstable, while
+  concurrency-safe ordering and adaptive high-cardinality avoidance add too
+  much policy for a niche already covered by explicit `TopicAlias` properties.
 
 Recommended follow-ups:
 
