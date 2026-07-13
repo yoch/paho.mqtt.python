@@ -36,7 +36,7 @@ acceptance requirements for these projects.
 | [20 - Deadline-Driven Thread Loop](20-deadline-driven-thread-loop.md) | P1 | **GO with conditions** | `loop_start()`, `loop_stop()`, reconnect wait | Adaptive idle deadlines and interruptible lifecycle waits; long CPU/timer validation remains. |
 | [21 - WebSocket Inbound Streaming](21-websocket-inbound-streaming.md) | P2 | **Planned** | `_WebsocketWrapper.recv()` / `pending()` | Decode frames from bounded read-ahead buffers. |
 | [22 - Callback and State-Lock Decoupling](22-callback-state-lock-decoupling.md) | P1 | **GO with conditions** | PUBACK/PUBCOMP/PUBREL callbacks | Remove callback-induced producer/reset lock latency. |
-| [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **Planned** | one-shot publish helper | Use a bounded 20-message completion window. |
+| [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **GO with conditions** | one-shot publish helper | Use a bounded 20-message completion window. |
 | [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **Planned** | CONNACK capabilities, PUBLISH packing | Reduce repeated topic bytes with a strict bounded table. |
 | [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **Planned** | TLS handshake/reconnect | Reuse verified TLS sessions when supported. |
 
@@ -121,6 +121,11 @@ Third audit execution:
   1 ABBA slots are neutral at -0.90% paired throughput with p95 +1.4%, while an
   isolated empty callback exposes the expected lock-handoff cost. One standard
   final validation is deferred until the candidate is explicitly accepted.
+- **23 GO with conditions:** `publish.multiple()` now overlaps up to 20
+  completions. Controlled 20/100-ms ACK scenarios improve 20x and loopback
+  QoS 1/2 batches improve materially, with bounded state and full ordering and
+  error tests. Fine one-message/QoS 0 guardrails must be repeated on an
+  isolated broker; a size-dependent alternate path was explicitly rejected.
 
 Recommended follow-ups:
 
