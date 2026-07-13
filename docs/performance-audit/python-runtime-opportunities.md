@@ -6,10 +6,9 @@ work without an application profile and measurable acceptance threshold.
 
 ## Current Python 3.9 Floor
 
-The audit and test matrix use Python 3.9 as the real minimum. Before retaining
-plans 26-28, align `requires-python`, PyPI classifiers, and the README. Keep the
-metadata change separate from optimization commits so benchmark baselines and
-compatibility effects remain attributable.
+The audit, package metadata, README, classifiers, and test matrix use Python
+3.9 as the real minimum. The alignment is kept in a commit separate from plans
+26-28 so benchmark baselines and compatibility effects remain attributable.
 
 Python 3.9 guarantees insertion-ordered dictionaries, native generic aliases
 such as `list[str]`, the typing primitives currently hidden behind older

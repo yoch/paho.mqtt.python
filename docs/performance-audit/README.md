@@ -5,11 +5,9 @@ Python client. It is written as a set of independent project files so each
 suspected bottleneck can be profiled, prototyped, accepted, or rejected without
 coupling it to unrelated work.
 
-The actual compatibility floor used by this audit is Python 3.9. The package
-metadata still declares `requires-python >=3.7`; that stale declaration must
-not force optimization prototypes to carry Python 3.7/3.8 compatibility paths.
-Retained production changes must be validated on Python 3.9 and the current
-Python.
+The actual compatibility floor used by this audit and declared by the package
+metadata is Python 3.9. Retained production changes must be validated on Python
+3.9 and the current Python.
 
 ## Project Index
 
