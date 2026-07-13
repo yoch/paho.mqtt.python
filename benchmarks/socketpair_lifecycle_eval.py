@@ -6,12 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import select
 import statistics
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -153,7 +153,7 @@ def _run_worker(source: str, args: argparse.Namespace) -> dict:
         "--clients", str(args.clients),
         "--wakeups", str(args.wakeups),
     ]
-    process = subprocess.run(command, check=True, text=True, capture_output=True)
+    process = subprocess.run(command, check=True, text=True, capture_output=True)  # noqa: S603
     return json.loads(process.stdout)
 
 
