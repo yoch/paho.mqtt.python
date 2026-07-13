@@ -40,6 +40,12 @@ Python.
 | [23 - `publish.multiple()` Pipeline](23-publish-multiple-pipeline.md) | P1 | **GO with conditions** | one-shot publish helper | Use a bounded 20-message completion window. |
 | [24 - Automatic MQTT v5 Topic Alias](24-mqttv5-automatic-topic-alias.md) | P2 | **NO GO** | CONNACK capabilities, PUBLISH packing | Wire savings do not justify common-case CPU and concurrency cost; use explicit aliases. |
 | [25 - TLS Session Resumption](25-tls-session-resumption.md) | P2 | **GO with conditions** | TLS handshake/reconnect | Reuse TLS 1.3 sessions and TLS 1.2 sessions only on preconfigured `TCP_NODELAY` sockets. |
+| [26 - Ordered State Dictionaries](26-ordered-state-dicts.md) | P1 | **Planned** | `_out_messages`, `_in_messages` | Remove `OrderedDict` CPU and memory overhead without changing QoS order. |
+| [27 - Native Socket Pair](27-native-socketpair.md) | P2 | **Planned** | threaded-loop wakeup lifecycle | Replace loopback TCP emulation with the portable native primitive. |
+| [28 - Cold Start and Imports](28-cold-start-imports.md) | P2 | **Planned** | module imports, proxy discovery | Defer proxy-only imports and remove measured cold-start work. |
+
+Runtime-floor maintenance and later-runtime ideas are tracked separately in
+[Python Runtime Opportunities](python-runtime-opportunities.md).
 
 ## Progress Snapshot (2026-07-09)
 
@@ -141,6 +147,20 @@ Third audit execution:
   TLS 1.2 reuse is strictly conditional on the new raw socket already having
   `TCP_NODELAY`; final runs improve wall time by 69% on TCP and 61% on WSS,
   while the default Nagle path performs no reuse or session extraction.
+
+Python 3.9 runtime audit (2026-07-13):
+
+- **26 planned:** test plain insertion-ordered dictionaries for private QoS
+  state. Exploratory probes show materially lower mapping CPU and memory, but
+  final MQTT and realistic workload measurements are still required.
+- **27 planned:** replace the loopback TCP socket-pair emulation with
+  `socket.socketpair()`, now guaranteed throughout the supported runtime
+  range. Lifecycle and Windows validation remain acceptance gates.
+- **28 planned:** defer `urllib` until proxy discovery. Cold-start, normal
+  connection, and full proxy behavior need paired validation before a verdict.
+- [Future runtime opportunities](python-runtime-opportunities.md) records
+  `eventfd`, free-threading, and deliberately closed architectural ideas so
+  they are not reopened without a new profile.
 
 Recommended follow-ups:
 
