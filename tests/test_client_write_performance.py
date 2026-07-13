@@ -667,6 +667,26 @@ def test_reconnect_reset_computes_clean_session_once(monkeypatch):
     assert all(message.dup for message in mqttc._out_messages.values())
 
 
+def test_message_state_dicts_preserve_insertion_order_and_clean_reset():
+    mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
+
+    assert type(mqttc._out_messages) is dict
+    assert type(mqttc._in_messages) is dict
+
+    for mid in (3, 1, 2):
+        message = client.MQTTMessage(mid=mid, topic=b"devices/topic")
+        mqttc._out_messages[mid] = message
+        mqttc._in_messages[mid] = message
+
+    reinserted = mqttc._out_messages.pop(1)
+    mqttc._out_messages[1] = reinserted
+    assert list(mqttc._out_messages) == [3, 2, 1]
+
+    mqttc._messages_reconnect_reset_in()
+    assert type(mqttc._in_messages) is dict
+    assert mqttc._in_messages == {}
+
+
 def test_update_inflight_reuses_internal_topic_bytes():
     mqttc = client.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     mqttc._sock = FakeSendSocket()

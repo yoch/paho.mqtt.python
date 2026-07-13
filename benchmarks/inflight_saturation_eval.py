@@ -163,7 +163,51 @@ def bench_reconnect_reset(n_total: int, max_inflight: int, loops: int) -> dict:
             c._messages_reconnect_reset_out()
 
     r = _median_rate(run, 1)
-    return {"n": n_total, "resets_s": r["median"] / loops}
+    return {"n": n_total, "resets_s": r["median"] * loops}
+
+
+def bench_reconnect_reset_steady(
+    n_total: int,
+    max_inflight: int,
+    runs: int = 15,
+    resets_per_run: int = 200,
+) -> dict:
+    """Measure only the stable reconnect scan, excluding client population."""
+    c = _new_client(max_inflight)
+    _populate(c, n_total, max_inflight)
+    for _ in range(resets_per_run):
+        c._messages_reconnect_reset_out()
+
+    wall_rates = []
+    cpu_per_reset = []
+    for _ in range(runs):
+        wall_start = time.perf_counter()
+        cpu_start = time.process_time()
+        for _ in range(resets_per_run):
+            c._messages_reconnect_reset_out()
+        cpu_elapsed = time.process_time() - cpu_start
+        wall_elapsed = time.perf_counter() - wall_start
+        wall_rates.append(resets_per_run / wall_elapsed)
+        cpu_per_reset.append(cpu_elapsed / resets_per_run)
+
+    return {
+        "n": n_total,
+        "runs": runs,
+        "resets_per_run": resets_per_run,
+        "resets_s": statistics.median(wall_rates),
+        "resets_s_range": (min(wall_rates), max(wall_rates)),
+        "cpu_us_reset": statistics.median(cpu_per_reset) * 1e6,
+    }
+
+
+def state_mapping_shallow_size(n_total: int) -> dict:
+    c = _new_client(20)
+    _populate(c, n_total, 20)
+    return {
+        "n": n_total,
+        "mapping_type": type(c._out_messages).__name__,
+        "bytes": sys.getsizeof(c._out_messages),
+    }
 
 
 def profile_ack(n_total: int, max_inflight: int, acks: int) -> dict[str, float]:
@@ -237,6 +281,20 @@ def main() -> int:
     for n in (100, 1000, 10000):
         row = bench_reconnect_reset(n, 20, 20)
         print(f"N={n:5}  {row['resets_s']:8.0f} resets/s")
+
+    print("\n=== Plan 26 stable reconnect scan and shallow mapping size ===")
+    row = bench_reconnect_reset_steady(1000, 20)
+    lo, hi = row["resets_s_range"]
+    print(
+        f"N= 1000  {row['resets_s']:8.0f} resets/s "
+        f"[{lo:.0f}..{hi:.0f}]  {row['cpu_us_reset']:.1f} us CPU/reset"
+    )
+    for n in (20, 100, 1000, 10000):
+        size = state_mapping_shallow_size(n)
+        print(
+            f"{size['mapping_type']:>11} N={n:5}  "
+            f"{size['bytes']:8} shallow bytes"
+        )
 
     c = _new_client(20)
     _populate(c, 1000, 20)

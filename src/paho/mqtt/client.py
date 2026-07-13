@@ -927,12 +927,8 @@ class Client:
         self._ping_t = 0.0
         self._last_mid = 0
         self._state = _ConnectionState.MQTT_CS_NEW
-        self._out_messages: collections.OrderedDict[
-            int, MQTTMessage
-        ] = collections.OrderedDict()
-        self._in_messages: collections.OrderedDict[
-            int, MQTTMessage
-        ] = collections.OrderedDict()
+        self._out_messages: dict[int, MQTTMessage] = {}
+        self._in_messages: dict[int, MQTTMessage] = {}
         self._max_inflight_messages = 20
         self._inflight_messages = 0
         self._inflight_refill_deferred = False
@@ -4098,7 +4094,7 @@ class Client:
     def _messages_reconnect_reset_in(self) -> None:
         with self._in_message_mutex:
             if self._check_clean_session():
-                self._in_messages = collections.OrderedDict()
+                self._in_messages = {}
                 return
             for m in self._in_messages.values():
                 m.timestamp = 0
