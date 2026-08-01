@@ -39,6 +39,12 @@ class PacketIdPool:
                 return candidate
         raise FlowControlError("No free MQTT packet identifiers")
 
+    def reserve(self, mid: int) -> None:
+        """Mark an existing MID as in-use (e.g. hydrated from persistence)."""
+        if mid < 1 or mid > self._size:
+            raise ValueError(f"Invalid packet id {mid}")
+        self._used.add(mid)
+
     def release(self, mid: int) -> None:
         self._used.discard(mid)
 

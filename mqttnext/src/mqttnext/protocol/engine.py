@@ -143,6 +143,18 @@ class ProtocolEngine:
             PacketType.DISCONNECT: self._on_disconnect,
             PacketType.AUTH: self._on_auth,
         }
+        # Hydrate packet ids + offline queue from a durable store (restart).
+        for msg in list(self.store.out_items()):
+            self.packet_ids.reserve(msg.mid)
+            if msg.state is OutboundQoSState.QUEUED:
+                self._queued.append(msg)
+            elif msg.state in (
+                OutboundQoSState.WAIT_PUBACK,
+                OutboundQoSState.WAIT_PUBREC,
+            ):
+                # Receive Maximum / local window: slot held until PUBACK/PUBREC.
+                self.flow.try_acquire()
+            # WAIT_PUBCOMP: slot already released at PUBREC.
 
     def take_effects(self) -> list[EngineEffect]:
         effects = self._effects
@@ -360,7 +372,11 @@ class ProtocolEngine:
         if handler is None:
             self._emit(EffectKind.PROTOCOL_ERROR, f"Unhandled packet {raw.packet_type!r}")
             return
-        handler(raw)
+        try:
+            handler(raw)
+        except ProtocolError as exc:
+            self._emit(EffectKind.PROTOCOL_ERROR, str(exc))
+
 
     def _on_connack(self, raw: RawPacket) -> None:
         connack = ConnAckPacket.decode(raw.remaining, self.config.protocol)
@@ -498,9 +514,10 @@ class ProtocolEngine:
 
     def _on_puback(self, raw: RawPacket) -> None:
         ack = PubAckPacket.decode(raw.remaining, self.config.protocol)
-        msg = self.store.pop_out(ack.mid)
-        if msg is None:
+        msg = self.store.get_out(ack.mid)
+        if msg is None or msg.state is not OutboundQoSState.WAIT_PUBACK:
             return
+        self.store.pop_out(ack.mid)
         self.packet_ids.release(ack.mid)
         self.flow.release()
         if ack.reason_code >= 128:
@@ -525,6 +542,8 @@ class ProtocolEngine:
                 PubRelPacket(mid=rec.mid, reason_code=reason).encode(self.config.protocol)
             )
             return
+        if msg.state is not OutboundQoSState.WAIT_PUBREC:
+            return
         if rec.reason_code >= 128:
             self.store.pop_out(rec.mid)
             self.packet_ids.release(rec.mid)
@@ -542,7 +561,10 @@ class ProtocolEngine:
         if msg.encoded_pubrel is None:
             msg.encoded_pubrel = PubRelPacket(mid=rec.mid).encode(self.config.protocol)
         self.store.update_out(msg)
+        # MQTT 5 Receive Maximum: PUBREC frees the outbound PUBLISH slot.
+        self.flow.release()
         self._send(msg.encoded_pubrel)
+        self._drain_queue()
 
     def _on_pubrel(self, raw: RawPacket) -> None:
         rel = PubRelPacket.decode(raw.remaining, self.config.protocol)
@@ -553,6 +575,7 @@ class ProtocolEngine:
             return
         if self.config.manual_ack and not inbound.user_acked:
             inbound.state = InboundQoSState.WAIT_USER_ACK
+            self.store.update_in(inbound)
             return
         self.store.pop_in(rel.mid)
         self._send(PubCompPacket(mid=rel.mid).encode(self.config.protocol))
@@ -573,6 +596,7 @@ class ProtocolEngine:
             return
         if inbound.state is InboundQoSState.WAIT_PUBREL:
             inbound.user_acked = True
+            self.store.update_in(inbound)
             return
         if inbound.state is InboundQoSState.WAIT_USER_ACK:
             self.store.pop_in(mid)
@@ -582,11 +606,12 @@ class ProtocolEngine:
 
     def _on_pubcomp(self, raw: RawPacket) -> None:
         comp = PubCompPacket.decode(raw.remaining, self.config.protocol)
-        msg = self.store.pop_out(comp.mid)
-        if msg is None:
+        msg = self.store.get_out(comp.mid)
+        if msg is None or msg.state is not OutboundQoSState.WAIT_PUBCOMP:
             return
+        self.store.pop_out(comp.mid)
         self.packet_ids.release(comp.mid)
-        self.flow.release()
+        # Flow slot already released on PUBREC.
         if comp.reason_code >= 128:
             self._emit(
                 EffectKind.PUBLISH_FAILED,
@@ -631,7 +656,16 @@ class ProtocolEngine:
         self._emit(EffectKind.DISCONNECTED)
 
     def _launch_outbound(self, msg: OutboundMessage) -> None:
-        assert msg.encoded_publish is not None
+        if msg.encoded_publish is None:
+            msg.encoded_publish = PublishPacket(
+                topic=msg.topic,
+                payload=msg.payload,
+                qos=msg.qos,
+                retain=msg.retain,
+                dup=msg.dup,
+                mid=msg.mid,
+                properties=msg.properties,
+            ).encode_write_item(self.config.protocol)
         if msg.qos == QoS.AT_LEAST_ONCE:
             msg.state = OutboundQoSState.WAIT_PUBACK
         else:
@@ -657,27 +691,31 @@ class ProtocolEngine:
             if msg.state == OutboundQoSState.QUEUED:
                 self._queued.append(msg)
                 continue
+            if msg.state == OutboundQoSState.WAIT_PUBCOMP:
+                if msg.encoded_pubrel is None:
+                    msg.encoded_pubrel = PubRelPacket(mid=msg.mid).encode(self.config.protocol)
+                    self.store.update_out(msg)
+                self._send(msg.encoded_pubrel)
+                continue
             if not self.flow.try_acquire():
                 msg.state = OutboundQoSState.QUEUED
+                self.store.update_out(msg)
                 self._queued.append(msg)
                 continue
-            if msg.state == OutboundQoSState.WAIT_PUBCOMP:
-                assert msg.encoded_pubrel is not None
-                self._send(msg.encoded_pubrel)
-            else:
-                packet = PublishPacket(
-                    topic=msg.topic,
-                    payload=msg.payload,
-                    qos=msg.qos,
-                    retain=msg.retain,
-                    dup=True,
-                    mid=msg.mid,
-                    properties=msg.properties,
-                )
-                msg.dup = True
-                msg.encoded_publish = packet.encode_write_item(self.config.protocol)
-                self.store.update_out(msg)
-                self._send(msg.encoded_publish)
+            packet = PublishPacket(
+                topic=msg.topic,
+                payload=msg.payload,
+                qos=msg.qos,
+                retain=msg.retain,
+                dup=True,
+                mid=msg.mid,
+                properties=msg.properties,
+            )
+            msg.dup = True
+            msg.encoded_publish = packet.encode_write_item(self.config.protocol)
+            self.store.update_out(msg)
+            self._send(msg.encoded_publish)
+        self._drain_queue()
 
     def _resolve_inbound_topic(self, packet: PublishPacket) -> str:
         if self.config.protocol != MQTTProtocolVersion.MQTTv5:
@@ -688,7 +726,8 @@ class ProtocolEngine:
             return packet.topic
         alias = int(alias)
         max_alias = self.config.topic_alias_maximum
-        if alias == 0 or (max_alias and alias > max_alias):
+        # max_alias == 0 means inbound aliases are not accepted.
+        if alias == 0 or alias > max_alias:
             raise ProtocolError(f"Invalid topic alias {alias}")
         if packet.topic:
             self._topic_aliases[alias] = packet.topic

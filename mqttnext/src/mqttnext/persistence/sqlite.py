@@ -216,6 +216,29 @@ class SqliteInflightStore:
         self._conn.commit()
         return _row_to_in(row)
 
+    def update_in(self, msg: InboundMessage) -> None:
+        cur = self._conn.execute(
+            """
+            UPDATE inbound SET topic=?, payload=?, qos=?, retain=?, state=?,
+                delivered=?, properties=?, user_acked=?
+            WHERE mid=?
+            """,
+            (
+                msg.topic,
+                _encode_payload(msg.payload),
+                int(msg.qos),
+                int(msg.retain),
+                int(msg.state),
+                int(msg.delivered),
+                _props_to_json(msg.properties),
+                int(msg.user_acked),
+                msg.mid,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise KeyError(msg.mid)
+        self._conn.commit()
+
     def clear_in(self) -> None:
         self._conn.execute("DELETE FROM inbound")
         self._conn.commit()

@@ -26,7 +26,8 @@ des bugs protocolaires gmqtt.
 - Helpers `mqttnext.helpers.publish` / `subscribe`
 - Persistence SQLite optionnelle
 - Doc migration + CI + licence Apache-2.0
-- **79 tests** ; benches dans `benchmarks/results/compare_libs.md`
+- **85 tests** ; benches dans `benchmarks/results/compare_libs.md`
+- Audit correctness : `docs/AUDIT-CORRECTNESS.md`
 
 Reste : extraction vers un dépôt dédié.
 

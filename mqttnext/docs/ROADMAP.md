@@ -37,7 +37,7 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
 - [x] Backpressure octets + messages (file writer bornée)
 - [x] Segmented large payloads (≥ 1 MiB, header/payload séparés)
-- [x] WebSocket transport (client MQTT-over-WS)
+- [x] WebSocket transport (client MQTT-over-WS) — *transport bas niveau ; pas encore branché sur AsyncClient*
 - [x] Topic alias explicite (déjà phase 1 + validation)
 - [x] Fuzzing codec (malformed / noise)
 - [x] Intégration Mosquitto live (v3.1.1 + v5, QoS 0/1/2)
@@ -50,10 +50,11 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
 - [x] `compat.paho.Client` (VERSION2) — loop_start/connect/publish/subscribe + userdata / topic callbacks / will / auth
 - [x] Helpers publish/subscribe (`mqttnext.helpers`)
-- [x] Persistence SQLite optionnelle (`SqliteInflightStore`)
+- [x] Persistence SQLite optionnelle (`SqliteInflightStore`) — *correctness de base ; pas un store production-hardened*
 - [x] Docs utilisateur + migration (`docs/MIGRATION.md`) + licence Apache-2.0
 - [x] Packaging + workflow CI dédié (`.github/workflows/mqttnext.yml`)
 - [ ] Nouveau dépôt open-source (extraction) — en attente spin-out
+- [x] Audit de correctness post-phase 3 (`docs/AUDIT-CORRECTNESS.md`)
 
 ## Jalons de qualité
 

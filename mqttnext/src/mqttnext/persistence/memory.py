@@ -18,6 +18,7 @@ class InflightStore(Protocol):
     def put_in(self, msg: InboundMessage) -> None: ...
     def get_in(self, mid: int) -> InboundMessage | None: ...
     def pop_in(self, mid: int) -> InboundMessage | None: ...
+    def update_in(self, msg: InboundMessage) -> None: ...
     def clear_in(self) -> None: ...
 
 
@@ -58,6 +59,11 @@ class MemoryInflightStore:
 
     def pop_in(self, mid: int) -> InboundMessage | None:
         return self._in.pop(mid, None)
+
+    def update_in(self, msg: InboundMessage) -> None:
+        if msg.mid not in self._in:
+            raise KeyError(msg.mid)
+        self._in[msg.mid] = msg
 
     def clear_in(self) -> None:
         self._in.clear()

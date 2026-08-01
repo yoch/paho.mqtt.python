@@ -159,6 +159,7 @@ class AsyncClient:
             self._transport_factory = TcpTransport.connect
         self._intentional_disconnect = False
         timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+        self._reconnect.reset()
         return await self._connect_once(host, port, ssl=ssl, timeout=timeout)
 
     async def connect_unix(
@@ -179,6 +180,7 @@ class AsyncClient:
 
         self._transport_factory = _factory
         timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+        self._reconnect.reset()
         return await self._connect_once(path, 0, ssl=None, timeout=timeout)
 
     async def _connect_once(
@@ -218,7 +220,6 @@ class AsyncClient:
             raise ProtocolError(f"Connection refused: reason_code={connack.reason_code}")
         self._connected_at = time.monotonic()
         self._last_outbound = time.monotonic()
-        self._reconnect.reset()
         self._keepalive_task = asyncio.create_task(
             self._keepalive_loop(), name="mqttnext-keepalive"
         )
@@ -334,22 +335,25 @@ class AsyncClient:
         assert self._transport is not None
         try:
             while not self._transport.is_closing():
-                # Read-ahead: large socket reads feed the contiguous decoder;
-                # drain_packets batches up to 100 frames per readiness event.
                 data = await self._transport.read(256 * 1024)
                 if not data:
                     break
                 self._decoder.feed(data)
-                for raw in self._decoder.drain_packets(limit=100):
-                    self._engine.handle_raw(raw)
-                # Flush once per read burst so outbound refill (post-ACK) is
-                # coalesced instead of one drain per packet.
-                await self._flush_effects()
+                # Drain the whole buffer before waiting on the socket again —
+                # a fixed packet cap would strand frames when the peer pauses.
+                while True:
+                    batch = self._decoder.drain_packets(limit=100)
+                    if not batch:
+                        break
+                    for raw in batch:
+                        self._engine.handle_raw(raw)
+                    await self._flush_effects()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._disconnect_exc = exc
-            self._fail_pending(exc)
+            if not self._will_reconnect():
+                self._fail_pending(exc)
         finally:
             self._engine.notify_transport_closed()
             try:
@@ -358,29 +362,34 @@ class AsyncClient:
                 pass
             if self._disconnect_exc is None:
                 self._disconnect_exc = MQTTError("Connection closed")
-            self._fail_pending(self._disconnect_exc)
+            will_reconnect = self._will_reconnect()
+            if not will_reconnect:
+                self._fail_pending(self._disconnect_exc)
             self._closed.set()
-            try:
-                self._messages.put_nowait(_MESSAGE_SENTINEL)
-            except asyncio.QueueFull:
-                # Drop one queued message to free a slot for the sentinel.
-                try:
-                    self._messages.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
+            if not will_reconnect:
                 try:
                     self._messages.put_nowait(_MESSAGE_SENTINEL)
                 except asyncio.QueueFull:
-                    pass
+                    try:
+                        self._messages.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                    try:
+                        self._messages.put_nowait(_MESSAGE_SENTINEL)
+                    except asyncio.QueueFull:
+                        pass
             await self._invoke(self.on_disconnect, self._disconnect_exc)
-            if (
-                not self._intentional_disconnect
-                and self._reconnect.enabled
-                and self._reconnect_task is None
-            ):
+            if will_reconnect and self._reconnect_task is None:
                 self._reconnect_task = asyncio.create_task(
                     self._reconnect_loop(), name="mqttnext-reconnect"
                 )
+
+    def _will_reconnect(self) -> bool:
+        return (
+            not self._intentional_disconnect
+            and self._reconnect.enabled
+            and self._reconnect.should_retry(None, self._engine.config.protocol)
+        )
 
     async def _write_loop(self) -> None:
         assert self._transport is not None
@@ -416,18 +425,28 @@ class AsyncClient:
             raise
         except Exception as exc:
             self._disconnect_exc = exc
-            self._fail_pending(exc)
+            if not self._will_reconnect():
+                self._fail_pending(exc)
             self._engine.notify_transport_closed()
             await self._flush_effects()
             self._closed.set()
+            # Close transport so the reader unblocks and runs shared cleanup.
+            if self._transport is not None:
+                await self._transport.close()
 
     async def _enqueue_outbound(self, item: WriteItem) -> None:
         size = item_size(item)
         async with self._outbound_space:
-            while (
-                self._outbound.qsize() >= self._max_outbound_messages
-                or self._outbound_bytes + size > self._max_outbound_bytes
-            ):
+            while True:
+                messages_full = self._outbound.qsize() >= self._max_outbound_messages
+                # Allow a single oversized item into an empty queue (segmented
+                # payloads can exceed max_outbound_bytes by the MQTT header).
+                bytes_blocked = (
+                    self._outbound_bytes + size > self._max_outbound_bytes
+                    and not (self._outbound_bytes == 0 and self._outbound.empty())
+                )
+                if not messages_full and not bytes_blocked:
+                    break
                 await self._outbound_space.wait()
             self._outbound.put_nowait(item)
             self._outbound_bytes += size
@@ -485,7 +504,9 @@ class AsyncClient:
                         ssl=self._ssl,
                         timeout=self._reconnect.connect_timeout,
                     )
-                    if time.monotonic() - self._connected_at >= self._reconnect.stable_after:
+                    # Only clear backoff after the connection stays up.
+                    await asyncio.sleep(self._reconnect.stable_after)
+                    if self.is_connected:
                         self._reconnect.reset()
                     return
                 except Exception as exc:
@@ -504,19 +525,27 @@ class AsyncClient:
 
     async def _flush_effects(self) -> None:
         effects = self._engine.take_effects()
+        # Protocol bytes first (PUBACK/PUBREC/…), then app delivery. Keeps the
+        # wire moving even if the message queue or user callback blocks.
+        for effect in effects:
+            if effect.kind is EffectKind.SEND:
+                await self._enqueue_outbound(effect.data)
         for effect in effects:
             kind = effect.kind
             if kind is EffectKind.SEND:
-                await self._enqueue_outbound(effect.data)
-            elif kind is EffectKind.MESSAGE:
-                msg: Message = effect.data
-                await self._messages.put(msg)
-                await self._invoke(self.on_message, msg)
+                continue
             elif kind is EffectKind.CONNACK:
                 connack: ConnAckPacket = effect.data
                 if self._connack_fut is not None and not self._connack_fut.done():
                     self._connack_fut.set_result(connack)
                 await self._invoke(self.on_connect, connack)
+            elif kind is EffectKind.MESSAGE:
+                msg: Message = effect.data
+                await self._messages.put(msg)
+                if self.on_message is not None:
+                    # Schedule independently so awaiting a receipt inside a
+                    # callback cannot deadlock the reader.
+                    asyncio.create_task(self._invoke(self.on_message, msg))
             elif kind is EffectKind.PUBLISH_COMPLETE:
                 mid: int = effect.data
                 receipt = self._receipts.pop(mid, None)
@@ -541,7 +570,7 @@ class AsyncClient:
             elif kind is EffectKind.PINGRESP:
                 self._ping_pending = False
             elif kind is EffectKind.DISCONNECTED:
-                continue  # handled in read_loop finally via on_disconnect
+                continue
             elif kind is EffectKind.PROTOCOL_ERROR:
                 raise ProtocolError(str(effect.data))
             else:
@@ -570,20 +599,24 @@ class AsyncClient:
             await result
 
     async def _force_close(self, *, preserve_reconnect: bool = False) -> None:
+        current = asyncio.current_task()
         tasks = [self._reader_task, self._writer_task, self._keepalive_task]
         if not preserve_reconnect:
             tasks.append(self._reconnect_task)
         for task in tasks:
-            if task is not None:
+            if task is not None and task is not current:
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
-        self._reader_task = None
-        self._writer_task = None
-        self._keepalive_task = None
-        if not preserve_reconnect:
+        if self._reader_task is not current:
+            self._reader_task = None
+        if self._writer_task is not current:
+            self._writer_task = None
+        if self._keepalive_task is not current:
+            self._keepalive_task = None
+        if not preserve_reconnect and self._reconnect_task is not current:
             self._reconnect_task = None
         if self._transport is not None:
             await self._transport.close()

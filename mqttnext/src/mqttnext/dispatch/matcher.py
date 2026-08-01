@@ -61,6 +61,11 @@ class TopicMatcher:
             if index == len(parts):
                 if node.content is not None:
                     yield node.content
+                # ``foo/#`` must also match ``foo`` (zero levels under the parent).
+                if "#" in node.children and (allow_wildcard or index > 0):
+                    content = node.children["#"].content
+                    if content is not None:
+                        yield content
                 return
             part = parts[index]
             child = node.children.get(part)
