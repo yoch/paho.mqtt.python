@@ -1,3 +1,15 @@
-"""Compatibilité Paho — réservée à la phase 3."""
+"""Compatibilité Paho — phase 3 (squelette VERSION2)."""
 
-__all__: list[str] = []
+from mqttnext.compat.paho import (
+    CallbackAPIVersion,
+    Client,
+    MQTTMessage,
+    MQTTMessageInfo,
+)
+
+__all__ = [
+    "CallbackAPIVersion",
+    "Client",
+    "MQTTMessage",
+    "MQTTMessageInfo",
+]

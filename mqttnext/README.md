@@ -23,10 +23,10 @@ des bugs protocolaires gmqtt.
   TLS, writer unique, receipts avant wire
 - Backpressure outbound, payloads segmentés ≥ 1 MiB, WebSocket, Unix sockets
 - `manual_ack` (PUBACK/PUBCOMP différés), fuzz codec, intégration Mosquitto live
-- **73 tests** unitaires + intégration ; benches comparatifs dans
+- **73+ tests** unitaires + intégration ; benches comparatifs dans
   `benchmarks/results/compare_libs.md`
 
-Reste phase 2 : read-ahead / batch ACK refill. Phase 3 : façade Paho + spin-out.
+Phase 2 DoD atteinte (hors micro-opts optionnels). Phase 3 : façade Paho + spin-out.
 
 ## Documentation
 

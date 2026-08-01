@@ -331,13 +331,17 @@ class AsyncClient:
         assert self._transport is not None
         try:
             while not self._transport.is_closing():
-                data = await self._transport.read(65536)
+                # Read-ahead: large socket reads feed the contiguous decoder;
+                # drain_packets batches up to 100 frames per readiness event.
+                data = await self._transport.read(256 * 1024)
                 if not data:
                     break
                 self._decoder.feed(data)
-                for raw in self._decoder.drain_packets():
+                for raw in self._decoder.drain_packets(limit=100):
                     self._engine.handle_raw(raw)
-                    await self._flush_effects()
+                # Flush once per read burst so outbound refill (post-ACK) is
+                # coalesced instead of one drain per packet.
+                await self._flush_effects()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -379,22 +383,32 @@ class AsyncClient:
         assert self._transport is not None
         try:
             while True:
-                data = await self._outbound.get()
+                first = await self._outbound.get()
+                batch: list[WriteItem] = [first]
+                while len(batch) < 64:
+                    try:
+                        batch.append(self._outbound.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
                 try:
-                    if isinstance(data, tuple):
-                        for part in data:
-                            await self._transport.write(part)
-                    else:
-                        await self._transport.write(data)
+                    for data in batch:
+                        if isinstance(data, tuple):
+                            for part in data:
+                                await self._transport.write(part)
+                        else:
+                            await self._transport.write(data)
+                    # One drain per burst — keeps QoS pipelining intact.
                     if hasattr(self._transport, "drain"):
                         await self._transport.drain()  # type: ignore[attr-defined]
                     self._last_outbound = time.monotonic()
                 finally:
-                    size = item_size(data)
+                    released = 0
+                    for data in batch:
+                        released += item_size(data)
+                        self._outbound.task_done()
                     async with self._outbound_space:
-                        self._outbound_bytes = max(0, self._outbound_bytes - size)
+                        self._outbound_bytes = max(0, self._outbound_bytes - released)
                         self._outbound_space.notify_all()
-                    self._outbound.task_done()
         except asyncio.CancelledError:
             raise
         except Exception as exc:

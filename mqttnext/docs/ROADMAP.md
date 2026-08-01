@@ -44,16 +44,16 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 - [x] TCP_NODELAY + drain conditionnel (pipelining QoS)
 - [x] Unix sockets
 - [x] Manual ACK
-- [ ] Read-ahead / batch ACK refill (micro-opts supplémentaires)
+- [x] Read-ahead / batch ACK refill (micro-opts supplémentaires)
 
 ## Phase 3 — Compat & spin-out
 
-- `compat.paho.Client` (VERSION2)
-- Helpers publish/subscribe
-- `loop_start` adaptateur
-- Persistence SQLite optionnelle
-- Docs utilisateur + migration depuis Paho/gmqtt
-- Nouveau dépôt open-source + CI + packaging
+- [x] `compat.paho.Client` (VERSION2) — squelette loop_start/connect/publish/subscribe
+- [ ] Helpers publish/subscribe
+- [ ] `loop_start` adaptateur — (intégré au squelette ; élargir parity)
+- [ ] Persistence SQLite optionnelle
+- [ ] Docs utilisateur + migration depuis Paho/gmqtt
+- [ ] Nouveau dépôt open-source + CI + packaging
 
 ## Jalons de qualité
 
