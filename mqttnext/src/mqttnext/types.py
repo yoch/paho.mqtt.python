@@ -53,7 +53,7 @@ class OutboundMessage:
     state: OutboundQoSState
     dup: bool = False
     properties: Properties | None = None
-    encoded_publish: bytes | None = None
+    encoded_publish: bytes | tuple[bytes, bytes] | None = None
     encoded_pubrel: bytes | None = None
 
 
@@ -67,3 +67,4 @@ class InboundMessage:
     state: InboundQoSState
     delivered: bool = False
     properties: Properties | None = None
+    user_acked: bool = False  # manual_ack: app called ack() before PUBREL

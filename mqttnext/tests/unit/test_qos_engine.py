@@ -29,7 +29,12 @@ def _feed_connack_ok(engine: ProtocolEngine, session_present: bool = False) -> N
 
 
 def _take_sends(engine: ProtocolEngine) -> list[bytes]:
-    return [e.data for e in engine.take_effects() if e.kind is EffectKind.SEND]
+    out: list[bytes] = []
+    for e in engine.take_effects():
+        if e.kind is EffectKind.SEND:
+            data = e.data
+            out.append(data if isinstance(data, bytes) else data[0] + data[1])
+    return out
 
 
 def test_packet_id_pool_independent_of_receive_maximum() -> None:

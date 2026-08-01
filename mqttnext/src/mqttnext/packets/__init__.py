@@ -25,6 +25,7 @@ from mqttnext.codec.properties import (
 from mqttnext.codec.vbi import encode_vbi
 from mqttnext.enums import MQTTProtocolVersion, PacketType, QoS
 from mqttnext.errors import MalformedPacketError, ProtocolError
+from mqttnext.transport.writes import SEGMENT_THRESHOLD, WriteItem
 from mqttnext.types import Properties
 
 
@@ -81,6 +82,15 @@ class PublishPacket:
     properties: Properties | None = None
 
     def encode(self, protocol: MQTTProtocolVersion = MQTTProtocolVersion.MQTTv311) -> bytes:
+        item = self.encode_write_item(protocol)
+        if isinstance(item, bytes):
+            return item
+        return item[0] + item[1]
+
+    def encode_write_item(
+        self,
+        protocol: MQTTProtocolVersion = MQTTProtocolVersion.MQTTv311,
+    ) -> WriteItem:
         if self.qos and self.mid is None:
             raise ProtocolError("QoS > 0 PUBLISH requires a packet identifier")
         if self.qos == QoS.AT_MOST_ONCE and self.mid is not None:
@@ -93,14 +103,23 @@ class PublishPacket:
         if self.dup:
             flags |= 0x08
 
-        body = bytearray()
-        body.extend(pack_utf8(self.topic))
+        variable = bytearray()
+        variable.extend(pack_utf8(self.topic))
         if self.qos:
             assert self.mid is not None
-            body.extend(pack_u16(self.mid))
-        body.extend(_props_or_empty(self.properties, PUBLISH, protocol))
-        body.extend(self.payload)
-        return encode_frame(PacketType.PUBLISH, flags, body)
+            variable.extend(pack_u16(self.mid))
+        variable.extend(_props_or_empty(self.properties, PUBLISH, protocol))
+
+        remaining_length = len(variable) + len(self.payload)
+        header = bytearray()
+        header.append(int(PacketType.PUBLISH) | (flags & 0x0F))
+        header.extend(encode_vbi(remaining_length))
+        header.extend(variable)
+
+        if len(self.payload) >= SEGMENT_THRESHOLD and isinstance(self.payload, (bytes, bytearray)):
+            return (bytes(header), bytes(self.payload))
+        header.extend(self.payload)
+        return bytes(header)
 
     @classmethod
     def decode(

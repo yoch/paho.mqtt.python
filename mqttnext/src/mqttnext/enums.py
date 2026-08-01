@@ -53,10 +53,12 @@ class OutboundQoSState(IntEnum):
 
 
 class InboundQoSState(IntEnum):
-    """Inbound QoS 2 lifecycle."""
+    """Inbound QoS lifecycle (QoS 1 manual ACK + QoS 2)."""
 
     WAIT_PUBREL = 1
     DONE = 2
+    WAIT_PUBACK = 3  # QoS 1 + manual_ack: awaiting client.ack()
+    WAIT_USER_ACK = 4  # QoS 2 + manual_ack: PUBREL seen, awaiting client.ack()
 
 
 class ConnectionState(IntEnum):

@@ -55,6 +55,7 @@ from mqttnext.topics import (
     validate_received_publish_topic,
     validate_subscribe_filter,
 )
+from mqttnext.transport.writes import WriteItem, item_size
 from mqttnext.types import InboundMessage, Message, OutboundMessage, Properties
 
 
@@ -105,6 +106,7 @@ class EngineConfig:
     # Local maximum packet size announced to broker (and enforced on ingress).
     maximum_packet_size: int | None = None
     topic_alias_maximum: int = 0  # announced to broker for inbound aliases
+    manual_ack: bool = False  # defer PUBACK (QoS1) / PUBCOMP (QoS2) until ack()
 
 
 class ProtocolEngine:
@@ -150,7 +152,7 @@ class ProtocolEngine:
     def _emit(self, kind: EffectKind, data: Any = None) -> None:
         self._effects.append(EngineEffect(kind=kind, data=data))
 
-    def _send(self, packet: bytes) -> None:
+    def _send(self, packet: WriteItem) -> None:
         self._emit(EffectKind.SEND, packet)
 
     def begin_connect(self) -> bytes:
@@ -240,7 +242,7 @@ class ProtocolEngine:
                 mid=None,
                 properties=properties,
             )
-            wire = packet.encode(self.config.protocol)
+            wire = packet.encode_write_item(self.config.protocol)
             self._check_outbound_size(wire)
             self._send(wire)
             return PublishHandle(mid=None, qos=qos)
@@ -264,7 +266,7 @@ class ProtocolEngine:
             mid=mid,
             properties=properties,
         )
-        msg.encoded_publish = packet.encode(self.config.protocol)
+        msg.encoded_publish = packet.encode_write_item(self.config.protocol)
         self._check_outbound_size(msg.encoded_publish)
         if qos == QoS.EXACTLY_ONCE:
             msg.encoded_pubrel = PubRelPacket(mid=mid).encode(self.config.protocol)
@@ -447,7 +449,21 @@ class ProtocolEngine:
                     properties=packet.properties,
                 ),
             )
-            self._send(PubAckPacket(mid=packet.mid).encode(self.config.protocol))
+            if self.config.manual_ack:
+                self.store.put_in(
+                    InboundMessage(
+                        mid=packet.mid,
+                        topic=topic,
+                        payload=packet.payload,
+                        qos=packet.qos,
+                        retain=packet.retain,
+                        state=InboundQoSState.WAIT_PUBACK,
+                        delivered=True,
+                        properties=packet.properties,
+                    )
+                )
+            else:
+                self._send(PubAckPacket(mid=packet.mid).encode(self.config.protocol))
             return
 
         existing = self.store.get_in(packet.mid)
@@ -530,8 +546,39 @@ class ProtocolEngine:
 
     def _on_pubrel(self, raw: RawPacket) -> None:
         rel = PubRelPacket.decode(raw.remaining, self.config.protocol)
+        inbound = self.store.get_in(rel.mid)
+        if inbound is None:
+            # Orphan PUBREL: idempotent PUBCOMP (v5 reason 0x92 optional later).
+            self._send(PubCompPacket(mid=rel.mid).encode(self.config.protocol))
+            return
+        if self.config.manual_ack and not inbound.user_acked:
+            inbound.state = InboundQoSState.WAIT_USER_ACK
+            return
         self.store.pop_in(rel.mid)
         self._send(PubCompPacket(mid=rel.mid).encode(self.config.protocol))
+
+    def ack(self, mid: int) -> None:
+        """Complete a deferred inbound ACK (manual_ack mode).
+
+        QoS 1: send PUBACK. QoS 2: mark ready / send PUBCOMP if PUBREL already seen.
+        """
+        if not self.config.manual_ack:
+            raise ProtocolError("manual_ack is disabled")
+        inbound = self.store.get_in(mid)
+        if inbound is None:
+            raise ProtocolError(f"No pending inbound ack for mid={mid}")
+        if inbound.state is InboundQoSState.WAIT_PUBACK:
+            self.store.pop_in(mid)
+            self._send(PubAckPacket(mid=mid).encode(self.config.protocol))
+            return
+        if inbound.state is InboundQoSState.WAIT_PUBREL:
+            inbound.user_acked = True
+            return
+        if inbound.state is InboundQoSState.WAIT_USER_ACK:
+            self.store.pop_in(mid)
+            self._send(PubCompPacket(mid=mid).encode(self.config.protocol))
+            return
+        raise ProtocolError(f"Inbound mid={mid} is not awaiting ack (state={inbound.state!r})")
 
     def _on_pubcomp(self, raw: RawPacket) -> None:
         comp = PubCompPacket.decode(raw.remaining, self.config.protocol)
@@ -628,7 +675,7 @@ class ProtocolEngine:
                     properties=msg.properties,
                 )
                 msg.dup = True
-                msg.encoded_publish = packet.encode(self.config.protocol)
+                msg.encoded_publish = packet.encode_write_item(self.config.protocol)
                 self.store.update_out(msg)
                 self._send(msg.encoded_publish)
 
@@ -650,11 +697,12 @@ class ProtocolEngine:
             raise ProtocolError(f"Unknown topic alias {alias}")
         return self._topic_aliases[alias]
 
-    def _check_outbound_size(self, wire: bytes) -> None:
+    def _check_outbound_size(self, wire: WriteItem) -> None:
         limit = self.negotiated.maximum_packet_size
-        if limit is not None and len(wire) > limit:
+        size = item_size(wire)
+        if limit is not None and size > limit:
             raise PacketTooLargeError(
-                f"Encoded packet size {len(wire)} exceeds broker maximum_packet_size {limit}"
+                f"Encoded packet size {size} exceeds broker maximum_packet_size {limit}"
             )
 
     def _check_subscribe_capabilities(

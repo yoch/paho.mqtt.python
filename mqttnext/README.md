@@ -17,19 +17,16 @@ des bugs protocolaires gmqtt.
 
 ## État
 
-**Phase 1 — client async utilisable** (voir `docs/ROADMAP.md`) :
+**Phase 2 — robustesse & perf** (presque complète, voir `docs/ROADMAP.md`) :
 
-- Codec MQTT 5 properties complet + validation par paquet
-- `NegotiatedSettings` (Receive Maximum, max packet, max QoS, retain, alias…)
-- Keepalive PINGREQ/RESP (détection PINGRESP explicite)
-- `ReconnectPolicy` (backoff + jitter, codes terminaux)
-- Futures awaitables SUBACK/UNSUBACK + timeouts
-- Validation topics / filtres / `$share`
-- Writer unique, receipts avant wire, TLS via `ssl=`
-- **54 tests unitaires verts** ; microbench `benchmarks/micro_baseline.py`
+- Client async phase 1 : properties MQTT 5, négociation, keepalive, reconnect,
+  TLS, writer unique, receipts avant wire
+- Backpressure outbound, payloads segmentés ≥ 1 MiB, WebSocket, Unix sockets
+- `manual_ack` (PUBACK/PUBCOMP différés), fuzz codec, intégration Mosquitto live
+- **73 tests** unitaires + intégration ; benches comparatifs dans
+  `benchmarks/results/compare_libs.md`
 
-Reste pour clôturer la DoD phase 1 : intégration Mosquitto docker.
-WebSocket / façade Paho / fuzz = phases 2–3.
+Reste phase 2 : read-ahead / batch ACK refill. Phase 3 : façade Paho + spin-out.
 
 ## Documentation
 

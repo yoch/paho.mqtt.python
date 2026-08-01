@@ -22,8 +22,17 @@ def _connack(session_present: bool = False, reason_code: int = 0) -> bytes:
     return encode_frame(PacketType.CONNACK, 0, bytes((flags, reason_code)))
 
 
+def _as_bytes(data: object) -> bytes:
+    if isinstance(data, bytes):
+        return data
+    assert isinstance(data, tuple)
+    return data[0] + data[1]
+
+
 def _take_sends(engine: ProtocolEngine) -> list[bytes]:
-    return [e.data for e in engine.take_effects() if e.kind is EffectKind.SEND]
+    return [
+        _as_bytes(e.data) for e in engine.take_effects() if e.kind is EffectKind.SEND
+    ]
 
 
 def test_offline_queue_survives_clean_connect() -> None:
@@ -36,8 +45,8 @@ def test_offline_queue_survives_clean_connect() -> None:
     engine.begin_connect()
     _feed(engine, _connack(session_present=False))
     effects = engine.take_effects()
-    sends = [e.data for e in effects if e.kind is EffectKind.SEND]
     failed = [e for e in effects if e.kind is EffectKind.PUBLISH_FAILED]
+    sends = [_as_bytes(e.data) for e in effects if e.kind is EffectKind.SEND]
     assert failed == []
     assert len(sends) == 1
 
@@ -84,7 +93,7 @@ def test_clean_reconnect_fails_inflight_keeps_queued() -> None:
     assert not engine.packet_ids.in_use(inflight.mid or 0)
 
     # The queued message must have been launched on the fresh session.
-    sends = [e.data for e in effects if e.kind is EffectKind.SEND]
+    sends = [_as_bytes(e.data) for e in effects if e.kind is EffectKind.SEND]
     assert len(sends) == 1
     dec = IncrementalDecoder()
     dec.feed(sends[0])

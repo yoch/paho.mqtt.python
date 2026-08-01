@@ -31,6 +31,8 @@ from mqttnext.protocol.engine import (
 from mqttnext.protocol.negotiated import NegotiatedSettings
 from mqttnext.protocol.reconnect import ReconnectPolicy
 from mqttnext.transport.tcp import AsyncTransport, TcpTransport
+from mqttnext.transport.unix import UnixSocketTransport
+from mqttnext.transport.writes import WriteItem, item_size
 from mqttnext.types import Message, Properties
 
 OnMessage = Callable[[Message], Any]
@@ -59,6 +61,10 @@ class AsyncClient:
         reconnect: ReconnectPolicy | None = None,
         ping_timeout: float | None = None,
         ack_timeout: float = 30.0,
+        max_outbound_bytes: int = 1 * 1024 * 1024,
+        max_outbound_messages: int = 10_000,
+        max_pending_messages: int = 65_536,
+        manual_ack: bool = False,
     ) -> None:
         pwd = password.encode("utf-8") if isinstance(password, str) else password
         self._engine = ProtocolEngine(
@@ -75,6 +81,7 @@ class AsyncClient:
                 will_properties=will_properties,
                 maximum_packet_size=maximum_packet_size,
                 topic_alias_maximum=topic_alias_maximum,
+                manual_ack=manual_ack,
             )
         )
         max_pkt = maximum_packet_size or DEFAULT_MAX_PACKET_SIZE
@@ -84,12 +91,18 @@ class AsyncClient:
         self._writer_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
-        self._outbound: asyncio.Queue[bytes] = asyncio.Queue()
+        self._outbound: asyncio.Queue[WriteItem] = asyncio.Queue()
+        self._outbound_bytes = 0
+        self._max_outbound_bytes = max_outbound_bytes
+        self._max_outbound_messages = max_outbound_messages
+        self._outbound_space = asyncio.Condition()
         self._connack_fut: asyncio.Future[ConnAckPacket] | None = None
         self._receipts: dict[int, PublishReceipt] = {}
         self._sub_futs: dict[int, asyncio.Future[SubscribeResult]] = {}
         self._unsub_futs: dict[int, asyncio.Future[UnsubscribeResult]] = {}
-        self._messages: asyncio.Queue[Message | object] = asyncio.Queue()
+        self._messages: asyncio.Queue[Message | object] = asyncio.Queue(
+            maxsize=max_pending_messages
+        )
         self._closed = asyncio.Event()
         self._disconnect_exc: BaseException | None = None
         self._last_outbound = 0.0
@@ -99,6 +112,7 @@ class AsyncClient:
         self._host = ""
         self._port = 1883
         self._ssl: ssl.SSLContext | bool | None = None
+        self._unix_path: str | None = None
         self._reconnect = reconnect if reconnect is not None else ReconnectPolicy(enabled=False)
         self._ping_timeout = ping_timeout
         self._ack_timeout = ack_timeout
@@ -136,9 +150,33 @@ class AsyncClient:
         self._host = host
         self._port = port
         self._ssl = ssl
+        was_unix = self._unix_path is not None
+        self._unix_path = None
+        if was_unix:
+            self._transport_factory = TcpTransport.connect
         self._intentional_disconnect = False
         timeout = timeout if timeout is not None else self._reconnect.connect_timeout
         return await self._connect_once(host, port, ssl=ssl, timeout=timeout)
+
+    async def connect_unix(
+        self,
+        path: str,
+        *,
+        timeout: float | None = None,
+    ) -> ConnAckPacket:
+        """Connect over a Unix domain socket (AF_UNIX)."""
+        self._unix_path = path
+        self._host = path
+        self._port = 0
+        self._ssl = None
+        self._intentional_disconnect = False
+
+        async def _factory(host: str, port: int, *, ssl: object | None = None) -> AsyncTransport:
+            return await UnixSocketTransport.connect(self._unix_path or host)
+
+        self._transport_factory = _factory
+        timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+        return await self._connect_once(path, 0, ssl=None, timeout=timeout)
 
     async def _connect_once(
         self,
@@ -156,12 +194,13 @@ class AsyncClient:
         self._disconnect_exc = None
         self._decoder.clear()
         self._outbound = asyncio.Queue()
+        self._outbound_bytes = 0
         self._ping_pending = False
         connect_packet = self._engine.begin_connect()
         loop = asyncio.get_running_loop()
         self._connack_fut = loop.create_future()
         self._writer_task = asyncio.create_task(self._write_loop(), name="mqttnext-writer")
-        self._outbound.put_nowait(connect_packet)
+        await self._enqueue_outbound(connect_packet)
         self._reader_task = asyncio.create_task(self._read_loop(), name="mqttnext-reader")
         try:
             connack = await asyncio.wait_for(self._connack_fut, timeout=timeout)
@@ -194,7 +233,7 @@ class AsyncClient:
         if self._transport is None:
             return
         packet = self._engine.begin_disconnect(reason_code)
-        self._outbound.put_nowait(packet)
+        await self._enqueue_outbound(packet)
         try:
             await asyncio.wait_for(self._outbound.join(), timeout=5.0)
         except TimeoutError:
@@ -278,6 +317,16 @@ class AsyncClient:
                 return
             yield item  # type: ignore[misc]
 
+    async def ack(self, message: Message) -> None:
+        """Acknowledge an inbound QoS>0 message when ``manual_ack=True``.
+
+        Defers PUBACK (QoS 1) or PUBCOMP (QoS 2). PUBREC is always immediate.
+        """
+        if message.mid is None:
+            return
+        self._engine.ack(message.mid)
+        await self._flush_effects()
+
     async def _read_loop(self) -> None:
         assert self._transport is not None
         try:
@@ -304,7 +353,18 @@ class AsyncClient:
                 self._disconnect_exc = MQTTError("Connection closed")
             self._fail_pending(self._disconnect_exc)
             self._closed.set()
-            self._messages.put_nowait(_MESSAGE_SENTINEL)
+            try:
+                self._messages.put_nowait(_MESSAGE_SENTINEL)
+            except asyncio.QueueFull:
+                # Drop one queued message to free a slot for the sentinel.
+                try:
+                    self._messages.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    self._messages.put_nowait(_MESSAGE_SENTINEL)
+                except asyncio.QueueFull:
+                    pass
             await self._invoke(self.on_disconnect, self._disconnect_exc)
             if (
                 not self._intentional_disconnect
@@ -321,9 +381,19 @@ class AsyncClient:
             while True:
                 data = await self._outbound.get()
                 try:
-                    await self._transport.write(data)
+                    if isinstance(data, tuple):
+                        for part in data:
+                            await self._transport.write(part)
+                    else:
+                        await self._transport.write(data)
+                    if hasattr(self._transport, "drain"):
+                        await self._transport.drain()  # type: ignore[attr-defined]
                     self._last_outbound = time.monotonic()
                 finally:
+                    size = item_size(data)
+                    async with self._outbound_space:
+                        self._outbound_bytes = max(0, self._outbound_bytes - size)
+                        self._outbound_space.notify_all()
                     self._outbound.task_done()
         except asyncio.CancelledError:
             raise
@@ -333,6 +403,17 @@ class AsyncClient:
             self._engine.notify_transport_closed()
             await self._flush_effects()
             self._closed.set()
+
+    async def _enqueue_outbound(self, item: WriteItem) -> None:
+        size = item_size(item)
+        async with self._outbound_space:
+            while (
+                self._outbound.qsize() >= self._max_outbound_messages
+                or self._outbound_bytes + size > self._max_outbound_bytes
+            ):
+                await self._outbound_space.wait()
+            self._outbound.put_nowait(item)
+            self._outbound_bytes += size
 
     async def _keepalive_loop(self) -> None:
         try:
@@ -409,7 +490,7 @@ class AsyncClient:
         for effect in effects:
             kind = effect.kind
             if kind is EffectKind.SEND:
-                self._outbound.put_nowait(effect.data)
+                await self._enqueue_outbound(effect.data)
             elif kind is EffectKind.MESSAGE:
                 msg: Message = effect.data
                 await self._messages.put(msg)

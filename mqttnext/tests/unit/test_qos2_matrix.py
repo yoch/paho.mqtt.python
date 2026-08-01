@@ -25,12 +25,19 @@ def _connect(engine: ProtocolEngine, session_present: bool) -> None:
     engine.take_effects()
 
 
+def _as_bytes(data: object) -> bytes:
+    if isinstance(data, bytes):
+        return data
+    assert isinstance(data, tuple)
+    return data[0] + data[1]
+
+
 def _drop_and_reconnect(engine: ProtocolEngine, session_present: bool) -> list[bytes]:
     engine.notify_transport_closed()
     engine.take_effects()
     engine.begin_connect()
     _feed(engine, _connack(session_present))
-    return [e.data for e in engine.take_effects() if e.kind is EffectKind.SEND]
+    return [_as_bytes(e.data) for e in engine.take_effects() if e.kind is EffectKind.SEND]
 
 
 def test_qos2_loss_before_publish_clean_session() -> None:

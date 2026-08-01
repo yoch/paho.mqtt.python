@@ -31,19 +31,20 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 - [x] Callbacks sync+async
 - [x] Exemples basiques
 - [x] Microbench ingress/egress (`benchmarks/micro_baseline.py`)
-- [ ] Test d'intégration réel contre Mosquitto (docker) — à lancer en CI/local
+- [x] Test d'intégration réel contre Mosquitto (docker) — à lancer en CI/local
 
 ## Phase 2 — Robustesse & perf
 
-- Read-ahead / batch ACK refill
-- Segmented large payloads
-- WebSocket transport
-- Unix sockets
-- Manual ACK
-- Shared subscriptions validation
-- Topic alias **explicite** (pas auto)
-- Fuzzing codec (malformed packets)
-- Harness client e2e vs Mosquitto
+- [x] Backpressure octets + messages (file writer bornée)
+- [x] Segmented large payloads (≥ 1 MiB, header/payload séparés)
+- [x] WebSocket transport (client MQTT-over-WS)
+- [x] Topic alias explicite (déjà phase 1 + validation)
+- [x] Fuzzing codec (malformed / noise)
+- [x] Intégration Mosquitto live (v3.1.1 + v5, QoS 0/1/2)
+- [x] TCP_NODELAY + drain conditionnel (pipelining QoS)
+- [x] Unix sockets
+- [x] Manual ACK
+- [ ] Read-ahead / batch ACK refill (micro-opts supplémentaires)
 
 ## Phase 3 — Compat & spin-out
 

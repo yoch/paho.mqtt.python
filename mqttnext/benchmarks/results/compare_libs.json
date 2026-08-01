@@ -1,0 +1,114 @@
+{
+  "broker": [
+    "127.0.0.1",
+    11883
+  ],
+  "samples": [
+    {
+      "name": "publish_encode_qos0_small",
+      "library": "mqttnext",
+      "ops_per_s": 1144775.721553624,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "publish_encode_qos0_small",
+      "library": "gmqtt",
+      "ops_per_s": 1046741.9476408956,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "publish_encode_qos0_small",
+      "library": "paho",
+      "ops_per_s": 212802.03418242323,
+      "unit": "msg/s",
+      "notes": "publish()+_packet_write to null sock (includes queue)"
+    },
+    {
+      "name": "ingress_decode_50x_qos0_small",
+      "library": "mqttnext",
+      "ops_per_s": 17363.672152254338,
+      "unit": "batch/s",
+      "notes": ""
+    },
+    {
+      "name": "ingress_decode_50x_qos0_small",
+      "library": "gmqtt",
+      "ops_per_s": NaN,
+      "unit": "batch/s",
+      "notes": "no isolated decoder API; see e2e"
+    },
+    {
+      "name": "ingress_decode_50x_qos0_small",
+      "library": "paho",
+      "ops_per_s": NaN,
+      "unit": "batch/s",
+      "notes": "decoder coupled to Client loop; see e2e"
+    },
+    {
+      "name": "e2e_pub_qos0_p64",
+      "library": "mqttnext",
+      "ops_per_s": 221668.43535749387,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos0_p64",
+      "library": "gmqtt",
+      "ops_per_s": 90882.21208187677,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos0_p64",
+      "library": "paho",
+      "ops_per_s": 69663.1358950522,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos1_p64",
+      "library": "mqttnext",
+      "ops_per_s": 24065.071375366642,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos1_p64",
+      "library": "gmqtt",
+      "ops_per_s": 227.2927884183495,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos1_p64",
+      "library": "paho",
+      "ops_per_s": 21898.156273730805,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos2_p64",
+      "library": "mqttnext",
+      "ops_per_s": 14078.369468028046,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos2_p64",
+      "library": "gmqtt",
+      "ops_per_s": 50504.89490840608,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "name": "e2e_pub_qos2_p64",
+      "library": "paho",
+      "ops_per_s": 13487.952567521997,
+      "unit": "msg/s",
+      "notes": ""
+    }
+  ],
+  "table_md": "| Scenario | mqttnext | gmqtt | paho | mqttnext/gmqtt | mqttnext/paho |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| `publish_encode_qos0_small` | 1,144,776 | 1,046,742 | 212,802 | 1.1\u00d7 | 5.4\u00d7 |\n| `ingress_decode_50x_qos0_small` | 17,364 | n/a | n/a | n/a\u00d7 | n/a\u00d7 |\n| `e2e_pub_qos0_p64` | 221,668 | 90,882 | 69,663 | 2.4\u00d7 | 3.2\u00d7 |\n| `e2e_pub_qos1_p64` | 24,065 | 227.3 | 21,898 | 105.9\u00d7 | 1.1\u00d7 |\n| `e2e_pub_qos2_p64` | 14,078 | 50,505 | 13,488 | 0.3\u00d7 | 1.0\u00d7 |"
+}

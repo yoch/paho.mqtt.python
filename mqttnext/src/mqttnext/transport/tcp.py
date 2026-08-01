@@ -30,12 +30,26 @@ class TcpTransport:
         ssl: object | None = None,
     ) -> TcpTransport:
         import asyncio
+        import socket
 
         reader, writer = await asyncio.open_connection(host, port, ssl=ssl)
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
         return cls(reader, writer)
 
     async def write(self, data: bytes) -> None:
         self._writer.write(data)  # type: ignore[attr-defined]
+        # Avoid awaiting drain on every small packet: it serializes the
+        # event loop against socket buffer flushes and kills QoS pipelining.
+        transport = self._writer.transport  # type: ignore[attr-defined]
+        if transport is not None and transport.get_write_buffer_size() > 64 * 1024:
+            await self._writer.drain()  # type: ignore[attr-defined]
+
+    async def drain(self) -> None:
         await self._writer.drain()  # type: ignore[attr-defined]
 
     async def read(self, n: int = 65536) -> bytes:
