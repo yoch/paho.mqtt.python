@@ -17,32 +17,34 @@ des bugs protocolaires gmqtt.
 
 ## État
 
-**Phase 0 — fondation** (voir `docs/ROADMAP.md`) :
+**Phase 1 — client async utilisable** (voir `docs/ROADMAP.md`) :
 
-- Codec incrémental borné (VBI, fragmentation, multi-paquets)
-- `ProtocolEngine` synchrone testable (sans socket)
-- Machines QoS 1 / QoS 2 (in + out) avec corrections gmqtt
-- `PacketIdPool` ≠ `FlowControl(Receive Maximum)`
-- `AsyncClient` squelette TCP
-- Tests unitaires hors réseau
+- Codec MQTT 5 properties complet + validation par paquet
+- `NegotiatedSettings` (Receive Maximum, max packet, max QoS, retain, alias…)
+- Keepalive PINGREQ/RESP (détection PINGRESP explicite)
+- `ReconnectPolicy` (backoff + jitter, codes terminaux)
+- Futures awaitables SUBACK/UNSUBACK + timeouts
+- Validation topics / filtres / `$share`
+- Writer unique, receipts avant wire, TLS via `ssl=`
+- **54 tests unitaires verts** ; microbench `benchmarks/micro_baseline.py`
 
-Pas encore production-ready : MQTT 5 properties riches, TLS, reconnect
-policy, WebSocket, façade Paho arrivent en phases 1–3.
+Reste pour clôturer la DoD phase 1 : intégration Mosquitto docker.
+WebSocket / façade Paho / fuzz = phases 2–3.
 
 ## Documentation
 
 - [`docs/ANALYSIS.md`](docs/ANALYSIS.md) — audit comparatif Paho vs gmqtt
 - [`docs/DESIGN.md`](docs/DESIGN.md) — architecture et contrats
-- [`docs/IMPLEMENTATION-GUIDE.md`](docs/IMPLEMENTATION-GUIDE.md) — contrats détaillés phases 1–3 (properties, keepalive, reconnect, timeouts, validation, tests)
+- [`docs/IMPLEMENTATION-GUIDE.md`](docs/IMPLEMENTATION-GUIDE.md) — contrats détaillés phases 1–3
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phases
-- [`docs/AUDIT.md`](docs/AUDIT.md) — auto-audit phase 0 + audit de planification
+- [`docs/AUDIT.md`](docs/AUDIT.md) — auto-audit + audit de planification
 
 ## Quick start (dev)
 
 ```bash
 cd mqttnext
 pip install -e ".[dev]"
-pytest -q
+python3 -m pytest -q
 ```
 
 Exemple minimal (nécessite un broker) :
