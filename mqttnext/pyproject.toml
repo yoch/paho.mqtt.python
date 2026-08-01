@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Async-native MQTT client reference implementation (work in progress)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "TBD — see docs/DESIGN.md" }
+license = { text = "Apache-2.0" }
 authors = [
     { name = "yoch" },
 ]

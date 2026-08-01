@@ -48,12 +48,12 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
 ## Phase 3 — Compat & spin-out
 
-- [x] `compat.paho.Client` (VERSION2) — squelette loop_start/connect/publish/subscribe
-- [ ] Helpers publish/subscribe
-- [ ] `loop_start` adaptateur — (intégré au squelette ; élargir parity)
-- [ ] Persistence SQLite optionnelle
-- [ ] Docs utilisateur + migration depuis Paho/gmqtt
-- [ ] Nouveau dépôt open-source + CI + packaging
+- [x] `compat.paho.Client` (VERSION2) — loop_start/connect/publish/subscribe + userdata / topic callbacks / will / auth
+- [x] Helpers publish/subscribe (`mqttnext.helpers`)
+- [x] Persistence SQLite optionnelle (`SqliteInflightStore`)
+- [x] Docs utilisateur + migration (`docs/MIGRATION.md`) + licence Apache-2.0
+- [x] Packaging + workflow CI dédié (`.github/workflows/mqttnext.yml`)
+- [ ] Nouveau dépôt open-source (extraction) — en attente spin-out
 
 ## Jalons de qualité
 

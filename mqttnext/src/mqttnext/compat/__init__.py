@@ -1,4 +1,4 @@
-"""Compatibilité Paho — phase 3 (squelette VERSION2)."""
+"""Compatibilité Paho — phase 3 (VERSION2)."""
 
 from mqttnext.compat.paho import (
     CallbackAPIVersion,

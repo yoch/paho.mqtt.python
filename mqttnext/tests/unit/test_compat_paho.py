@@ -44,7 +44,7 @@ class FakeBrokerTransport:
 
 
 def test_compat_connect_publish_qos1() -> None:
-    client = Client(CallbackAPIVersion.VERSION2, client_id="compat")
+    client = Client(CallbackAPIVersion.VERSION2, client_id="compat", userdata={"u": 1})
     fake = FakeBrokerTransport()
 
     async def factory(host: str, port: int, *, ssl: object = None) -> FakeBrokerTransport:
@@ -52,20 +52,41 @@ def test_compat_connect_publish_qos1() -> None:
 
     client._async._transport_factory = factory
     connected = []
+    topic_hits = []
 
     def on_connect(c, userdata, flags, reason_code, properties):
-        connected.append(reason_code)
+        connected.append((reason_code, userdata))
+
+    def on_topic(c, userdata, message):
+        topic_hits.append(message.topic)
 
     client.on_connect = on_connect
+    client.message_callback_add("t/#", on_topic)
     client.loop_start()
     try:
         assert client.connect("fake", 1883) == 0
-        assert connected == [0]
+        assert connected == [(0, {"u": 1})]
         info = client.publish("t/1", b"hi", qos=1)
         assert info.wait_for_publish(timeout=2.0)
         assert info.is_published()
         rc, mid = client.subscribe("t/#")
         assert rc == 0 and mid > 0
+        assert client.is_connected
         assert client.disconnect() == 0
     finally:
         client.loop_stop()
+
+
+def test_message_callback_dispatch_only() -> None:
+    client = Client(CallbackAPIVersion.VERSION2, userdata="ud")
+    seen: list[str] = []
+
+    def on_topic(c, userdata, message):
+        seen.append(f"{userdata}:{message.topic.decode()}")
+
+    client.message_callback_add("sensors/+", on_topic)
+    from mqttnext.types import Message
+
+    client._dispatch_message(Message(topic="sensors/1", payload=b"1"))
+    client._dispatch_message(Message(topic="other", payload=b"x"))
+    assert seen == ["ud:sensors/1"]

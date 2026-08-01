@@ -15,7 +15,7 @@ performante, avec façade compatible Paho.
 | Correctness | machines QoS 1/2 complètes ; Receive Maximum ; DUP/dedup |
 | Perf | hot paths alignés sur les GO de l’audit Paho |
 | API | `AsyncClient` + callbacks optionnels + `compat.paho` |
-| Licence | à trancher au spin-out (EDL/EPL vs Apache/MIT) — pour l’instant notices séparées |
+| Licence | Apache-2.0 (from-scratch ; voir `LICENSE`) |
 
 ## Architecture
 

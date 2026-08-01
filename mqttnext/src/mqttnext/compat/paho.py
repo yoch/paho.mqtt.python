@@ -1,4 +1,4 @@
-"""Minimal Paho-compatible sync façade over AsyncClient (phase 3 start).
+"""Minimal Paho-compatible sync façade over AsyncClient (phase 3).
 
 Only CallbackAPIVersion.VERSION2 is supported. A dedicated thread runs an
 asyncio loop that owns one AsyncClient.
@@ -15,6 +15,7 @@ from typing import Any
 
 from mqttnext.api.async_client import AsyncClient
 from mqttnext.api.models import PublishReceipt
+from mqttnext.dispatch.matcher import TopicMatcher
 from mqttnext.enums import MQTTProtocolVersion, QoS
 from mqttnext.packets import ConnAckPacket
 from mqttnext.types import Message
@@ -70,6 +71,7 @@ class Client:
         callback_api_version: CallbackAPIVersion = CallbackAPIVersion.VERSION2,
         client_id: str = "",
         *,
+        userdata: Any = None,
         protocol: MQTTProtocolVersion = MQTTProtocolVersion.MQTTv311,
         clean_session: bool | None = None,
         clean_start: bool = True,
@@ -78,6 +80,7 @@ class Client:
             raise ValueError("mqttnext.compat.paho only supports CallbackAPIVersion.VERSION2")
         if clean_session is not None:
             clean_start = bool(clean_session)
+        self._userdata = userdata
         self._async = AsyncClient(
             client_id=client_id,
             protocol=protocol,
@@ -86,6 +89,7 @@ class Client:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
+        self._topic_callbacks = TopicMatcher()
 
         self.on_connect: Callable[..., Any] | None = None
         self.on_disconnect: Callable[..., Any] | None = None
@@ -95,6 +99,42 @@ class Client:
         self._async.on_connect = self._dispatch_connect
         self._async.on_disconnect = self._dispatch_disconnect
         self._async.on_message = self._dispatch_message
+
+    def user_data_set(self, userdata: Any) -> None:
+        self._userdata = userdata
+
+    def username_pw_set(self, username: str, password: bytes | str | None = None) -> None:
+        pwd = password.encode("utf-8") if isinstance(password, str) else password
+        self._async._engine.config.username = username
+        self._async._engine.config.password = pwd
+
+    def will_set(
+        self,
+        topic: str,
+        payload: bytes | str = b"",
+        qos: int = 0,
+        retain: bool = False,
+    ) -> None:
+        data = payload.encode("utf-8") if isinstance(payload, str) else payload
+        self._async._engine.config.will = Message(
+            topic=topic,
+            payload=data,
+            qos=QoS(qos),
+            retain=retain,
+        )
+
+    def message_callback_add(self, sub: str, callback: Callable[..., Any]) -> None:
+        self._topic_callbacks[sub] = callback
+
+    def message_callback_remove(self, sub: str) -> None:
+        try:
+            del self._topic_callbacks[sub]
+        except KeyError:
+            pass
+
+    @property
+    def is_connected(self) -> bool:
+        return self._async.is_connected
 
     def loop_start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -143,6 +183,13 @@ class Client:
         self._submit(self._async.connect(host, port))
         return 0
 
+    def reconnect(self) -> int:
+        host = self._async._host
+        port = self._async._port
+        if not host:
+            raise RuntimeError("reconnect() called before connect()")
+        return self.connect(host, port, keepalive=self._async._engine.config.keepalive)
+
     def disconnect(self) -> int:
         try:
             self._submit(self._async.disconnect(), timeout=10.0)
@@ -162,7 +209,7 @@ class Client:
         )
         info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
         if self.on_publish is not None and receipt.qos == QoS.AT_MOST_ONCE:
-            self.on_publish(self, None, receipt.mid, 0, None)
+            self.on_publish(self, self._userdata, receipt.mid, 0, None)
         elif receipt.qos != QoS.AT_MOST_ONCE and self._loop is not None:
             asyncio.run_coroutine_threadsafe(self._watch_publish(receipt), self._loop)
         return info
@@ -171,10 +218,10 @@ class Client:
         try:
             await receipt.wait()
             if self.on_publish is not None:
-                self.on_publish(self, None, receipt.mid, 0, None)
+                self.on_publish(self, self._userdata, receipt.mid, 0, None)
         except Exception:
             if self.on_publish is not None:
-                self.on_publish(self, None, receipt.mid, 1, None)
+                self.on_publish(self, self._userdata, receipt.mid, 1, None)
 
     def subscribe(self, topic: str, qos: int = 0) -> tuple[int, int]:
         result = self._submit(self._async.subscribe(topic, qos=qos))
@@ -189,17 +236,18 @@ class Client:
         if cb is None:
             return
         flags = {"session present": bool(connack.session_present)}
-        cb(self, None, flags, connack.reason_code, connack.properties)
+        cb(self, self._userdata, flags, connack.reason_code, connack.properties)
 
     def _dispatch_disconnect(self, exc: BaseException | None) -> None:
         cb = self.on_disconnect
         if cb is None:
             return
         rc = 0 if exc is None else 1
-        cb(self, None, rc, None)
+        cb(self, self._userdata, rc, None)
 
     def _dispatch_message(self, msg: Message) -> None:
-        cb = self.on_message
-        if cb is None:
-            return
-        cb(self, None, MQTTMessage(msg))
+        wrapped = MQTTMessage(msg)
+        for cb in self._topic_callbacks.iter_match(msg.topic):
+            cb(self, self._userdata, wrapped)
+        if self.on_message is not None:
+            self.on_message(self, self._userdata, wrapped)

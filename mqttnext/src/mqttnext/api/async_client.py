@@ -30,6 +30,7 @@ from mqttnext.protocol.engine import (
 )
 from mqttnext.protocol.negotiated import NegotiatedSettings
 from mqttnext.protocol.reconnect import ReconnectPolicy
+from mqttnext.persistence.memory import InflightStore
 from mqttnext.transport.tcp import AsyncTransport, TcpTransport
 from mqttnext.transport.unix import UnixSocketTransport
 from mqttnext.transport.writes import WriteItem, item_size
@@ -65,6 +66,7 @@ class AsyncClient:
         max_outbound_messages: int = 10_000,
         max_pending_messages: int = 65_536,
         manual_ack: bool = False,
+        store: InflightStore | None = None,
     ) -> None:
         pwd = password.encode("utf-8") if isinstance(password, str) else password
         self._engine = ProtocolEngine(
@@ -82,7 +84,8 @@ class AsyncClient:
                 maximum_packet_size=maximum_packet_size,
                 topic_alias_maximum=topic_alias_maximum,
                 manual_ack=manual_ack,
-            )
+            ),
+            store=store,
         )
         max_pkt = maximum_packet_size or DEFAULT_MAX_PACKET_SIZE
         self._decoder = IncrementalDecoder(max_packet_size=max_pkt)

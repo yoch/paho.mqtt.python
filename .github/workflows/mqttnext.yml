@@ -1,0 +1,30 @@
+name: mqttnext
+
+on:
+  push:
+    paths:
+      - "mqttnext/**"
+      - ".github/workflows/mqttnext.yml"
+  pull_request:
+    paths:
+      - "mqttnext/**"
+      - ".github/workflows/mqttnext.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: mqttnext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Unit tests
+        run: python -m pytest -q tests/unit
