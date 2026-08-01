@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mqttnext"
+dynamic = ["version"]
+description = "Async-native MQTT client reference implementation (work in progress)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "TBD — see docs/DESIGN.md" }
+authors = [
+    { name = "yoch" },
+]
+keywords = ["mqtt", "asyncio", "iot"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications",
+    "Topic :: Internet",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.hatch.version]
+path = "src/mqttnext/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mqttnext"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/mqttnext",
+    "/tests",
+    "/docs",
+    "/examples",
+    "/README.md",
+    "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
