@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 
 from mqttnext.enums import QoS
-from mqttnext.packets import ConnAckPacket
+from mqttnext.packets import ConnAckPacket, SubAckPacket, UnsubAckPacket
 from mqttnext.types import Message
 
 
@@ -30,4 +30,30 @@ class PublishReceipt:
         return self.qos == QoS.AT_MOST_ONCE or self._event.is_set()
 
 
-__all__ = ["ConnAckPacket", "Message", "PublishReceipt"]
+@dataclass(slots=True)
+class SubscribeResult:
+    mid: int
+    reason_codes: tuple[int, ...]
+
+    @classmethod
+    def from_packet(cls, packet: SubAckPacket) -> SubscribeResult:
+        return cls(mid=packet.mid, reason_codes=packet.reason_codes)
+
+
+@dataclass(slots=True)
+class UnsubscribeResult:
+    mid: int
+    reason_codes: tuple[int, ...]
+
+    @classmethod
+    def from_packet(cls, packet: UnsubAckPacket) -> UnsubscribeResult:
+        return cls(mid=packet.mid, reason_codes=packet.reason_codes)
+
+
+__all__ = [
+    "ConnAckPacket",
+    "Message",
+    "PublishReceipt",
+    "SubscribeResult",
+    "UnsubscribeResult",
+]

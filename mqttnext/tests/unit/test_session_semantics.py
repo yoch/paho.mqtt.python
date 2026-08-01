@@ -74,7 +74,11 @@ def test_clean_reconnect_fails_inflight_keeps_queued() -> None:
     _feed(engine, _connack(session_present=False))
     effects = engine.take_effects()
 
-    failed_mids = [e.data for e in effects if e.kind is EffectKind.PUBLISH_FAILED]
+    failed_mids = [
+        e.data.mid if hasattr(e.data, "mid") else e.data
+        for e in effects
+        if e.kind is EffectKind.PUBLISH_FAILED
+    ]
     assert failed_mids == [inflight.mid]
     assert engine.store.get_out(inflight.mid or 0) is None
     assert not engine.packet_ids.in_use(inflight.mid or 0)

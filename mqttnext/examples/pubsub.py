@@ -16,7 +16,8 @@ async def main(host: str, port: int, topic: str) -> None:
 
     client.on_message = on_message
     await client.connect(host, port)
-    await client.subscribe(topic, qos=1)
+    sub = await client.subscribe(topic, qos=1)
+    print(f"subscribed mid={sub.mid} rc={sub.reason_codes}")
     receipt = await client.publish(topic, b"hello from mqttnext", qos=1)
     await receipt.wait()
     await asyncio.sleep(0.5)

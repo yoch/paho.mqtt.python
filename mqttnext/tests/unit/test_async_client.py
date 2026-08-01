@@ -76,8 +76,9 @@ async def test_connect_publish_qos1_wait_disconnect() -> None:
     await asyncio.wait_for(receipt.wait(), timeout=2.0)
     assert receipt.is_done()
 
-    mid = await client.subscribe("t/#", qos=1)
-    assert mid > 0
+    result = await client.subscribe("t/#", qos=1)
+    assert result.mid > 0
+    assert result.reason_codes == (1,)
     await client.disconnect()
     assert not client.is_connected
 

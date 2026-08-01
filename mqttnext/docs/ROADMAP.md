@@ -19,18 +19,19 @@
 
 Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
-- MQTT 5 properties encode/decode complets (guide §2)
-- ConnACK properties / négociation `NegotiatedSettings` (guide §3)
-- Keepalive + PINGREQ/RESP avec détection PINGRESP explicite (guide §4)
-- Reconnect policy backoff+jitter, codes terminaux v3/v5 (guide §5)
-- Timeouts par opération + futures SUBACK/UNSUBACK (guide §6)
-- Validation topics/filtres/`$share` (guide §7)
-- Raffinement QoS : PUBREC négatif → `PUBLISH_FAILED` + reason (guide §8)
-- TLS
-- `messages()` : sentinel de fermeture (remplace le polling 0.5 s)
-- Callbacks sync+async (politique d'erreur explicite)
-- Exemples basiques
-- Microbench ingress/egress (port idées harness Paho) — baseline officielle
+- [x] MQTT 5 properties encode/decode complets (guide §2)
+- [x] ConnACK properties / négociation `NegotiatedSettings` (guide §3)
+- [x] Keepalive + PINGREQ/RESP avec détection PINGRESP explicite (guide §4)
+- [x] Reconnect policy backoff+jitter, codes terminaux v3/v5 (guide §5)
+- [x] Timeouts par opération + futures SUBACK/UNSUBACK (guide §6)
+- [x] Validation topics/filtres/`$share` (guide §7)
+- [x] Raffinement QoS : PUBREC négatif → `PUBLISH_FAILED` + reason (guide §8)
+- [x] TLS (via `ssl=` sur `connect()` / TcpTransport)
+- [x] `messages()` : sentinel de fermeture (remplace le polling 0.5 s)
+- [x] Callbacks sync+async
+- [x] Exemples basiques
+- [x] Microbench ingress/egress (`benchmarks/micro_baseline.py`)
+- [ ] Test d'intégration réel contre Mosquitto (docker) — à lancer en CI/local
 
 ## Phase 2 — Robustesse & perf
 
