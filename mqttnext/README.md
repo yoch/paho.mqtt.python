@@ -33,8 +33,9 @@ policy, WebSocket, façade Paho arrivent en phases 1–3.
 
 - [`docs/ANALYSIS.md`](docs/ANALYSIS.md) — audit comparatif Paho vs gmqtt
 - [`docs/DESIGN.md`](docs/DESIGN.md) — architecture et contrats
+- [`docs/IMPLEMENTATION-GUIDE.md`](docs/IMPLEMENTATION-GUIDE.md) — contrats détaillés phases 1–3 (properties, keepalive, reconnect, timeouts, validation, tests)
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phases
-- [`docs/AUDIT.md`](docs/AUDIT.md) — checklist d’auto-audit de cette livraison
+- [`docs/AUDIT.md`](docs/AUDIT.md) — auto-audit phase 0 + audit de planification
 
 ## Quick start (dev)
 

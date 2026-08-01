@@ -182,8 +182,11 @@ class AsyncClient:
     # callbacks optionnels: on_connect, on_message, on_disconnect, ...
 ```
 
-`PublishReceipt.wait()` attend l’achèvement protocole (QoS0 = écriture
-socket acceptée / drain ; QoS1 = PUBACK ; QoS2 = PUBCOMP).
+`PublishReceipt.wait()` attend l’achèvement protocole (QoS0 = accepté par la
+file du writer unique, sans garantie réseau ; QoS1 = PUBACK ; QoS2 = PUBCOMP).
+Les sorties passent toutes par **un seul task writer** alimenté par une file
+FIFO : l’ordre wire est celui des effets du moteur, quel que soit le nombre de
+coroutines qui publient (voir `IMPLEMENTATION-GUIDE.md` §1).
 
 ## Compat Paho
 

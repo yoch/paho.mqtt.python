@@ -1,7 +1,14 @@
 """Async-native MQTT client (phase 0 skeleton).
 
-Owns the transport + IncrementalDecoder + ProtocolEngine loop. User callbacks
-are optional and invoked outside the engine's synchronous critical section.
+Owns the transport + IncrementalDecoder + ProtocolEngine loop.
+
+Concurrency invariants (see docs/IMPLEMENTATION-GUIDE.md §1):
+- A single writer task drains the outbound queue, so wire order always matches
+  engine emission order even when several coroutines publish concurrently.
+- Publish receipts are registered *before* the PUBLISH bytes can reach the
+  wire, so an early PUBACK can never race receipt registration.
+- User callbacks run outside the engine's synchronous critical section and may
+  publish without deadlocking (no lock is held across callbacks).
 """
 
 from __future__ import annotations
@@ -13,7 +20,7 @@ from typing import Any, Never
 from mqttnext.api.models import PublishReceipt
 from mqttnext.codec.buffer import IncrementalDecoder
 from mqttnext.enums import ConnectionState, MQTTProtocolVersion, QoS
-from mqttnext.errors import MQTTError, NotConnectedError, ProtocolError
+from mqttnext.errors import MQTTError, ProtocolError, SessionDiscardedError
 from mqttnext.packets import ConnAckPacket
 from mqttnext.protocol.engine import EffectKind, EngineConfig, ProtocolEngine
 from mqttnext.transport.tcp import AsyncTransport, TcpTransport
@@ -51,10 +58,14 @@ class AsyncClient:
         self._decoder = IncrementalDecoder()
         self._transport: AsyncTransport | None = None
         self._reader_task: asyncio.Task[None] | None = None
+        self._writer_task: asyncio.Task[None] | None = None
+        self._outbound: asyncio.Queue[bytes] = asyncio.Queue()
         self._connack_fut: asyncio.Future[ConnAckPacket] | None = None
         self._receipts: dict[int, PublishReceipt] = {}
         self._messages: asyncio.Queue[Message] = asyncio.Queue()
         self._closed = asyncio.Event()
+        # Injectable for tests; production uses TCP.
+        self._transport_factory: Callable[..., Awaitable[AsyncTransport]] = TcpTransport.connect
 
         self.on_message: OnMessage | None = None
         self.on_connect: OnConnect | None = None
@@ -78,14 +89,16 @@ class AsyncClient:
     ) -> ConnAckPacket:
         if self.is_connected:
             raise ProtocolError("Already connected")
-        transport = await TcpTransport.connect(host, port, ssl=ssl)
+        transport = await self._transport_factory(host, port, ssl=ssl)
         self._transport = transport
         self._closed.clear()
         self._decoder.clear()
+        self._outbound = asyncio.Queue()
         connect_packet = self._engine.begin_connect()
         loop = asyncio.get_running_loop()
         self._connack_fut = loop.create_future()
-        await transport.write(connect_packet)
+        self._writer_task = asyncio.create_task(self._write_loop(), name="mqttnext-writer")
+        self._outbound.put_nowait(connect_packet)
         self._reader_task = asyncio.create_task(self._read_loop(), name="mqttnext-reader")
         try:
             connack = await asyncio.wait_for(self._connack_fut, timeout=timeout)
@@ -101,10 +114,12 @@ class AsyncClient:
         if self._transport is None:
             return
         packet = self._engine.begin_disconnect(reason_code)
+        self._outbound.put_nowait(packet)
         try:
-            await self._transport.write(packet)
-        finally:
-            await self._force_close()
+            await asyncio.wait_for(self._outbound.join(), timeout=5.0)
+        except TimeoutError:
+            pass
+        await self._force_close()
 
     async def publish(
         self,
@@ -123,14 +138,17 @@ class AsyncClient:
             retain=retain,
             properties=properties,
         )
-        await self._flush_effects()
         event = asyncio.Event()
         if handle.qos == QoS.AT_MOST_ONCE:
             event.set()
-            return PublishReceipt(mid=None, qos=handle.qos, _event=event)
-        assert handle.mid is not None
-        receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=event)
-        self._receipts[handle.mid] = receipt
+            receipt = PublishReceipt(mid=None, qos=handle.qos, _event=event)
+        else:
+            assert handle.mid is not None
+            receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=event)
+            # Register BEFORE the packet can hit the wire: an early ACK
+            # processed by the reader task must find the receipt.
+            self._receipts[handle.mid] = receipt
+        await self._flush_effects()
         return receipt
 
     async def subscribe(self, topic: str, qos: int | QoS = 0) -> int:
@@ -169,11 +187,29 @@ class AsyncClient:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            for receipt in self._receipts.values():
-                receipt._error = exc
-                receipt._event.set()
-            self._receipts.clear()
+            self._fail_receipts(exc)
         finally:
+            self._engine.notify_transport_closed()
+            try:
+                await self._flush_effects()
+            except (Exception, asyncio.CancelledError):
+                pass
+            self._fail_receipts(MQTTError("Connection closed"))
+            self._closed.set()
+
+    async def _write_loop(self) -> None:
+        assert self._transport is not None
+        try:
+            while True:
+                data = await self._outbound.get()
+                try:
+                    await self._transport.write(data)
+                finally:
+                    self._outbound.task_done()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._fail_receipts(exc)
             self._engine.notify_transport_closed()
             await self._flush_effects()
             self._closed.set()
@@ -183,9 +219,7 @@ class AsyncClient:
         for effect in effects:
             kind = effect.kind
             if kind is EffectKind.SEND:
-                if self._transport is None:
-                    raise NotConnectedError("No transport for SEND effect")
-                await self._transport.write(effect.data)
+                self._outbound.put_nowait(effect.data)
             elif kind is EffectKind.MESSAGE:
                 msg: Message = effect.data
                 await self._messages.put(msg)
@@ -200,6 +234,13 @@ class AsyncClient:
                 receipt = self._receipts.pop(mid, None)
                 if receipt is not None:
                     receipt._event.set()
+            elif kind is EffectKind.PUBLISH_FAILED:
+                failed = self._receipts.pop(effect.data, None)
+                if failed is not None:
+                    failed._error = SessionDiscardedError(
+                        "Publish lost: clean session replaced the previous one"
+                    )
+                    failed._event.set()
             elif kind is EffectKind.DISCONNECTED:
                 await self._invoke(self.on_disconnect)
             elif kind is EffectKind.PROTOCOL_ERROR:
@@ -210,6 +251,12 @@ class AsyncClient:
                 never: Never = kind
                 raise MQTTError(f"Unhandled effect {never!r}")
 
+    def _fail_receipts(self, exc: BaseException) -> None:
+        for receipt in self._receipts.values():
+            receipt._error = exc
+            receipt._event.set()
+        self._receipts.clear()
+
     async def _invoke(self, callback: Callable[..., Any] | None, *args: Any) -> None:
         if callback is None:
             return
@@ -218,13 +265,15 @@ class AsyncClient:
             await result
 
     async def _force_close(self) -> None:
-        if self._reader_task is not None:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
-            self._reader_task = None
+        for task in (self._reader_task, self._writer_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._reader_task = None
+        self._writer_task = None
         if self._transport is not None:
             await self._transport.close()
             self._transport = None

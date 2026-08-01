@@ -17,15 +17,20 @@
 
 ## Phase 1 — Client async utilisable
 
-- ConnACK properties / négociation
-- Keepalive + PINGREQ/RESP
-- Reconnect policy (backoff + jitter)
+Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
+
+- MQTT 5 properties encode/decode complets (guide §2)
+- ConnACK properties / négociation `NegotiatedSettings` (guide §3)
+- Keepalive + PINGREQ/RESP avec détection PINGRESP explicite (guide §4)
+- Reconnect policy backoff+jitter, codes terminaux v3/v5 (guide §5)
+- Timeouts par opération + futures SUBACK/UNSUBACK (guide §6)
+- Validation topics/filtres/`$share` (guide §7)
+- Raffinement QoS : PUBREC négatif → `PUBLISH_FAILED` + reason (guide §8)
 - TLS
-- MQTT 5 properties encode/decode (sous-ensemble courant)
-- `PublishReceipt` / wait
-- Callbacks sync+async
+- `messages()` : sentinel de fermeture (remplace le polling 0.5 s)
+- Callbacks sync+async (politique d'erreur explicite)
 - Exemples basiques
-- Microbench ingress/egress (port idées harness Paho)
+- Microbench ingress/egress (port idées harness Paho) — baseline officielle
 
 ## Phase 2 — Robustesse & perf
 

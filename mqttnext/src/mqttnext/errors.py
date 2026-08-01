@@ -27,5 +27,9 @@ class NotConnectedError(MQTTError):
     """Operation requires an active connection."""
 
 
-class TimeoutError(MQTTError):
+class MQTTTimeoutError(MQTTError):
     """Operation exceeded its deadline."""
+
+
+class SessionDiscardedError(MQTTError):
+    """Pending publish was discarded because a clean session replaced the old one."""

@@ -6,6 +6,7 @@ effects out. This is the correctness core that AsyncClient adapts.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
@@ -47,6 +48,7 @@ class EffectKind(Enum):
     MESSAGE = auto()
     CONNACK = auto()
     PUBLISH_COMPLETE = auto()
+    PUBLISH_FAILED = auto()
     SUBACK = auto()
     UNSUBACK = auto()
     DISCONNECTED = auto()
@@ -94,7 +96,21 @@ class ProtocolEngine:
         self._pending_connect = False
         self._effects: list[EngineEffect] = []
         # Queued outbound publishes waiting for inflight slots.
-        self._queued: list[OutboundMessage] = []
+        self._queued: deque[OutboundMessage] = deque()
+        # Dispatch table built once — handle_raw is a hot path.
+        self._handlers = {
+            PacketType.CONNACK: self._on_connack,
+            PacketType.PUBLISH: self._on_publish,
+            PacketType.PUBACK: self._on_puback,
+            PacketType.PUBREC: self._on_pubrec,
+            PacketType.PUBREL: self._on_pubrel,
+            PacketType.PUBCOMP: self._on_pubcomp,
+            PacketType.SUBACK: self._on_suback,
+            PacketType.UNSUBACK: self._on_unsuback,
+            PacketType.PINGRESP: self._on_pingresp,
+            PacketType.PINGREQ: self._on_pingreq,
+            PacketType.DISCONNECT: self._on_disconnect,
+        }
 
     # ------------------------------------------------------------------ #
     # Effect channel
@@ -222,20 +238,7 @@ class ProtocolEngine:
     # Incoming packets
     # ------------------------------------------------------------------ #
     def handle_raw(self, raw: RawPacket) -> None:
-        handlers = {
-            PacketType.CONNACK: self._on_connack,
-            PacketType.PUBLISH: self._on_publish,
-            PacketType.PUBACK: self._on_puback,
-            PacketType.PUBREC: self._on_pubrec,
-            PacketType.PUBREL: self._on_pubrel,
-            PacketType.PUBCOMP: self._on_pubcomp,
-            PacketType.SUBACK: self._on_suback,
-            PacketType.UNSUBACK: self._on_unsuback,
-            PacketType.PINGRESP: self._on_pingresp,
-            PacketType.PINGREQ: self._on_pingreq,
-            PacketType.DISCONNECT: self._on_disconnect,
-        }
-        handler = handlers.get(raw.packet_type)
+        handler = self._handlers.get(raw.packet_type)
         if handler is None:
             self._emit(EffectKind.PROTOCOL_ERROR, f"Unhandled packet {raw.packet_type!r}")
             return
@@ -253,13 +256,17 @@ class ProtocolEngine:
         self.state = ConnectionState.CONNECTED
         self.session_present = connack.session_present
         if not connack.session_present:
-            # Fresh session: drop previous inflight and release IDs.
+            # The broker has no previous session. Messages that were already
+            # transmitted (WAIT_*) belonged to the discarded session: fail them
+            # (standard-compliant, unlike Paho's silent republish). Messages
+            # still QUEUED were never sent — they belong to the new session.
             for msg in list(self.store.out_items()):
+                if msg.state is OutboundQoSState.QUEUED:
+                    continue
+                self.store.pop_out(msg.mid)
                 self.packet_ids.release(msg.mid)
-            self.store.clear_out()
+                self._emit(EffectKind.PUBLISH_FAILED, msg.mid)
             self.store.clear_in()
-            self._queued.clear()
-            self.packet_ids.clear()
             self.flow.reset()
         else:
             self._replay_session()
@@ -415,7 +422,7 @@ class ProtocolEngine:
         while self._queued and self.flow.available > 0:
             if not self.flow.try_acquire():
                 break
-            msg = self._queued.pop(0)
+            msg = self._queued.popleft()
             # Already in store as QUEUED.
             self._launch_outbound(msg)
 
