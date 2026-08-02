@@ -520,6 +520,7 @@ class AsyncClient:
                 pass
             if self._disconnect_exc is None:
                 self._disconnect_exc = MQTTError("Connection closed")
+            self._fail_non_replayable(self._disconnect_exc)
             will_reconnect = self._will_reconnect()
             if not will_reconnect:
                 self._fail_pending(self._disconnect_exc)
@@ -892,12 +893,7 @@ class AsyncClient:
         except (asyncio.CancelledError, Exception):
             pass
 
-    def _fail_pending(self, exc: BaseException) -> None:
-        for receipt in self._receipts.values():
-            receipt._error = exc
-            if receipt._event is not None:
-                receipt._event.set()
-        self._receipts.clear()
+    def _fail_non_replayable(self, exc: BaseException) -> None:
         for fut in self._sub_futs.values():
             if not fut.done():
                 fut.set_exception(exc)
@@ -906,6 +902,14 @@ class AsyncClient:
             if not fut.done():
                 fut.set_exception(exc)
         self._unsub_futs.clear()
+
+    def _fail_pending(self, exc: BaseException) -> None:
+        for receipt in self._receipts.values():
+            receipt._error = exc
+            if receipt._event is not None:
+                receipt._event.set()
+        self._receipts.clear()
+        self._fail_non_replayable(exc)
 
     async def _send_fatal_disconnect(self, exc: BaseException) -> None:
         """Best-effort normative DISCONNECT before a fatal close (MQTT 5).
