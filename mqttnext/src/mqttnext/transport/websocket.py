@@ -35,11 +35,12 @@ class WebSocketTransport:
         *,
         max_frame_size: int = 16 * 1024 * 1024,
     ) -> None:
+        if max_frame_size <= 0:
+            raise ValueError("max_frame_size must be positive")
         self._reader = reader
         self._writer = writer
         self._recv_buf = bytearray()
         self._closing = False
-        # Control payloads to write (pong) before the next application write.
         self._pending_control: list[bytes] = []
         self._max_frame_size = max_frame_size
         # Reassembled fragmented binary message (FIN=0 sequence).
@@ -117,6 +118,14 @@ class WebSocketTransport:
         if headers_map.get("upgrade", "").lower() != "websocket":
             writer.close()
             raise ConnectionError("WebSocket handshake missing Upgrade: websocket")
+        connection_tokens = {
+            token.strip().lower()
+            for token in headers_map.get("connection", "").split(",")
+            if token.strip()
+        }
+        if "upgrade" not in connection_tokens:
+            writer.close()
+            raise ConnectionError("WebSocket handshake missing Connection: Upgrade")
         if headers_map.get("sec-websocket-protocol", "").lower() != "mqtt":
             writer.close()
             raise ConnectionError("WebSocket subprotocol 'mqtt' not negotiated")
@@ -148,9 +157,13 @@ class WebSocketTransport:
     async def read(self, n: int = 65536) -> bytes:
         while True:
             payload = self._try_extract_application_payload()
+            if self._pending_control:
+                # RFC 6455 requires a pong as soon as practical. Flush it before
+                # waiting for any more network or application traffic.
+                await self._flush_control()
+                if payload is None:
+                    continue
             if payload is not None:
-                if self._pending_control:
-                    await self._flush_control()
                 return payload
             chunk = await self._reader.read(n)
             if not chunk:
@@ -183,23 +196,32 @@ class WebSocketTransport:
             await self._writer.drain()
 
     def _try_extract_application_payload(self) -> bytes | None:
-        """Extract next binary MQTT payload; queue pong replies for ping frames."""
+        """Extract the next binary MQTT payload and process control frames."""
         while True:
-            parsed = _parse_frame(self._recv_buf, self._max_frame_size)
+            parsed = _parse_frame(
+                self._recv_buf,
+                self._max_frame_size,
+                expect_masked=False,
+            )
             if parsed is None:
                 return None
             fin, opcode, raw = parsed
             if opcode == 0x8:  # close
+                self._closing = True
                 return b""
-            if opcode == 0x9:  # ping → pong (bounded)
-                if len(self._pending_control) < _MAX_PENDING_CONTROL:
-                    self._pending_control.append(_mask_client_frame(0xA, raw))
-                continue
+            if opcode == 0x9:  # ping → immediate pong on the next read-loop turn
+                if len(self._pending_control) >= _MAX_PENDING_CONTROL:
+                    raise ConnectionError("Too many pending WebSocket control replies")
+                self._pending_control.append(_mask_client_frame(0xA, raw))
+                return None
             if opcode == 0xA:  # pong — ignore
                 continue
             if opcode == 0x2:
+                if self._fragment is not None:
+                    raise ConnectionError(
+                        "WebSocket binary frame started before fragmented message completed"
+                    )
                 if not fin:
-                    # Start of a fragmented binary message.
                     self._fragment = bytearray(raw)
                     continue
                 return raw
@@ -214,8 +236,8 @@ class WebSocketTransport:
                     self._fragment = None
                     return payload
                 continue
-            # Unknown opcode — skip.
-            continue
+            # _parse_frame rejects every non-MQTT application opcode.
+            raise AssertionError(f"unreachable WebSocket opcode {opcode}")
 
 
 def _mask_client_frame(opcode: int, payload: bytes) -> bytes:
@@ -236,20 +258,44 @@ def _mask_client_frame(opcode: int, payload: bytes) -> bytes:
     return bytes(header) + masked
 
 
-def _parse_frame(buf: bytearray, max_frame_size: int) -> tuple[bool, int, bytes] | None:
-    """Consume one WebSocket frame from *buf*; return (fin, opcode, payload) or None."""
+def _parse_frame(
+    buf: bytearray,
+    max_frame_size: int,
+    *,
+    expect_masked: bool | None = None,
+) -> tuple[bool, int, bytes] | None:
+    """Consume one RFC 6455 frame and return ``(fin, opcode, payload)``.
+
+    ``expect_masked=False`` is used for server→client frames and rejects masked
+    server frames. ``expect_masked=True`` is useful for server-side tests parsing
+    client frames. ``None`` accepts either direction for low-level fuzzing only.
+    """
     if len(buf) < 2:
         return None
     b0 = buf[0]
     b1 = buf[1]
+    if b0 & 0x70:
+        raise ConnectionError("WebSocket RSV bits set without negotiated extension")
     fin = bool(b0 & 0x80)
     masked = bool(b1 & 0x80)
+    if expect_masked is not None and masked is not expect_masked:
+        direction = "masked" if expect_masked else "unmasked"
+        raise ConnectionError(f"Expected {direction} WebSocket frame")
+
+    opcode = b0 & 0x0F
+    if opcode not in (0x0, 0x2, 0x8, 0x9, 0xA):
+        if opcode == 0x1:
+            raise ConnectionError("MQTT over WebSocket requires binary frames")
+        raise ConnectionError(f"Unsupported WebSocket opcode 0x{opcode:x}")
+
     ln = b1 & 0x7F
     pos = 2
     if ln == 126:
         if len(buf) < 4:
             return None
         ln = struct.unpack_from("!H", buf, 2)[0]
+        if ln < 126:
+            raise ConnectionError("Non-canonical WebSocket frame length")
         pos = 4
     elif ln == 127:
         if len(buf) < 10:
@@ -257,15 +303,19 @@ def _parse_frame(buf: bytearray, max_frame_size: int) -> tuple[bool, int, bytes]
         ln = struct.unpack_from("!Q", buf, 2)[0]
         if ln & (1 << 63):
             raise ConnectionError("Invalid 64-bit WebSocket frame length (MSB set)")
+        if ln < 65536:
+            raise ConnectionError("Non-canonical WebSocket frame length")
         pos = 10
     if ln > max_frame_size:
         raise ConnectionError(f"WebSocket frame {ln} exceeds max {max_frame_size}")
-    opcode = b0 & 0x0F
     if opcode in (0x8, 0x9, 0xA):
         if ln > _MAX_CONTROL_PAYLOAD:
             raise ConnectionError("WebSocket control frame payload too large")
         if not fin:
             raise ConnectionError("WebSocket control frame must not be fragmented")
+        if opcode == 0x8 and ln == 1:
+            raise ConnectionError("WebSocket close frame payload must not be one byte")
+
     mask_len = 4 if masked else 0
     total = pos + mask_len + ln
     if len(buf) < total:
