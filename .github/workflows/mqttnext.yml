@@ -31,6 +31,7 @@ jobs:
             echo "Effect atomicity batch already applied"
             exit 0
           fi
+          python mqttnext/tools/fix_effect_markers.py
           python mqttnext/tools/apply_effect_atomicity.py
           python mqttnext/tools/finalize_effect_atomicity.py
       - name: Install package
