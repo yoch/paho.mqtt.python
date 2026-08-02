@@ -113,6 +113,9 @@ class EngineConfig:
     username: str | None = None
     password: bytes | None = field(default=None, repr=False)
     local_receive_maximum: int = 65535
+    # Optional local cap on outbound inflight QoS>0 (None = broker's Receive
+    # Maximum only). Use to self-throttle a fast publisher.
+    max_outbound_inflight: int | None = None
     max_queued: int = 0  # 0 = unlimited queued (not yet inflight)
     connect_properties: Properties | None = None
     will: Message | None = field(default=None, repr=False)
@@ -416,6 +419,10 @@ class ProtocolEngine:
             handler(raw)
         except (ProtocolError, MalformedPacketError) as exc:
             self._emit(EffectKind.PROTOCOL_ERROR, str(exc))
+        except Exception as exc:
+            # Isolate store/persistence errors: surface as protocol error rather
+            # than killing the read loop with an untyped exception.
+            self._emit(EffectKind.PROTOCOL_ERROR, f"Internal handler error: {exc!r}")
 
 
     def _on_connack(self, raw: RawPacket) -> None:
@@ -441,6 +448,7 @@ class ProtocolEngine:
         self.flow.apply_broker_receive_maximum(
             self.negotiated.receive_maximum,
             self.config.local_receive_maximum,
+            self.config.max_outbound_inflight,
         )
 
         self.state = ConnectionState.CONNECTED
@@ -467,6 +475,7 @@ class ProtocolEngine:
             self.flow.apply_broker_receive_maximum(
                 self.negotiated.receive_maximum,
                 self.config.local_receive_maximum,
+                self.config.max_outbound_inflight,
             )
         else:
             self._replay_session()
@@ -500,6 +509,13 @@ class ProtocolEngine:
             existing = self.store.get_in(packet.mid)
             if existing is not None:
                 self._send(PubRecPacket(mid=packet.mid).encode(self.config.protocol))
+                return
+
+        if packet.qos == QoS.AT_LEAST_ONCE and self.config.manual_ack:
+            # Redelivery (DUP) of an already-tracked QoS1 must not re-acquire a
+            # Receive Maximum slot nor re-emit the message.
+            existing = self.store.get_in(packet.mid)
+            if existing is not None and existing.state is InboundQoSState.WAIT_PUBACK:
                 return
 
         self._acquire_inbound_slot()
@@ -781,6 +797,7 @@ class ProtocolEngine:
         self.flow.apply_broker_receive_maximum(
             self.negotiated.receive_maximum,
             self.config.local_receive_maximum,
+            self.config.max_outbound_inflight,
         )
         self._queued.clear()
         for msg in list(self.store.out_items()):
@@ -831,11 +848,14 @@ class ProtocolEngine:
         max_alias = self.config.topic_alias_maximum
         # max_alias == 0 means inbound aliases are not accepted.
         if alias == 0 or alias > max_alias:
+            # MQTT 5 §3.3.2.3.5: DISCONNECT 0x94 (Topic Alias invalid).
+            self._protocol_disconnect(0x94, f"Invalid topic alias {alias}")
             raise ProtocolError(f"Invalid topic alias {alias}")
         if packet.topic:
             self._topic_aliases[alias] = packet.topic
             return packet.topic
         if alias not in self._topic_aliases:
+            self._protocol_disconnect(0x94, f"Unknown topic alias {alias}")
             raise ProtocolError(f"Unknown topic alias {alias}")
         return self._topic_aliases[alias]
 
@@ -898,8 +918,20 @@ class ProtocolEngine:
     def _acquire_inbound_slot(self) -> None:
         limit = self.config.local_receive_maximum
         if self._inbound_inflight >= limit:
+            # MQTT 5 §3.3.4: DISCONNECT 0x93 (Receive Maximum exceeded).
+            self._protocol_disconnect(0x93, "Receive Maximum exceeded")
             raise ProtocolError("Receive Maximum exceeded")
         self._inbound_inflight += 1
+
+    def _protocol_disconnect(self, reason_code: int, message: str) -> None:
+        """Emit a normative DISCONNECT before the transport is torn down."""
+        if self.config.protocol == MQTTProtocolVersion.MQTTv5:
+            self._send(encode_disconnect(reason_code, self.config.protocol))
+        self.state = ConnectionState.DISCONNECTED
+        self._emit(
+            EffectKind.DISCONNECTED,
+            DisconnectInfo(reason_code=reason_code, from_broker=False),
+        )
 
     def _release_inbound_slot(self) -> None:
         if self._inbound_inflight > 0:

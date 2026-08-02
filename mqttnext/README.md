@@ -25,7 +25,7 @@ des bugs protocolaires gmqtt.
 - `connect_ws` / Unix / TCP+TLS, AUTH MQTT 5 (`auth_handler`), SQLite props binaires
 - Façade `compat.paho` VERSION2 + jalon D (`test_compat_lib_subset.py`)
 - Helpers, CI Mosquitto, licence Apache-2.0, sprint perf documenté
-- **104 tests** ; benches `benchmarks/results/compare_libs.md`
+- **117 tests** ; benches `benchmarks/results/compare_libs.md` ; audit complet `docs/AUDIT-FINAL.md`
 
 Reste principal : spin-out dépôt dédié (+ plugins AUTH concrets / jalon E fuzz long).
 

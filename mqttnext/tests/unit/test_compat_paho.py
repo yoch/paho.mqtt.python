@@ -102,7 +102,17 @@ def test_blocking_from_callback_rejected() -> None:
     client = Client(CallbackAPIVersion.VERSION2)
     client._in_callback = True
     try:
-        client.publish("t", b"x")
-        raise AssertionError("expected RuntimeError")
-    except RuntimeError as exc:
-        assert "deadlock" in str(exc).lower() or "callback" in str(exc).lower()
+        coro = _noop()
+        try:
+            client._submit(coro, timeout=0.1)
+            raise AssertionError("expected RuntimeError")
+        except RuntimeError as exc:
+            assert "deadlock" in str(exc).lower() or "callback" in str(exc).lower()
+        finally:
+            coro.close()  # avoid "never awaited" warning
+    finally:
+        client._in_callback = False
+
+
+async def _noop() -> None:
+    return None

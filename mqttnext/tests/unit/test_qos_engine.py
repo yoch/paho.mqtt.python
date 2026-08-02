@@ -149,7 +149,9 @@ def test_qos2_inbound_dedup() -> None:
 
 
 def test_flow_control_queues_when_window_full() -> None:
-    engine = ProtocolEngine(EngineConfig(client_id="c1", local_receive_maximum=1))
+    engine = ProtocolEngine(
+        EngineConfig(client_id="c1", local_receive_maximum=1, max_outbound_inflight=1)
+    )
     engine.begin_connect()
     _feed_connack_ok(engine)
     engine.take_effects()

@@ -59,14 +59,22 @@ des **gardes d’état** manquantes (CONNACK dupliqué, SUBACK orphelins, MID po
 
 ## Dette restante (connue, non bloquante)
 
-1. **compat.paho** : `subscribe()` bloquant + garde `_in_callback` cassent l’idiome
-   `on_connect → subscribe` (H6). À traiter si la façade sync doit être plus fidèle.
-2. **QoS1 manual_ack DUP** : redelivery peut compter un slot inbound en trop (M2).
-3. **Store SQLite** : erreurs non isolées dans `handle_raw` (M3) ; commit par op.
-4. **FlowControl** : fenêtre outbound bornée par `min(broker, local)` (M10/B6) —
-   conservateur, sémantiquement à revoir (paramètre séparé).
-5. **Fuzz** : étendre au-delà du framing (engine, properties, WS) — jalon E.
-6. **Reason codes normatifs** (0x93/0x94/0x95) au lieu de fermeture sèche (B4).
+1. **compat.paho** : `publish()` reste bloquant (retourne un receipt) — seul
+   `subscribe`/`unsubscribe` sont fire-and-forget (idiome `on_connect` OK).
+2. **Store SQLite** : `commit()` par opération (durabilité > débit QoS>0) ;
+   erreurs isolées en `PROTOCOL_ERROR` (pas de crash de connexion).
+3. **Fuzz** : étendre au-delà du framing (engine, properties, WS) — jalon E.
+4. **DISCONNECT normatif** : 0x93/0x94 émis ; 0x95 (packet too large) côté
+   décodeur reste une fermeture sèche.
+
+### Résolu dans cette passe
+
+- QoS1 `manual_ack` DUP : plus de double acquisition de slot inbound.
+- Erreurs store isolées dans `handle_raw` (plus de mort de connexion).
+- `FlowControl` : fenêtre outbound = Receive Maximum **broker** (+ option
+  `max_outbound_inflight` pour self-throttle) — sémantique MQTT 5 correcte.
+- `compat.paho.subscribe`/`unsubscribe` : fire-and-forget (mid immédiat),
+  utilisables depuis `on_connect`.
 
 ## Reproduire
 

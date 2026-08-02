@@ -67,7 +67,9 @@ def test_offline_queue_survives_clean_connect() -> None:
 
 def test_clean_reconnect_fails_inflight_keeps_queued() -> None:
     """Inflight from the old session fail on clean CONNACK; queued survive."""
-    engine = ProtocolEngine(EngineConfig(client_id="c1", local_receive_maximum=1))
+    engine = ProtocolEngine(
+        EngineConfig(client_id="c1", local_receive_maximum=1, max_outbound_inflight=1)
+    )
     engine.begin_connect()
     _feed(engine, _connack(session_present=False))
     engine.take_effects()

@@ -184,8 +184,14 @@ class Client:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.close()
 
-    def _submit(self, coro: Any, timeout: float | None = 30.0) -> Any:
-        if self._in_callback:
+    def _submit(
+        self,
+        coro: Any,
+        timeout: float | None = 30.0,
+        *,
+        wait: bool = True,
+    ) -> Any:
+        if wait and self._in_callback:
             raise RuntimeError(
                 "Do not call blocking Client methods from a callback on the "
                 "network thread (would deadlock). Schedule work on another thread "
@@ -195,6 +201,8 @@ class Client:
             self.loop_start()
         assert self._loop is not None
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        if not wait:
+            return fut
         return fut.result(timeout)
 
     def connect(self, host: str, port: int = 1883, keepalive: int = 60) -> int:
@@ -223,12 +231,6 @@ class Client:
         qos: int = 0,
         retain: bool = False,
     ) -> MQTTMessageInfo:
-        if self._in_callback:
-            raise RuntimeError(
-                "Do not call blocking Client methods from a callback on the "
-                "network thread (would deadlock). Schedule work on another thread "
-                "or use mqttnext.api.AsyncClient."
-            )
         receipt: PublishReceipt = self._submit(
             self._async.publish(topic, payload, qos=qos, retain=retain)
         )
@@ -242,23 +244,38 @@ class Client:
     async def _watch_publish(self, receipt: PublishReceipt) -> None:
         try:
             await receipt.wait()
-            if self.on_publish is not None:
-                self._safe_callback(
-                    self.on_publish, self, self._userdata, receipt.mid, 0, None
-                )
         except Exception:
             if self.on_publish is not None:
                 self._safe_callback(
                     self.on_publish, self, self._userdata, receipt.mid, 1, None
                 )
+            return
+        if self.on_publish is not None:
+            self._safe_callback(
+                self.on_publish, self, self._userdata, receipt.mid, 0, None
+            )
 
     def subscribe(self, topic: str, qos: int = 0) -> tuple[int, int]:
-        result = self._submit(self._async.subscribe(topic, qos=qos))
-        return (0, result.mid)
+        """Paho-style: return ``(0, mid)`` immediately; SUBACK is not awaited.
+
+        Safe to call from ``on_connect`` (fire-and-forget on the loop thread).
+        """
+        mid = self._async._engine.queue_subscribe(topic, qos=qos)
+
+        async def _flush() -> None:
+            await self._async._flush_effects()
+
+        self._submit(_flush(), wait=False)
+        return (0, mid)
 
     def unsubscribe(self, topic: str) -> tuple[int, int]:
-        result = self._submit(self._async.unsubscribe(topic))
-        return (0, result.mid)
+        mid = self._async._engine.queue_unsubscribe(topic)
+
+        async def _flush() -> None:
+            await self._async._flush_effects()
+
+        self._submit(_flush(), wait=False)
+        return (0, mid)
 
     def _safe_callback(self, cb: Callable[..., Any], *args: Any) -> None:
         self._in_callback = True

@@ -130,6 +130,13 @@ def test_lib_02_subscribe_qos_levels() -> None:
         for qos in (0, 1, 2):
             rc, mid = client.subscribe(f"t/{qos}", qos=qos)
             assert rc == 0 and mid > 0
+        # subscribe() is fire-and-forget (Paho semantics): allow the loop to
+        # flush the SUBSCRIBE frames before asserting.
+        import time
+
+        deadline = time.monotonic() + 2.0
+        while len(fake.subscribes) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert len(fake.subscribes) == 3
     finally:
         client.disconnect()

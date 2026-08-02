@@ -43,5 +43,12 @@ class FlowControl:
     def reset(self) -> None:
         self._inflight = 0
 
-    def apply_broker_receive_maximum(self, receive_maximum: int, local_max: int) -> None:
-        self._limit = max(1, min(receive_maximum, local_max))
+    def apply_broker_receive_maximum(
+        self, receive_maximum: int, local_max: int, local_outbound: int | None = None
+    ) -> None:
+        # Outbound window is bounded by the *broker's* Receive Maximum
+        # ([MQTT-4.9.0-1]); an optional local cap may throttle further.
+        limit = max(1, receive_maximum)
+        if local_outbound is not None:
+            limit = max(1, min(limit, local_outbound))
+        self._limit = limit
