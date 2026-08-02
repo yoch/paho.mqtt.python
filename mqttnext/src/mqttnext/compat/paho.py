@@ -114,12 +114,16 @@ class Client:
         self._async.on_message = self._dispatch_message
 
     def user_data_set(self, userdata: Any) -> None:
-        self._userdata = userdata
+        self._run_loop_mutation(lambda: setattr(self, "_userdata", userdata))
 
     def username_pw_set(self, username: str, password: bytes | str | None = None) -> None:
         pwd = password.encode("utf-8") if isinstance(password, str) else password
-        self._async._engine.config.username = username
-        self._async._engine.config.password = pwd
+
+        def _set_credentials() -> None:
+            self._async._engine.config.username = username
+            self._async._engine.config.password = pwd
+
+        self._run_loop_mutation(_set_credentials)
 
     def will_set(
         self,
@@ -129,25 +133,31 @@ class Client:
         retain: bool = False,
     ) -> None:
         data = payload.encode("utf-8") if isinstance(payload, str) else payload
-        self._async._engine.config.will = Message(
+        message = Message(
             topic=topic,
             payload=data,
             qos=QoS(qos),
             retain=retain,
         )
+        self._run_loop_mutation(
+            lambda: setattr(self._async._engine.config, "will", message)
+        )
 
     def message_callback_add(self, sub: str, callback: Callable[..., Any]) -> None:
-        self._topic_callbacks[sub] = callback
+        self._run_loop_mutation(lambda: self._topic_callbacks.__setitem__(sub, callback))
 
     def message_callback_remove(self, sub: str) -> None:
-        try:
-            del self._topic_callbacks[sub]
-        except KeyError:
-            pass
+        def _remove() -> None:
+            try:
+                del self._topic_callbacks[sub]
+            except KeyError:
+                pass
+
+        self._run_loop_mutation(_remove)
 
     @property
     def is_connected(self) -> bool:
-        return self._async.is_connected
+        return bool(self._run_loop_mutation(lambda: self._async.is_connected))
 
     def loop_start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -205,6 +215,34 @@ class Client:
             return fut
         return fut.result(timeout)
 
+    def _run_loop_mutation(self, mutation: Callable[[], Any]) -> Any:
+        """Run a short synchronous mutation on the network loop when active."""
+        loop = self._loop
+        thread = self._thread
+        if loop is None or not loop.is_running() or thread is None:
+            return mutation()
+        if threading.current_thread() is thread:
+            return mutation()
+
+        handoff: dict[str, Any] = {}
+        done = threading.Event()
+
+        def _run() -> None:
+            try:
+                handoff["result"] = mutation()
+            except BaseException as exc:
+                handoff["error"] = exc
+            finally:
+                done.set()
+
+        loop.call_soon_threadsafe(_run)
+        if not done.wait(timeout=5.0):
+            raise RuntimeError("mutation handoff to event loop timed out")
+        error = handoff.get("error")
+        if error is not None:
+            raise error
+        return handoff.get("result")
+
     def _queue_loop_command(self, command: Callable[[], Any]) -> Any:
         """Run an engine command on the dedicated loop and flush its effects.
 
@@ -243,16 +281,23 @@ class Client:
         return handoff["result"]
 
     def connect(self, host: str, port: int = 1883, keepalive: int = 60) -> int:
-        self._async._engine.config.keepalive = keepalive
+        self._run_loop_mutation(
+            lambda: setattr(self._async._engine.config, "keepalive", keepalive)
+        )
         self._submit(self._async.connect(host, port))
         return 0
 
     def reconnect(self) -> int:
-        host = self._async._host
-        port = self._async._port
+        host, port, keepalive = self._run_loop_mutation(
+            lambda: (
+                self._async._host,
+                self._async._port,
+                self._async._engine.config.keepalive,
+            )
+        )
         if not host:
             raise RuntimeError("reconnect() called before connect()")
-        return self.connect(host, port, keepalive=self._async._engine.config.keepalive)
+        return self.connect(host, port, keepalive=keepalive)
 
     def disconnect(self) -> int:
         try:
