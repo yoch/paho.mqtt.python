@@ -45,3 +45,28 @@ hypothesis (profil `ci`).
 - Seedé : `--seed N` reproduit exactement la séquence.
 - Hypothesis : tout échec est **shrinké** automatiquement et rejouable via la
   base d’exemples (`.hypothesis/`) ou `@reproduce_failure`.
+
+## Logging temps réel & rejouabilité
+
+Le fuzzer seedé logue sur **stderr** (flush immédiat, parseable) :
+
+```
+[START] target=engine seed=1 iterations=20000
+[PROGRESS] target=engine iter=2001/20000 rate=87,590/s elapsed=0.0s
+[FAIL] target=engine iter=50 kind=crash seed=7 elapsed=0.00s
+[ARTIFACT] mqttnext/tests/fuzz/artifacts/engine-seed7-iter50.bin
+[DONE] target=engine status=FAIL iters=20000 crashes=1 ... elapsed=0.1s
+```
+
+- `--progress-every N` : cadence des lignes de progression (débit + elapsed).
+- `--artifacts-dir DIR` : chaque input fautif est écrit pour replay.
+- `--quiet` : coupe les logs temps réel (résumé final conservé).
+- Exit code `1` dès qu’une cible a un crash ou une violation d’invariant.
+
+Rejouer un cas : `--seed N` reproduit la séquence ; l’artefact `.bin` est
+l’input exact à renvoyer dans la cible.
+
+## Limites connues
+
+- Un run « 24h » reste à brancher sur une CI dédiée si souhaité ; le harness
+  est prêt (`--iterations` élevé, `--seed` variable).

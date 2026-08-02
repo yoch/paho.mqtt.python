@@ -20,8 +20,10 @@ import argparse
 import random
 import struct
 import sys
+import time
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder, RawPacket
 from mqttnext.codec.properties import PUBLISH, decode_properties, encode_properties
@@ -56,6 +58,77 @@ class FuzzResult:
     first_failure: str | None = None
 
 
+class FuzzLogger:
+    """Real-time, parseable fuzz logging (stderr) + optional artifact dump.
+
+    - Progress lines every ``progress_every`` iterations (rate, elapsed).
+    - Immediate FAIL lines with full context the moment a crash/invariant hits.
+    - On failure, the offending input is written to ``artifacts_dir`` for replay.
+    """
+
+    def __init__(
+        self,
+        target: str,
+        iterations: int,
+        *,
+        seed: int,
+        progress_every: int = 1000,
+        artifacts_dir: Path | None = None,
+        quiet: bool = False,
+    ) -> None:
+        self.target = target
+        self.iterations = iterations
+        self.seed = seed
+        self.progress_every = max(1, progress_every)
+        self.artifacts_dir = artifacts_dir
+        self.quiet = quiet
+        self._t0 = time.monotonic()
+        self._last = 0
+
+    def _emit(self, msg: str) -> None:
+        if not self.quiet:
+            print(msg, file=sys.stderr, flush=True)
+
+    def start(self) -> None:
+        self._emit(
+            f"[START] target={self.target} seed={self.seed} iterations={self.iterations}"
+        )
+
+    def progress(self, i: int) -> None:
+        if i - self._last >= self.progress_every or i + 1 == self.iterations:
+            self._last = i
+            elapsed = time.monotonic() - self._t0
+            rate = (i + 1) / elapsed if elapsed > 0 else 0.0
+            self._emit(
+                f"[PROGRESS] target={self.target} iter={i + 1}/{self.iterations} "
+                f"rate={rate:,.0f}/s elapsed={elapsed:.1f}s"
+            )
+
+    def failure(self, i: int, kind: str, detail: str, artifact: bytes | None) -> str:
+        elapsed = time.monotonic() - self._t0
+        self._emit(
+            f"[FAIL] target={self.target} iter={i} kind={kind} "
+            f"seed={self.seed} elapsed={elapsed:.2f}s"
+        )
+        path_str = ""
+        if artifact is not None and self.artifacts_dir is not None:
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+            path = self.artifacts_dir / f"{self.target}-seed{self.seed}-iter{i}.bin"
+            path.write_bytes(artifact)
+            path_str = str(path)
+            self._emit(f"[ARTIFACT] {path_str}")
+        return f"iter {i} ({kind}): {detail}" + (f" | artifact={path_str}" if path_str else "")
+
+    def done(self, result: FuzzResult) -> None:
+        elapsed = time.monotonic() - self._t0
+        status = "OK" if result.crashes == 0 and result.invariant_violations == 0 else "FAIL"
+        self._emit(
+            f"[DONE] target={self.target} status={status} iters={result.iterations} "
+            f"crashes={result.crashes} invariant_violations={result.invariant_violations} "
+            f"elapsed={elapsed:.1f}s"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Target 1: codec / properties / packets
 # ---------------------------------------------------------------------------
@@ -77,7 +150,9 @@ def _mutate(rng: random.Random, data: bytes) -> bytes:
     return bytes(buf)
 
 
-def fuzz_codec(rng: random.Random, iterations: int) -> FuzzResult:
+def fuzz_codec(
+    rng: random.Random, iterations: int, logger: FuzzLogger | None = None
+) -> FuzzResult:
     result = FuzzResult("codec", iterations, 0, 0)
     base_props = Properties()
     base_props.set("payload_format_indicator", 1)
@@ -88,8 +163,11 @@ def fuzz_codec(rng: random.Random, iterations: int) -> FuzzResult:
         topic="a/b", payload=b"hello", qos=QoS.AT_LEAST_ONCE, retain=False, dup=False, mid=7
     ).encode(MQTTProtocolVersion.MQTTv5)
 
+    if logger:
+        logger.start()
     for i in range(iterations):
         choice = rng.randrange(3)
+        blob = b""
         try:
             if choice == 0:
                 # Mutated properties blob
@@ -106,8 +184,9 @@ def fuzz_codec(rng: random.Random, iterations: int) -> FuzzResult:
                 # Random structured-ish frame
                 ptype = rng.choice(list(PacketType))
                 body = bytes(rng.randrange(256) for _ in range(rng.randrange(0, 32)))
+                blob = encode_frame(ptype, rng.randrange(16), body)
                 dec = IncrementalDecoder(max_packet_size=4096)
-                dec.feed(encode_frame(ptype, rng.randrange(16), body))
+                dec.feed(blob)
                 while True:
                     pkt = dec.next_packet()
                     if pkt is None:
@@ -118,8 +197,17 @@ def fuzz_codec(rng: random.Random, iterations: int) -> FuzzResult:
             pass
         except Exception as exc:  # noqa: BLE001
             result.crashes += 1
-            if result.first_failure is None:
-                result.first_failure = f"iter {i}: {exc!r}\n{traceback.format_exc()}"
+            detail = f"{exc!r}\n{traceback.format_exc()}"
+            if logger:
+                msg = logger.failure(i, "crash", detail, bytes(blob))
+                if result.first_failure is None:
+                    result.first_failure = msg
+            elif result.first_failure is None:
+                result.first_failure = f"iter {i}: {detail}"
+        if logger:
+            logger.progress(i)
+    if logger:
+        logger.done(result)
     return result
 
 
@@ -176,7 +264,9 @@ def _rand_publish_frame(rng: random.Random, proto: MQTTProtocolVersion) -> bytes
         return b""
 
 
-def fuzz_engine(rng: random.Random, iterations: int) -> FuzzResult:
+def fuzz_engine(
+    rng: random.Random, iterations: int, logger: FuzzLogger | None = None
+) -> FuzzResult:
     result = FuzzResult("engine", iterations, 0, 0)
     proto = rng.choice([MQTTProtocolVersion.MQTTv311, MQTTProtocolVersion.MQTTv5])
     engine = ProtocolEngine(
@@ -189,10 +279,13 @@ def fuzz_engine(rng: random.Random, iterations: int) -> FuzzResult:
         )
     )
     dec = IncrementalDecoder(max_packet_size=DEFAULT_MAX_PACKET_SIZE)
+    last_wire = b""
 
     def feed(wire: bytes) -> None:
+        nonlocal last_wire
         if not wire:
             return
+        last_wire = wire
         dec.feed(wire)
         while True:
             pkt = dec.next_packet()
@@ -207,6 +300,8 @@ def fuzz_engine(rng: random.Random, iterations: int) -> FuzzResult:
     except ALLOWED:
         pass
 
+    if logger:
+        logger.start()
     for i in range(iterations):
         op = rng.randrange(10)
         try:
@@ -266,16 +361,30 @@ def fuzz_engine(rng: random.Random, iterations: int) -> FuzzResult:
             pass
         except Exception as exc:  # noqa: BLE001
             result.crashes += 1
-            if result.first_failure is None:
-                result.first_failure = f"iter {i} op {op}: {exc!r}\n{traceback.format_exc()}"
+            detail = f"op {op}: {exc!r}\n{traceback.format_exc()}"
+            if logger:
+                msg = logger.failure(i, "crash", detail, last_wire)
+                if result.first_failure is None:
+                    result.first_failure = msg
+            elif result.first_failure is None:
+                result.first_failure = f"iter {i} {detail}"
 
         # Invariants after each step.
         try:
             _check_engine_invariants(engine)
         except AssertionError as exc:
             result.invariant_violations += 1
-            if result.first_failure is None:
-                result.first_failure = f"iter {i} INVARIANT: {exc}\n{traceback.format_exc()}"
+            detail = f"INVARIANT: {exc}\n{traceback.format_exc()}"
+            if logger:
+                msg = logger.failure(i, "invariant", detail, last_wire)
+                if result.first_failure is None:
+                    result.first_failure = msg
+            elif result.first_failure is None:
+                result.first_failure = f"iter {i} {detail}"
+        if logger:
+            logger.progress(i)
+    if logger:
+        logger.done(result)
     return result
 
 
@@ -296,11 +405,15 @@ def _check_engine_invariants(engine: ProtocolEngine) -> None:
 # Target 3: WebSocket frame parser (bounded memory)
 # ---------------------------------------------------------------------------
 
-def fuzz_websocket(rng: random.Random, iterations: int) -> FuzzResult:
+def fuzz_websocket(
+    rng: random.Random, iterations: int, logger: FuzzLogger | None = None
+) -> FuzzResult:
     from mqttnext.transport.websocket import _parse_frame
 
     result = FuzzResult("websocket", iterations, 0, 0)
     max_frame = 1024
+    if logger:
+        logger.start()
     for i in range(iterations):
         buf = bytearray()
         # Random frame header
@@ -317,15 +430,30 @@ def fuzz_websocket(rng: random.Random, iterations: int) -> FuzzResult:
             _parse_frame(buf, max_frame)
         except ALLOWED:
             pass
-        except ConnectionError:
-            pass
         except Exception as exc:  # noqa: BLE001
             result.crashes += 1
-            if result.first_failure is None:
-                result.first_failure = f"iter {i}: {exc!r}\n{traceback.format_exc()}"
+            detail = f"{exc!r}\n{traceback.format_exc()}"
+            if logger:
+                msg = logger.failure(i, "crash", detail, bytes(buf))
+                if result.first_failure is None:
+                    result.first_failure = msg
+            elif result.first_failure is None:
+                result.first_failure = f"iter {i}: {detail}"
         # Invariant: buffer never grows unbounded on partial frames.
         if len(buf) > max_frame + 64 and _is_plausible_partial(buf):
             result.invariant_violations += 1
+            if logger:
+                msg = logger.failure(
+                    i, "invariant", f"buffer grew to {len(buf)} on partial frame", bytes(buf)
+                )
+                if result.first_failure is None:
+                    result.first_failure = msg
+            elif result.first_failure is None:
+                result.first_failure = f"iter {i} INVARIANT: buffer {len(buf)}"
+        if logger:
+            logger.progress(i)
+    if logger:
+        logger.done(result)
     return result
 
 
@@ -350,13 +478,34 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=5000)
     parser.add_argument("--target", choices=[*_TARGETS, "all"], default="all")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1000,
+        help="Emit a PROGRESS line every N iterations (stderr).",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=Path("mqttnext/tests/fuzz/artifacts"),
+        help="Directory to write failing inputs for replay.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Suppress real-time logs.")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
     targets = list(_TARGETS) if args.target == "all" else [args.target]
     failed = False
     for name in targets:
-        res = _TARGETS[name](rng, args.iterations)
+        logger = FuzzLogger(
+            name,
+            args.iterations,
+            seed=args.seed,
+            progress_every=args.progress_every,
+            artifacts_dir=args.artifacts_dir,
+            quiet=args.quiet,
+        )
+        res = _TARGETS[name](rng, args.iterations, logger)
         status = "OK" if res.crashes == 0 and res.invariant_violations == 0 else "FAIL"
         print(
             f"[{status}] {res.target}: {res.iterations} iters, "
