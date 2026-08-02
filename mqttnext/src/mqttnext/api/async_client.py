@@ -879,15 +879,15 @@ class AsyncClient:
                 if receipt._event is not None:
                     receipt._event.set()
         elif kind is EffectKind.SUBACK:
-            result = SubscribeResult.from_packet(effect.data)
-            fut = self._sub_futs.pop(result.mid, None)
-            if fut is not None and not fut.done():
-                fut.set_result(result)
+            sub_result = SubscribeResult.from_packet(effect.data)
+            sub_fut = self._sub_futs.pop(sub_result.mid, None)
+            if sub_fut is not None and not sub_fut.done():
+                sub_fut.set_result(sub_result)
         elif kind is EffectKind.UNSUBACK:
-            result = UnsubscribeResult.from_packet(effect.data)
-            fut = self._unsub_futs.pop(result.mid, None)
-            if fut is not None and not fut.done():
-                fut.set_result(result)
+            unsub_result = UnsubscribeResult.from_packet(effect.data)
+            unsub_fut = self._unsub_futs.pop(unsub_result.mid, None)
+            if unsub_fut is not None and not unsub_fut.done():
+                unsub_fut.set_result(unsub_result)
         elif kind is EffectKind.PINGRESP:
             self._ping_pending = False
         elif kind is EffectKind.DISCONNECTED:
@@ -923,13 +923,13 @@ class AsyncClient:
             pass
 
     def _fail_non_replayable(self, exc: BaseException) -> None:
-        for fut in self._sub_futs.values():
-            if not fut.done():
-                fut.set_exception(exc)
+        for sub_fut in self._sub_futs.values():
+            if not sub_fut.done():
+                sub_fut.set_exception(exc)
         self._sub_futs.clear()
-        for fut in self._unsub_futs.values():
-            if not fut.done():
-                fut.set_exception(exc)
+        for unsub_fut in self._unsub_futs.values():
+            if not unsub_fut.done():
+                unsub_fut.set_exception(exc)
         self._unsub_futs.clear()
 
     def _fail_pending(self, exc: BaseException) -> None:

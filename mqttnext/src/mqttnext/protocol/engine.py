@@ -442,6 +442,7 @@ class ProtocolEngine:
     def queue_unsubscribe(self, topics: str | Iterable[str]) -> int:
         if self.state != ConnectionState.CONNECTED:
             raise NotConnectedError("unsubscribe requires an active connection")
+        topic_list: tuple[str, ...]
         if isinstance(topics, str):
             topic_list = (topics,)
         else:
