@@ -44,9 +44,11 @@ def append_vbi(buf: bytearray, value: int) -> None:
 
 
 def decode_vbi(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tuple[int, int]:
-    """Decode a VBI starting at *offset*.
+    """Decode a canonical MQTT VBI starting at *offset*.
 
-    Returns ``(value, new_offset)``.
+    Returns ``(value, new_offset)``. MQTT requires the shortest possible
+    representation, so encodings such as ``80 00`` are malformed even though
+    they numerically represent zero.
     """
     length = len(buffer)
     if offset >= length:
@@ -75,16 +77,18 @@ def decode_vbi(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tuple
             raise MalformedPacketError("Malformed Variable Byte Integer")
     if value > _MAX_VBI:
         raise MalformedPacketError("Variable Byte Integer exceeds maximum")
+    if encoded_bytes != vbi_len(value):
+        raise MalformedPacketError("Non-canonical Variable Byte Integer")
     return value, pos
 
 
 def vbi_len(value: int) -> int:
+    if not 0 <= value <= _MAX_VBI:
+        raise ValueError(f"VBI out of range: {value}")
     if value < 128:
         return 1
     if value < 16_384:
         return 2
     if value < 2_097_152:
         return 3
-    if value <= _MAX_VBI:
-        return 4
-    raise ValueError(f"VBI out of range: {value}")
+    return 4
