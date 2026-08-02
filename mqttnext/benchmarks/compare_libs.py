@@ -2,7 +2,7 @@
 
 Two layers:
 1. Micro (CPU, no broker): PUBLISH encode + ingress decode batch
-2. E2E against local Mosquitto: publisher capacity QoS 0/1/2
+2. E2E against local Mosquitto: QoS 1 PUBACK-complete throughput
 
 Run:
   PYTHONPATH=src python3 mqttnext/benchmarks/compare_libs.py
@@ -32,6 +32,7 @@ import paho.mqtt.client as mqtt
 
 BROKER = ("127.0.0.1", 11883)
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
+WINDOW = 20
 
 
 @dataclass
@@ -90,32 +91,13 @@ def micro_encode() -> list[Sample]:
     rate = _median_ops(g_encode, 20_000)
     samples.append(Sample("publish_encode_qos0_small", "gmqtt", rate, "msg/s"))
 
-    # paho: publish + drain to null socket
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="bench-encode")
-    from paho.mqtt.enums import _ConnectionState
-
-    client._state = _ConnectionState.MQTT_CS_CONNECTED
-    client._sock = _NullSock()  # type: ignore[assignment]
-    client._sockpairR, client._sockpairW = _NullSock(), _NullSock()  # type: ignore[attr-defined]
-
-    def p_encode_drained() -> None:
-        client.publish(topic, payload, qos=0)
-        while client._out_messages or client._out_packet:  # type: ignore[attr-defined]
-            try:
-                client._packet_write()  # type: ignore[attr-defined]
-            except Exception:
-                client._out_packet.clear()  # type: ignore[attr-defined]
-                client._out_messages.clear()  # type: ignore[attr-defined]
-                break
-
-    rate = _median_ops(p_encode_drained, 5_000, runs=5, warmup=50)
     samples.append(
         Sample(
             "publish_encode_qos0_small",
             "paho",
-            rate,
+            float("nan"),
             "msg/s",
-            notes="publish()+_packet_write to null sock (includes queue)",
+            notes="N/A: public publish includes queue and I/O; not a codec benchmark",
         )
     )
     return samples
@@ -212,7 +194,7 @@ async def e2e_mqttnext(qos: int, count: int, payload: bytes) -> float:
     client = AsyncClient(
         client_id=f"mn-qos{qos}-{int(time.time()*1000)%100000}",
         keepalive=60,
-        local_receive_maximum=100,
+        max_outbound_inflight=WINDOW,
         reconnect=ReconnectPolicy(enabled=False),
     )
     await client.connect(*BROKER, timeout=5)
@@ -237,7 +219,7 @@ async def e2e_gmqtt(qos: int, count: int, payload: bytes) -> float:
     client = GClient(f"gm-qos{qos}-{int(time.time()*1000)%100000}")
     await client.connect(*BROKER)
     # gmqtt maps Receive Maximum onto MID space — keep batches small and drain.
-    window = 10
+    window = WINDOW
     t0 = time.perf_counter()
     if qos == 0:
         for _ in range(count):
@@ -268,7 +250,7 @@ def e2e_paho(qos: int, count: int, payload: bytes) -> float:
         mqtt.CallbackAPIVersion.VERSION2,
         client_id=f"ph-qos{qos}-{int(time.time()*1000)%100000}",
     )
-    client.max_inflight_messages_set(20)
+    client.max_inflight_messages_set(WINDOW)
     if qos > 0:
         client.on_publish = on_publish
     client.connect(*BROKER, keepalive=60)
@@ -298,31 +280,35 @@ def e2e_paho(qos: int, count: int, payload: bytes) -> float:
 async def run_e2e() -> list[Sample]:
     samples: list[Sample] = []
     payload = b"x" * 64
-    # Counts tuned for ~1–3s runs
-    plans = [
-        (0, 80_000),
-        (1, 8_000),
-        (2, 4_000),
-    ]
-    for qos, count in plans:
-        name = f"e2e_pub_qos{qos}_p64"
-        # mqttnext
-        rates = []
-        for _ in range(3):
-            rates.append(await e2e_mqttnext(qos, count, payload))
-        samples.append(Sample(name, "mqttnext", statistics.median(rates), "msg/s"))
+    qos = 1
+    count = 8_000
+    rates: dict[str, list[float]] = {"mqttnext": [], "gmqtt": [], "paho": []}
+    orders = (
+        ("mqttnext", "gmqtt", "paho"),
+        ("gmqtt", "paho", "mqttnext"),
+        ("paho", "mqttnext", "gmqtt"),
+    )
+    for order in orders:
+        for library in order:
+            if library == "mqttnext":
+                rate = await e2e_mqttnext(qos, count, payload)
+            elif library == "gmqtt":
+                rate = await e2e_gmqtt(qos, count, payload)
+            else:
+                rate = await asyncio.to_thread(e2e_paho, qos, count, payload)
+            rates[library].append(rate)
 
-        # gmqtt
-        rates = []
-        for _ in range(3):
-            rates.append(await e2e_gmqtt(qos, count, payload))
-        samples.append(Sample(name, "gmqtt", statistics.median(rates), "msg/s"))
-
-        # paho
-        rates = []
-        for _ in range(3):
-            rates.append(e2e_paho(qos, count, payload))
-        samples.append(Sample(name, "paho", statistics.median(rates), "msg/s"))
+    name = f"e2e_puback_qos1_p64_w{WINDOW}"
+    for library in ("mqttnext", "gmqtt", "paho"):
+        samples.append(
+            Sample(
+                name,
+                library,
+                statistics.median(rates[library]),
+                "msg/s",
+                notes=f"count={count}; PUBACK complete; inflight window={WINDOW}",
+            )
+        )
     return samples
 
 
@@ -384,10 +370,10 @@ async def amain() -> None:
 Notes:
 - Micro encode for paho includes queue + `_packet_write` to a null socket.
 - Micro decode is mqttnext-only (gmqtt/paho parsers are not isolatable).
-- E2E QoS>0: mqttnext waits PUBACK/PUBCOMP via pipelined receipts;
-  gmqtt drains inflight storage in batches of 10 (Receive-Maximum MID bug);
-  paho waits `on_publish`.
-- gmqtt QoS2 `wait_empty` returns after PUBREC (MID freed early) — optimistic vs true PUBCOMP.
+- Comparative E2E is limited to QoS 1, completed after PUBACK.
+- All libraries use the same outbound inflight window.
+- Execution order rotates between runs to reduce warm-up/order bias.
+- QoS 0 and gmqtt QoS 2 are excluded because completion semantics differ.
 """
     (RESULTS_DIR / "compare_libs.md").write_text(
         "# Comparative benchmarks\n\n"

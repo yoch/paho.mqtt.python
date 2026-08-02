@@ -6,7 +6,7 @@ Tracks:
   A  codec_encode / codec_decode  (CPU, no broker)
   B  ingress_batch                (CPU, IncrementalDecoder + handle_raw)
   C  e2e_qos{0,1,2}               (Mosquitto)
-  D  pipeline_rm                  (e2e QoS1/2 vs local_receive_maximum)
+  D  pipeline_window              (e2e QoS1/2 vs max_outbound_inflight)
 
 Usage:
   PYTHONPATH=mqttnext/src python3 mqttnext/benchmarks/perf_sprint.py
@@ -199,12 +199,15 @@ def track_B_ingress() -> list[Sample]:
     return samples
 
 
-async def _e2e_pub(qos: int, count: int, payload: bytes, *, local_rm: int = 20) -> float:
+async def _e2e_pub(
+    qos: int, count: int, payload: bytes, *, outbound_window: int = 20
+) -> float:
     from mqttnext.protocol.reconnect import ReconnectPolicy
 
     client = AsyncClient(
-        client_id=f"sprint-q{qos}-rm{local_rm}-{time.time_ns() % 1_000_000}",
-        local_receive_maximum=local_rm,
+        client_id=f"sprint-q{qos}-w{outbound_window}-{time.time_ns() % 1_000_000}",
+        local_receive_maximum=100,
+        max_outbound_inflight=outbound_window,
         reconnect=ReconnectPolicy(enabled=False),
     )
     await client.connect(*BROKER)
@@ -232,11 +235,11 @@ def track_C_e2e() -> list[Sample]:
         for qos in (0, 1, 2):
             rates: list[float] = []
             for _ in range(5):
-                rates.append(await _e2e_pub(qos, counts[qos], PAYLOAD, local_rm=20))
+                rates.append(await _e2e_pub(qos, counts[qos], PAYLOAD, outbound_window=20))
             samples.append(
                 Sample(
                     "C",
-                    f"e2e_pub_qos{qos}_p64_rm20",
+                    f"e2e_pub_qos{qos}_p64_w20",
                     statistics.median(rates),
                     "msg/s",
                     notes=f"count={counts[qos]}",
@@ -249,19 +252,19 @@ def track_C_e2e() -> list[Sample]:
 
 def track_D_pipeline() -> list[Sample]:
     samples: list[Sample] = []
-    rms = (20, 100, 500, 2000)
+    windows = (20, 100, 500, 2000)
 
     async def run_all() -> None:
         for qos in (1, 2):
             count = 8_000 if qos == 1 else 4_000
-            for rm in rms:
+            for window in windows:
                 rates: list[float] = []
                 for _ in range(4):
-                    rates.append(await _e2e_pub(qos, count, PAYLOAD, local_rm=rm))
+                    rates.append(await _e2e_pub(qos, count, PAYLOAD, outbound_window=window))
                 samples.append(
                     Sample(
                         "D",
-                        f"e2e_qos{qos}_rm{rm}",
+                        f"e2e_qos{qos}_w{window}",
                         statistics.median(rates),
                         "msg/s",
                         notes=f"count={count}",
@@ -317,7 +320,7 @@ def main() -> None:
         print("=== Track C: e2e ===")
         samples.extend(track_C_e2e())
     if "D" in only:
-        print("=== Track D: pipeline RM ===")
+        print("=== Track D: outbound inflight window ===")
         samples.extend(track_D_pipeline())
     _write_results(args.tag, samples)
 
