@@ -59,8 +59,9 @@ des **gardes d’état** manquantes (CONNACK dupliqué, SUBACK orphelins, MID po
 
 ## Dette restante (connue, non bloquante)
 
-1. **compat.paho** : `publish()` hors callback reste bloquant (receipt chaud) ;
-   **depuis un callback** il est fire-and-forget (deadlock éliminé).
+1. **compat.paho** : `publish()` est désormais **non bloquant** partout
+   (handoff borné à la loop, jamais d’attente réseau) ; `wait_for_publish`
+   reste disponible. Latence de retour ~100 µs (coût inter-thread).
 2. **Store SQLite** : `commit()` par opération (durabilité > débit QoS>0) ;
    erreurs isolées en `PROTOCOL_ERROR` (pas de crash de connexion).
 3. **Fuzz** : étendre au-delà du framing (engine, properties, WS) — jalon E.
