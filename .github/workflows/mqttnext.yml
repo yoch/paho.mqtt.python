@@ -32,6 +32,7 @@ jobs:
             exit 0
           fi
           python mqttnext/tools/apply_fuzz_contracts.py
+          python mqttnext/tools/fix_fuzz_discoveries.py
       - name: Install package
         run: pip install -e './mqttnext[dev,fuzz]'
       - name: Run strict fuzz and regressions
@@ -47,7 +48,7 @@ jobs:
           git diff --check
           git config user.name 'mqttnext-hardening-agent'
           git config user.email 'actions@users.noreply.github.com'
-          git add mqttnext/tests/fuzz/fuzz.py mqttnext/tests/fuzz/test_hypothesis_fuzz.py mqttnext/tests/unit/test_fuzz_contracts.py
+          git add mqttnext/src/mqttnext/enums.py mqttnext/tests/fuzz/fuzz.py mqttnext/tests/fuzz/test_hypothesis_fuzz.py mqttnext/tests/unit/test_fuzz_contracts.py
           git commit -m '[agent-fuzz] enforce strict parser and engine invariants'
           git push origin HEAD:agent/mqttnext-hardening-audit
 
