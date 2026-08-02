@@ -1,5 +1,7 @@
-# Compatibilité Paho — notes (phase 3)
+# Compatibilité Paho — notes
 
 Implémentation : `mqttnext.compat.paho` (VERSION2 uniquement).
 
-Migration : voir `docs/MIGRATION.md`.
+Politique complète (supporté / écarts / rejets) : [`docs/COMPAT.md`](../../../docs/COMPAT.md).
+
+Migration : [`docs/MIGRATION.md`](../../../docs/MIGRATION.md).
