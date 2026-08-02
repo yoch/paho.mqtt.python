@@ -1,11 +1,10 @@
-"""WebSocket transport unit tests (handshake + ping/pong + binary MQTT)."""
+"""WebSocket transport unit tests (handshake + strict RFC 6455 framing)."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import hashlib
-import os
 import struct
 
 import pytest
@@ -19,10 +18,16 @@ def _server_accept(key: str) -> str:
     ).decode("ascii")
 
 
-def _unmask_server_frame(opcode: int, payload: bytes) -> bytes:
-    """Server→client frames are typically unmasked."""
+def _server_frame(
+    opcode: int,
+    payload: bytes,
+    *,
+    fin: bool = True,
+    rsv: int = 0,
+) -> bytes:
+    """Build an unmasked server→client frame."""
     header = bytearray()
-    header.append(0x80 | (opcode & 0x0F))
+    header.append((0x80 if fin else 0) | (rsv & 0x70) | (opcode & 0x0F))
     ln = len(payload)
     if ln < 126:
         header.append(ln)
@@ -36,7 +41,7 @@ def _unmask_server_frame(opcode: int, payload: bytes) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_websocket_binary_roundtrip_and_pong() -> None:
+async def test_websocket_binary_roundtrip_and_immediate_pong() -> None:
     loop = asyncio.get_running_loop()
     got_mqtt = loop.create_future()
     got_pong = loop.create_future()
@@ -49,25 +54,27 @@ async def test_websocket_binary_roundtrip_and_pong() -> None:
                 return
             req += chunk
         key_line = next(
-            line for line in req.decode("latin1").split("\r\n") if line.lower().startswith("sec-websocket-key:")
+            line
+            for line in req.decode("latin1").split("\r\n")
+            if line.lower().startswith("sec-websocket-key:")
         )
         key = key_line.split(":", 1)[1].strip()
         accept = _server_accept(key)
         resp = (
             "HTTP/1.1 101 Switching Protocols\r\n"
             "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
+            "Connection: keep-alive, Upgrade\r\n"
             f"Sec-WebSocket-Accept: {accept}\r\n"
             "Sec-WebSocket-Protocol: mqtt\r\n"
             "\r\n"
         )
         writer.write(resp.encode("ascii"))
         await writer.drain()
-        # Send a ping then a binary MQTT-looking payload.
-        writer.write(_unmask_server_frame(0x9, b"ping-payload"))
-        writer.write(_unmask_server_frame(0x2, b"\x30\x02\x00\x00"))  # tiny PUBLISH-ish
+        # Send a ping followed immediately by a binary MQTT-looking payload.
+        writer.write(_server_frame(0x9, b"ping-payload"))
+        writer.write(_server_frame(0x2, b"\x30\x02\x00\x00"))
         await writer.drain()
-        # Read client frames: pong then maybe close.
+
         buf = bytearray()
         while not (got_pong.done() and got_mqtt.done()):
             chunk = await reader.read(4096)
@@ -75,7 +82,11 @@ async def test_websocket_binary_roundtrip_and_pong() -> None:
                 break
             buf.extend(chunk)
             while True:
-                parsed = _parse_frame(buf, 16 * 1024 * 1024)
+                parsed = _parse_frame(
+                    buf,
+                    16 * 1024 * 1024,
+                    expect_masked=True,
+                )
                 if parsed is None:
                     break
                 fin, opcode, payload = parsed
@@ -95,8 +106,12 @@ async def test_websocket_binary_roundtrip_and_pong() -> None:
         transport = await WebSocketTransport.connect(f"ws://{host}:{port}/mqtt")
         data = await transport.read()
         assert data == b"\x30\x02\x00\x00"
-        await transport.write(b"\x10\x00")  # dummy CONNECT fragment
+
+        # The pong must be emitted by read(), not deferred until the next
+        # application write.
         assert await asyncio.wait_for(got_pong, timeout=2.0) == b"ping-payload"
+
+        await transport.write(b"\x10\x00")  # dummy CONNECT fragment
         assert await asyncio.wait_for(got_mqtt, timeout=2.0) == b"\x10\x00"
         await transport.close()
     finally:
@@ -107,8 +122,61 @@ async def test_websocket_binary_roundtrip_and_pong() -> None:
 def test_mask_frame_roundtrip_parse() -> None:
     frame = _mask_client_frame(0x2, b"abc")
     buf = bytearray(frame)
-    fin, opcode, payload = _parse_frame(buf, 16 * 1024 * 1024)
+    fin, opcode, payload = _parse_frame(
+        buf,
+        16 * 1024 * 1024,
+        expect_masked=True,
+    )
     assert fin is True
     assert opcode == 0x2
     assert payload == b"abc"
     assert buf == b""
+
+
+def test_rejects_masked_server_frame() -> None:
+    buf = bytearray(_mask_client_frame(0x2, b"abc"))
+    with pytest.raises(ConnectionError, match="unmasked"):
+        _parse_frame(buf, 1024, expect_masked=False)
+
+
+def test_rejects_text_and_reserved_opcodes() -> None:
+    with pytest.raises(ConnectionError, match="binary"):
+        _parse_frame(bytearray(_server_frame(0x1, b"text")), 1024, expect_masked=False)
+    with pytest.raises(ConnectionError, match="opcode"):
+        _parse_frame(bytearray(_server_frame(0x3, b"x")), 1024, expect_masked=False)
+
+
+def test_rejects_rsv_bits_without_extension() -> None:
+    with pytest.raises(ConnectionError, match="RSV"):
+        _parse_frame(
+            bytearray(_server_frame(0x2, b"x", rsv=0x40)),
+            1024,
+            expect_masked=False,
+        )
+
+
+def test_rejects_non_canonical_frame_lengths() -> None:
+    # Payload length 1 encoded using the 16-bit extended form.
+    buf = bytearray(b"\x82\x7e\x00\x01x")
+    with pytest.raises(ConnectionError, match="Non-canonical"):
+        _parse_frame(buf, 1024, expect_masked=False)
+
+
+def test_rejects_new_data_frame_during_fragmentation() -> None:
+    transport = WebSocketTransport(None, None)  # type: ignore[arg-type]
+    transport._recv_buf.extend(
+        _server_frame(0x2, b"part-1", fin=False)
+        + _server_frame(0x2, b"part-2", fin=True)
+    )
+    with pytest.raises(ConnectionError, match="fragmented message"):
+        transport._try_extract_application_payload()
+
+
+def test_reassembles_binary_fragmentation_with_interleaved_pong() -> None:
+    transport = WebSocketTransport(None, None)  # type: ignore[arg-type]
+    transport._recv_buf.extend(
+        _server_frame(0x2, b"part-1", fin=False)
+        + _server_frame(0xA, b"ignored")
+        + _server_frame(0x0, b"part-2", fin=True)
+    )
+    assert transport._try_extract_application_payload() == b"part-1part-2"
