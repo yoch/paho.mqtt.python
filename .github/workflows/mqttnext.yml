@@ -32,6 +32,7 @@ jobs:
             exit 0
           fi
           python mqttnext/tools/apply_config_contracts.py
+          python mqttnext/tools/fix_config_test.py
       - name: Install package
         run: pip install -e './mqttnext[dev]'
       - name: Run configuration and negotiation regressions
