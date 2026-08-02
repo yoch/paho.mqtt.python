@@ -10,44 +10,7 @@ on:
       - "mqttnext/**"
       - ".github/workflows/mqttnext.yml"
 
-permissions:
-  contents: write
-
 jobs:
-  agent_apply:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/mqttnext-hardening-audit'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/mqttnext-hardening-audit
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Apply message delivery hardening
-        run: |
-          if [ -f mqttnext/tests/unit/test_message_delivery.py ]; then
-            echo "Message delivery batch already applied"
-            exit 0
-          fi
-          python mqttnext/tools/apply_message_delivery.py
-      - name: Install package
-        run: pip install -e './mqttnext[dev]'
-      - name: Run delivery and regression tests
-        run: python -m pytest -q mqttnext/tests/unit/test_message_delivery.py mqttnext/tests/unit/test_async_client.py mqttnext/tests/unit/test_helpers.py mqttnext/tests/unit/test_compat_paho.py mqttnext/tests/unit/test_compat_callback_publish.py mqttnext/tests/unit/test_effect_atomicity.py mqttnext/tests/unit/test_async_lifecycle.py
-      - name: Validate and push
-        run: |
-          if git diff --quiet; then
-            exit 0
-          fi
-          git diff --check
-          git config user.name 'mqttnext-hardening-agent'
-          git config user.email 'actions@users.noreply.github.com'
-          git add mqttnext/src/mqttnext/api/async_client.py mqttnext/src/mqttnext/helpers/subscribe.py mqttnext/tests/unit/test_message_delivery.py
-          git commit -m '[agent-delivery] separate callback and iterator delivery'
-          git push origin HEAD:agent/mqttnext-hardening-audit
-
   test:
     runs-on: ubuntu-latest
     strategy:
