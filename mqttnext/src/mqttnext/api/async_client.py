@@ -106,6 +106,7 @@ class AsyncClient:
         self._writer_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
+        self._lifecycle_lock = asyncio.Lock()
         self._outbound: asyncio.Queue[WriteItem] = asyncio.Queue()
         self._outbound_bytes = 0
         self._max_outbound_bytes = max_outbound_bytes
@@ -167,19 +168,20 @@ class AsyncClient:
         ssl: ssl.SSLContext | bool | None = None,
         timeout: float | None = None,
     ) -> ConnAckPacket:
-        self._host = host
-        self._port = port
-        self._ssl = ssl
-        was_alt = self._unix_path is not None or self._ws_url is not None
-        self._unix_path = None
-        self._ws_url = None
-        self._ws_headers = None
-        if was_alt:
-            self._transport_factory = TcpTransport.connect
-        self._intentional_disconnect = False
-        timeout = timeout if timeout is not None else self._reconnect.connect_timeout
-        self._reconnect.reset()
-        return await self._connect_once(host, port, ssl=ssl, timeout=timeout)
+        async with self._lifecycle_lock:
+            self._host = host
+            self._port = port
+            self._ssl = ssl
+            was_alt = self._unix_path is not None or self._ws_url is not None
+            self._unix_path = None
+            self._ws_url = None
+            self._ws_headers = None
+            if was_alt:
+                self._transport_factory = TcpTransport.connect
+            self._intentional_disconnect = False
+            timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+            self._reconnect.reset()
+            return await self._connect_once_locked(host, port, ssl=ssl, timeout=timeout)
 
     async def connect_unix(
         self,
@@ -188,21 +190,27 @@ class AsyncClient:
         timeout: float | None = None,
     ) -> ConnAckPacket:
         """Connect over a Unix domain socket (AF_UNIX)."""
-        self._unix_path = path
-        self._ws_url = None
-        self._ws_headers = None
-        self._host = path
-        self._port = 0
-        self._ssl = None
-        self._intentional_disconnect = False
+        async with self._lifecycle_lock:
+            self._unix_path = path
+            self._ws_url = None
+            self._ws_headers = None
+            self._host = path
+            self._port = 0
+            self._ssl = None
+            self._intentional_disconnect = False
 
-        async def _factory(host: str, port: int, *, ssl: object | None = None) -> AsyncTransport:
-            return await UnixSocketTransport.connect(self._unix_path or host)
+            async def _factory(
+                host: str,
+                port: int,
+                *,
+                ssl: object | None = None,
+            ) -> AsyncTransport:
+                return await UnixSocketTransport.connect(self._unix_path or host)
 
-        self._transport_factory = _factory
-        timeout = timeout if timeout is not None else self._reconnect.connect_timeout
-        self._reconnect.reset()
-        return await self._connect_once(path, 0, ssl=None, timeout=timeout)
+            self._transport_factory = _factory
+            timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+            self._reconnect.reset()
+            return await self._connect_once_locked(path, 0, ssl=None, timeout=timeout)
 
     async def connect_ws(
         self,
@@ -213,27 +221,33 @@ class AsyncClient:
         timeout: float | None = None,
     ) -> ConnAckPacket:
         """Connect over MQTT-over-WebSocket (``ws://`` / ``wss://``)."""
-        self._ws_url = url
-        self._ws_headers = extra_headers
-        self._unix_path = None
-        self._host = url
-        self._port = 0
-        self._ssl = ssl
-        self._intentional_disconnect = False
+        async with self._lifecycle_lock:
+            self._ws_url = url
+            self._ws_headers = extra_headers
+            self._unix_path = None
+            self._host = url
+            self._port = 0
+            self._ssl = ssl
+            self._intentional_disconnect = False
 
-        async def _factory(host: str, port: int, *, ssl: object | None = None) -> AsyncTransport:
-            return await WebSocketTransport.connect(
-                self._ws_url or host,
-                ssl=ssl if ssl is not None else self._ssl,
-                extra_headers=self._ws_headers,
-            )
+            async def _factory(
+                host: str,
+                port: int,
+                *,
+                ssl: object | None = None,
+            ) -> AsyncTransport:
+                return await WebSocketTransport.connect(
+                    self._ws_url or host,
+                    ssl=ssl if ssl is not None else self._ssl,
+                    extra_headers=self._ws_headers,
+                )
 
-        self._transport_factory = _factory
-        timeout = timeout if timeout is not None else self._reconnect.connect_timeout
-        self._reconnect.reset()
-        return await self._connect_once(url, 0, ssl=ssl, timeout=timeout)
+            self._transport_factory = _factory
+            timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+            self._reconnect.reset()
+            return await self._connect_once_locked(url, 0, ssl=ssl, timeout=timeout)
 
-    async def _connect_once(
+    async def _connect_once_locked(
         self,
         host: str,
         port: int,
@@ -241,63 +255,86 @@ class AsyncClient:
         ssl: ssl.SSLContext | bool | None = None,
         timeout: float = 30.0,
     ) -> ConnAckPacket:
-        if self.is_connected:
-            raise ProtocolError("Already connected")
-        transport = await asyncio.wait_for(
-            self._transport_factory(host, port, ssl=ssl), timeout=timeout
-        )
-        self._transport = transport
-        self._closed.clear()
-        self._disconnect_exc = None
-        self._last_disconnect = None
-        self._decoder.clear()
-        self._outbound = asyncio.Queue()
-        self._outbound_bytes = 0
-        self._ping_pending = False
-        connect_packet = self._engine.begin_connect()
-        loop = asyncio.get_running_loop()
-        self._connack_fut = loop.create_future()
-        self._writer_task = asyncio.create_task(self._write_loop(), name="mqttnext-writer")
-        await self._enqueue_outbound(connect_packet)
-        self._reader_task = asyncio.create_task(self._read_loop(), name="mqttnext-reader")
+        if self._engine.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
+            raise ProtocolError("Already connected or connecting")
         try:
-            connack = await asyncio.wait_for(self._connack_fut, timeout=timeout)
-        except TimeoutError as exc:
-            await self._force_close()
-            raise MQTTTimeoutError("CONNACK timed out") from exc
-        except Exception:
-            await self._force_close()
+            try:
+                transport = await asyncio.wait_for(
+                    self._transport_factory(host, port, ssl=ssl), timeout=timeout
+                )
+            except TimeoutError as exc:
+                raise MQTTTimeoutError("Transport connection timed out") from exc
+            self._transport = transport
+            self._closed.clear()
+            self._disconnect_exc = None
+            self._last_disconnect = None
+            self._decoder.clear()
+            self._outbound = asyncio.Queue()
+            self._outbound_bytes = 0
+            self._ping_pending = False
+            connect_packet = self._engine.begin_connect()
+            loop = asyncio.get_running_loop()
+            self._connack_fut = loop.create_future()
+            self._writer_task = asyncio.create_task(
+                self._write_loop(), name="mqttnext-writer"
+            )
+            await self._enqueue_outbound(connect_packet)
+            self._reader_task = asyncio.create_task(
+                self._read_loop(), name="mqttnext-reader"
+            )
+            try:
+                connack = await asyncio.wait_for(self._connack_fut, timeout=timeout)
+            except TimeoutError as exc:
+                raise MQTTTimeoutError("CONNACK timed out") from exc
+            if connack.reason_code != 0:
+                raise ProtocolError(
+                    f"Connection refused: reason_code={connack.reason_code}"
+                )
+            self._connected_at = time.monotonic()
+            self._last_outbound = time.monotonic()
+            self._keepalive_task = asyncio.create_task(
+                self._keepalive_loop(), name="mqttnext-keepalive"
+            )
+            return connack
+        except BaseException:
+            self._intentional_disconnect = True
+            if self._connack_fut is not None and not self._connack_fut.done():
+                self._connack_fut.cancel()
+            try:
+                await self._force_close()
+            except BaseException:
+                pass
+            if self._engine.state not in (
+                ConnectionState.NEW,
+                ConnectionState.DISCONNECTED,
+            ):
+                self._engine.notify_transport_closed()
+                self._engine.take_effects()
             raise
-        if connack.reason_code != 0:
-            await self._force_close()
-            raise ProtocolError(f"Connection refused: reason_code={connack.reason_code}")
-        self._connected_at = time.monotonic()
-        self._last_outbound = time.monotonic()
-        self._keepalive_task = asyncio.create_task(
-            self._keepalive_loop(), name="mqttnext-keepalive"
-        )
-        return connack
 
     async def disconnect(self, reason_code: int = 0) -> None:
         self._intentional_disconnect = True
-        if self._reconnect_task is not None:
-            self._reconnect_task.cancel()
+        reconnect_task = self._reconnect_task
+        if reconnect_task is not None and reconnect_task is not asyncio.current_task():
+            reconnect_task.cancel()
             try:
-                await self._reconnect_task
+                await reconnect_task
             except asyncio.CancelledError:
                 pass
             self._reconnect_task = None
-        if self._transport is None:
-            return
-        packet = self._engine.begin_disconnect(reason_code)
-        await self._enqueue_outbound(packet)
-        try:
-            # Skip the wait if the writer already died (connection lost).
-            if self._writer_task is not None and not self._writer_task.done():
-                await asyncio.wait_for(self._outbound.join(), timeout=5.0)
-        except TimeoutError:
-            pass
-        await self._force_close()
+        async with self._lifecycle_lock:
+            if self._transport is None:
+                return
+            if self.is_connected:
+                packet = self._engine.begin_disconnect(reason_code)
+                await self._enqueue_outbound(packet)
+                try:
+                    # Skip the wait if the writer already died (connection lost).
+                    if self._writer_task is not None and not self._writer_task.done():
+                        await asyncio.wait_for(self._outbound.join(), timeout=5.0)
+                except TimeoutError:
+                    pass
+            await self._force_close()
 
     async def publish(
         self,
@@ -649,14 +686,17 @@ class AsyncClient:
                     return
                 delay = self._reconnect.next_delay()
                 await asyncio.sleep(delay)
-                await self._force_close(preserve_reconnect=True)
                 try:
-                    await self._connect_once(
-                        self._host,
-                        self._port,
-                        ssl=self._ssl,
-                        timeout=self._reconnect.connect_timeout,
-                    )
+                    async with self._lifecycle_lock:
+                        if self._intentional_disconnect:
+                            return
+                        await self._force_close(preserve_reconnect=True)
+                        await self._connect_once_locked(
+                            self._host,
+                            self._port,
+                            ssl=self._ssl,
+                            timeout=self._reconnect.connect_timeout,
+                        )
                     # Only clear backoff after the connection stays up.
                     await asyncio.sleep(self._reconnect.stable_after)
                     if self.is_connected:
@@ -816,7 +856,7 @@ class AsyncClient:
                 task.cancel()
                 try:
                     await task
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, Exception):
                     pass
         if self._reader_task is not current:
             self._reader_task = None
@@ -827,6 +867,9 @@ class AsyncClient:
         if not preserve_reconnect and self._reconnect_task is not current:
             self._reconnect_task = None
         if self._transport is not None:
-            await self._transport.close()
+            try:
+                await self._transport.close()
+            except Exception:
+                pass
             self._transport = None
         self._closed.set()
