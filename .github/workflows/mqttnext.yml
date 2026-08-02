@@ -32,12 +32,15 @@ jobs:
             exit 0
           fi
           python mqttnext/tools/apply_quality_lint.py
+          python mqttnext/tools/finalize_quality_lint.py
       - name: Install package and quality tools
         run: pip install -e './mqttnext[dev]'
       - name: Apply safe Ruff fixes
-        run: ruff check mqttnext/src mqttnext/tests --fix
+        working-directory: mqttnext
+        run: ruff check src tests --fix
       - name: Enforce focused Ruff rules
-        run: ruff check mqttnext/src mqttnext/tests
+        working-directory: mqttnext
+        run: ruff check src tests
       - name: Run unit regressions
         run: python -m pytest -q mqttnext/tests/unit
       - name: Validate and push
