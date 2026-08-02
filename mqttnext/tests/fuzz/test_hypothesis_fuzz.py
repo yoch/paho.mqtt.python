@@ -13,7 +13,6 @@ Aggressive profile (more examples):
 from __future__ import annotations
 
 import os
-import struct
 
 import pytest
 
@@ -38,7 +37,7 @@ settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "ci"))
 
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder, RawPacket
 from mqttnext.codec.properties import PUBLISH, decode_properties
-from mqttnext.enums import MQTTProtocolVersion, PacketType, QoS
+from mqttnext.enums import MQTTProtocolVersion, OutboundQoSState, PacketType, QoS
 from mqttnext.errors import MQTTError
 from mqttnext.packets import (
     ConnAckPacket,
@@ -50,7 +49,7 @@ from mqttnext.packets import (
 from mqttnext.protocol.engine import EngineConfig, ProtocolEngine
 from mqttnext.types import Properties
 
-ALLOWED = (MQTTError, ValueError, IndexError, struct.error, ConnectionError)
+ALLOWED = (MQTTError, ConnectionError)
 
 V5 = MQTTProtocolVersion.MQTTv5
 
@@ -199,12 +198,19 @@ _frame_type = st.sampled_from(
 def _engine_invariants(engine: ProtocolEngine) -> None:
     assert engine.flow.inflight >= 0
     assert engine.flow.inflight <= engine.flow.limit
-    assert len(engine.packet_ids) <= 65535
     assert engine._inbound_inflight >= 0
-    for mid in engine._pending_sub_mids:
-        assert engine.store.get_out(mid) is None
-    for msg in engine.store.out_items():
-        assert engine.packet_ids.in_use(msg.mid)
+
+    outbound = list(engine.store.out_items())
+    expected_mids = {msg.mid for msg in outbound} | set(engine._pending_sub_mids)
+    assert set(engine.packet_ids._used) == expected_mids
+
+    queued_mids = {msg.mid for msg in engine._queued}
+    expected_flow = sum(
+        1
+        for msg in outbound
+        if msg.state is not OutboundQoSState.QUEUED and msg.mid not in queued_mids
+    )
+    assert engine.flow.inflight == expected_flow
 
 
 @given(
@@ -267,7 +273,9 @@ def test_ws_frame_parser_bounded(header, tail):
     from mqttnext.transport.websocket import _parse_frame
 
     buf = bytearray(header + tail)
+    before = len(buf)
     try:
         _parse_frame(buf, 1024)
     except ALLOWED:
         pass
+    assert len(buf) <= before

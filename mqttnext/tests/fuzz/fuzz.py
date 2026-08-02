@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import random
-import struct
 import sys
 import time
 import traceback
@@ -27,7 +26,7 @@ from pathlib import Path
 
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder, RawPacket
 from mqttnext.codec.properties import PUBLISH, decode_properties, encode_properties
-from mqttnext.enums import MQTTProtocolVersion, PacketType, QoS
+from mqttnext.enums import MQTTProtocolVersion, OutboundQoSState, PacketType, QoS
 from mqttnext.errors import MQTTError
 from mqttnext.packets import (
     AuthPacket,
@@ -46,7 +45,7 @@ from mqttnext.protocol.engine import EffectKind, EngineConfig, ProtocolEngine
 from mqttnext.types import Properties
 
 # Exceptions a robust client may raise on hostile input. Anything else = bug.
-ALLOWED = (MQTTError, ValueError, IndexError, struct.error, ConnectionError)
+ALLOWED = (MQTTError, ConnectionError)
 
 
 @dataclass
@@ -145,7 +144,7 @@ def _mutate(rng: random.Random, data: bytes) -> bytes:
             del buf[rng.randrange(len(buf))]
         elif op == 2:
             buf.insert(rng.randrange(len(buf) + 1), rng.randrange(256))
-        else:
+        elif buf:
             buf = buf[: rng.randrange(1, len(buf) + 1)]
     return bytes(buf)
 
@@ -391,14 +390,26 @@ def fuzz_engine(
 def _check_engine_invariants(engine: ProtocolEngine) -> None:
     assert engine.flow.inflight >= 0, "negative flow inflight"
     assert engine.flow.inflight <= engine.flow.limit, "flow inflight exceeds limit"
-    assert len(engine.packet_ids) <= 65535, "packet id pool overflow"
     assert engine._inbound_inflight >= 0, "negative inbound inflight"
-    # No mid may be both pending-sub and in the store outbound.
-    for mid in engine._pending_sub_mids:
-        assert engine.store.get_out(mid) is None, f"mid {mid} both sub and publish"
-    # Every inflight outbound mid must be reserved in the pool.
-    for msg in engine.store.out_items():
-        assert engine.packet_ids.in_use(msg.mid), f"inflight mid {msg.mid} not reserved"
+
+    outbound = list(engine.store.out_items())
+    outbound_mids = {msg.mid for msg in outbound}
+    expected_mids = outbound_mids | set(engine._pending_sub_mids)
+    actual_mids = set(engine.packet_ids._used)
+    assert actual_mids == expected_mids, (
+        f"packet-id mismatch: actual={sorted(actual_mids)} "
+        f"expected={sorted(expected_mids)}"
+    )
+
+    queued_mids = {msg.mid for msg in engine._queued}
+    expected_flow = sum(
+        1
+        for msg in outbound
+        if msg.state is not OutboundQoSState.QUEUED and msg.mid not in queued_mids
+    )
+    assert engine.flow.inflight == expected_flow, (
+        f"flow mismatch: actual={engine.flow.inflight} expected={expected_flow}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +437,7 @@ def fuzz_websocket(
         elif ln == 127:
             buf.extend(rng.randrange(2**64).to_bytes(8, "big"))
         buf.extend(bytes(rng.randrange(256) for _ in range(rng.randrange(0, 64))))
+        before = len(buf)
         try:
             _parse_frame(buf, max_frame)
         except ALLOWED:
@@ -439,17 +451,15 @@ def fuzz_websocket(
                     result.first_failure = msg
             elif result.first_failure is None:
                 result.first_failure = f"iter {i}: {detail}"
-        # Invariant: buffer never grows unbounded on partial frames.
-        if len(buf) > max_frame + 64 and _is_plausible_partial(buf):
+        if len(buf) > before:
             result.invariant_violations += 1
+            detail = f"parser grew input buffer from {before} to {len(buf)}"
             if logger:
-                msg = logger.failure(
-                    i, "invariant", f"buffer grew to {len(buf)} on partial frame", bytes(buf)
-                )
+                msg = logger.failure(i, "invariant", detail, bytes(buf))
                 if result.first_failure is None:
                     result.first_failure = msg
             elif result.first_failure is None:
-                result.first_failure = f"iter {i} INVARIANT: buffer {len(buf)}"
+                result.first_failure = f"iter {i} INVARIANT: {detail}"
         if logger:
             logger.progress(i)
     if logger:

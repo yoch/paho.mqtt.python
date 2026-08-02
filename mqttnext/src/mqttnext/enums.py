@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import IntEnum
 
+from mqttnext.errors import MalformedPacketError
+
 
 class MQTTProtocolVersion(IntEnum):
     MQTTv31 = 3
@@ -33,7 +35,9 @@ class PacketType(IntEnum):
         try:
             return cls(byte & 0xF0)
         except ValueError as exc:
-            raise ValueError(f"Unknown MQTT packet type byte 0x{byte:02x}") from exc
+            raise MalformedPacketError(
+                f"Unknown MQTT packet type byte 0x{byte:02x}"
+            ) from exc
 
 
 class QoS(IntEnum):
