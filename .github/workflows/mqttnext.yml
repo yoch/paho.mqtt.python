@@ -11,6 +11,32 @@ on:
       - ".github/workflows/mqttnext.yml"
 
 jobs:
+  benchmark_probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mqttnext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install benchmark dependencies
+        run: pip install -e . gmqtt paho-mqtt
+      - name: Start Mosquitto
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto
+          printf 'listener 11883 127.0.0.1\nallow_anonymous true\npersistence false\n' > /tmp/mosq-bench.conf
+          mosquitto -c /tmp/mosq-bench.conf -d
+          for i in $(seq 1 30); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          exit 1
+      - name: Comparative benchmark
+        run: PYTHONPATH=src python benchmarks/compare_libs.py
+
   quality:
     runs-on: ubuntu-latest
     defaults:
