@@ -1,0 +1,41 @@
+name: agent-lifecycle
+
+on:
+  push:
+    branches:
+      - agent/mqttnext-hardening-audit
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[agent-lifecycle]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/mqttnext-hardening-audit
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply lifecycle patches
+        run: |
+          git apply --check mqttnext/tools/agent-lifecycle.patch
+          git apply mqttnext/tools/agent-lifecycle.patch
+          git apply --check mqttnext/tools/agent-lifecycle-fix.patch
+          git apply mqttnext/tools/agent-lifecycle-fix.patch
+      - name: Install package
+        run: pip install -e './mqttnext[dev]'
+      - name: Run lifecycle and regression tests
+        run: python -m pytest -q mqttnext/tests/unit/test_async_lifecycle.py mqttnext/tests/unit/test_async_client.py mqttnext/tests/unit/test_reconnect_receipts.py mqttnext/tests/unit/test_keepalive.py mqttnext/tests/unit/test_compat_paho.py mqttnext/tests/unit/test_compat_callback_publish.py
+      - name: Validate diff
+        run: git diff --check
+      - name: Commit and push
+        run: |
+          git config user.name 'mqttnext-hardening-agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add mqttnext/src/mqttnext/api/async_client.py mqttnext/tests/unit/test_async_lifecycle.py
+          git commit -m '[agent-lifecycle] serialize AsyncClient lifecycle'
+          git push origin HEAD:agent/mqttnext-hardening-audit
