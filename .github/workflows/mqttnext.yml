@@ -33,6 +33,7 @@ jobs:
           fi
           python mqttnext/tools/apply_fuzz_contracts.py
           python mqttnext/tools/fix_fuzz_discoveries.py
+          python mqttnext/tools/fix_fuzz_mutator.py
       - name: Install package
         run: pip install -e './mqttnext[dev,fuzz]'
       - name: Run strict fuzz and regressions
