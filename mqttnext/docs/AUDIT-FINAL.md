@@ -64,8 +64,25 @@ des **gardes d’état** manquantes (CONNACK dupliqué, SUBACK orphelins, MID po
 2. **Store SQLite** : `commit()` par opération (durabilité > débit QoS>0) ;
    erreurs isolées en `PROTOCOL_ERROR` (pas de crash de connexion).
 3. **Fuzz** : étendre au-delà du framing (engine, properties, WS) — jalon E.
-4. **DISCONNECT normatif** : 0x93/0x94 émis ; 0x95 (packet too large) côté
-   décodeur reste une fermeture sèche.
+4. **DISCONNECT normatif** : 0x93/0x94 (engine) **et** 0x95/0x81/0x82 (fatal,
+   côté reader) émis avant fermeture — voir ci-dessous.
+
+### DISCONNECT fatal normatif (solution retenue)
+
+Le décodeur bas niveau (`IncrementalDecoder`) reste **sans dépendance** vers
+l’engine/transport. L’erreur fatale (`PacketTooLargeError`, `MalformedPacketError`,
+`ProtocolError`) remonte à la boucle reader, qui — seule couche à connaître le
+protocole négocié **et** le transport — envoie un DISCONNECT normatif
+best-effort avant de fermer :
+
+| Erreur | Reason code (v5) |
+| --- | --- |
+| `PacketTooLargeError` | 0x95 Packet too large |
+| `MalformedPacketError` | 0x81 Malformed Packet |
+| `ProtocolError` (générique) | 0x82 Protocol Error |
+
+No-op en v3.1.1 (pas de reason codes) ou si le transport est déjà clos. Jamais
+d’exception. Élégant car **aucune** couche bas niveau n’est couplée à l’I/O.
 
 ### Résolu dans cette passe
 

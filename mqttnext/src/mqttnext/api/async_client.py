@@ -20,7 +20,14 @@ from typing import Any, Never
 from mqttnext.api.models import PublishReceipt, SubscribeResult, UnsubscribeResult
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder
 from mqttnext.enums import ConnectionState, MQTTProtocolVersion, QoS
-from mqttnext.errors import FlowControlError, MQTTError, MQTTTimeoutError, ProtocolError
+from mqttnext.errors import (
+    FlowControlError,
+    MQTTError,
+    MQTTTimeoutError,
+    MalformedPacketError,
+    PacketTooLargeError,
+    ProtocolError,
+)
 from mqttnext.packets import AuthPacket, ConnAckPacket, SubscribeOptions, encode_disconnect
 from mqttnext.protocol.engine import (
     DisconnectInfo,
@@ -419,6 +426,13 @@ class AsyncClient:
                     await self._flush_effects()
         except asyncio.CancelledError:
             raise
+        except (PacketTooLargeError, MalformedPacketError, ProtocolError) as exc:
+            # Fatal wire/protocol error: send a normative DISCONNECT (v5) before
+            # tearing down, so a strict broker sees *why* we left.
+            await self._send_fatal_disconnect(exc)
+            self._disconnect_exc = exc
+            if not self._will_reconnect():
+                self._fail_pending(exc)
         except Exception as exc:
             self._disconnect_exc = exc
             if not self._will_reconnect():
@@ -763,6 +777,26 @@ class AsyncClient:
             if not fut.done():
                 fut.set_exception(exc)
         self._unsub_futs.clear()
+
+    async def _send_fatal_disconnect(self, exc: BaseException) -> None:
+        """Best-effort normative DISCONNECT before a fatal close (MQTT 5).
+
+        Maps the error to its spec reason code; no-op on v3.1.1 or if the
+        transport is already unusable. Never raises.
+        """
+        if self._engine.config.protocol != MQTTProtocolVersion.MQTTv5:
+            return
+        if self._transport is None or self._transport.is_closing():
+            return
+        reason = 0x82  # Protocol Error (generic)
+        if isinstance(exc, PacketTooLargeError):
+            reason = 0x95  # Packet too large
+        elif isinstance(exc, MalformedPacketError):
+            reason = 0x81  # Malformed Packet
+        try:
+            await self._transport.write(encode_disconnect(reason, MQTTProtocolVersion.MQTTv5))
+        except Exception:
+            pass
 
     async def _invoke(self, callback: Callable[..., Any] | None, *args: Any) -> Any:
         if callback is None:
