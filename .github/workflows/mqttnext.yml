@@ -33,6 +33,7 @@ jobs:
           fi
           python mqttnext/tools/apply_type_quality.py
           python mqttnext/tools/finalize_type_quality.py
+          python mqttnext/tools/fix_type_header_fields.py
       - name: Install quality tools
         run: pip install -e './mqttnext[dev]'
       - name: Ruff
