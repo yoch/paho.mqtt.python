@@ -14,22 +14,43 @@ permissions:
   contents: write
 
 jobs:
-  quality_probe:
+  agent_apply:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/mqttnext-hardening-audit'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/mqttnext-hardening-audit
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Ruff
-        run: pip install ruff
-      - name: Apply safe Ruff fixes and report residue
+      - name: Apply focused quality linting
         run: |
-          ruff check mqttnext/src mqttnext/tests --fix
-          ruff check mqttnext/src mqttnext/tests
+          if grep -q '^\[tool.ruff.lint\]' mqttnext/pyproject.toml; then
+            echo "Quality lint batch already applied"
+            exit 0
+          fi
+          python mqttnext/tools/apply_quality_lint.py
+      - name: Install package and quality tools
+        run: pip install -e './mqttnext[dev]'
+      - name: Apply safe Ruff fixes
+        run: ruff check mqttnext/src mqttnext/tests --fix
+      - name: Enforce focused Ruff rules
+        run: ruff check mqttnext/src mqttnext/tests
+      - name: Run unit regressions
+        run: python -m pytest -q mqttnext/tests/unit
+      - name: Validate and push
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git diff --check
+          git config user.name 'mqttnext-hardening-agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add mqttnext/src mqttnext/tests mqttnext/pyproject.toml
+          git commit -m '[agent-quality] add focused Ruff quality gate'
+          git push origin HEAD:agent/mqttnext-hardening-audit
 
   test:
     runs-on: ubuntu-latest
