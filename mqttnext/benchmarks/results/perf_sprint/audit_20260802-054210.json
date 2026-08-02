@@ -1,0 +1,26 @@
+{
+  "tag": "audit",
+  "samples": [
+    {
+      "track": "C",
+      "name": "e2e_pub_qos0_p64_rm20",
+      "ops_per_s": 201893.31461960467,
+      "unit": "msg/s",
+      "notes": "count=80000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos1_p64_rm20",
+      "ops_per_s": 40386.026604521256,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos2_p64_rm20",
+      "ops_per_s": 26015.190620940844,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    }
+  ]
+}

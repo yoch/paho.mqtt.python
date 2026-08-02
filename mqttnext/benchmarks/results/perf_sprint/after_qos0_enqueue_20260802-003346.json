@@ -1,0 +1,117 @@
+{
+  "tag": "after_qos0_enqueue",
+  "samples": [
+    {
+      "track": "A",
+      "name": "encode_qos0_mqtt311",
+      "ops_per_s": 1324000.3226485425,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "encode_qos1_mqtt311",
+      "ops_per_s": 1254929.8743480009,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "encode_qos0_mqtt5_empty_props",
+      "ops_per_s": 1281549.1776088125,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "decode_qos0_mqtt311",
+      "ops_per_s": 519582.0471547357,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "decode_qos0_mqtt5_empty_props",
+      "ops_per_s": 467817.0138858483,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos0_p64_rm20",
+      "ops_per_s": 201493.46096926296,
+      "unit": "msg/s",
+      "notes": "count=80000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos1_p64_rm20",
+      "ops_per_s": 40430.39162647711,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos2_p64_rm20",
+      "ops_per_s": 25922.969843005274,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm20",
+      "ops_per_s": 40792.64761762839,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm100",
+      "ops_per_s": 47598.517846492454,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm500",
+      "ops_per_s": 48737.76183502967,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm2000",
+      "ops_per_s": 50053.450614560934,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm20",
+      "ops_per_s": 25872.955215933904,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm100",
+      "ops_per_s": 32091.94740735482,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm500",
+      "ops_per_s": 33697.501436314546,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm2000",
+      "ops_per_s": 34003.99697520968,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    }
+  ]
+}

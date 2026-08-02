@@ -1,0 +1,63 @@
+name: mqttnext
+
+on:
+  push:
+    paths:
+      - "mqttnext/**"
+      - ".github/workflows/mqttnext.yml"
+  pull_request:
+    paths:
+      - "mqttnext/**"
+      - ".github/workflows/mqttnext.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: mqttnext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Unit tests
+        run: python -m pytest -q tests/unit
+      - name: Start Mosquitto
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto
+          printf 'listener 11883 127.0.0.1\nallow_anonymous true\npersistence false\n' > /tmp/mosq-ci.conf
+          mosquitto -c /tmp/mosq-ci.conf -d
+          for i in $(seq 1 30); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          exit 1
+      - name: Integration tests
+        run: python -m pytest -q tests/integration
+
+  fuzz:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mqttnext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: pip install -e ".[fuzz]"
+      - name: Fuzz (seeded, bounded)
+        run: |
+          for seed in 1 2 3; do
+            PYTHONPATH=src python3 tests/fuzz/fuzz.py --seed $seed --iterations 20000
+          done
+      - name: Fuzz (hypothesis, guided + shrinking)
+        run: PYTHONPATH=src python3 -m pytest tests/fuzz/test_hypothesis_fuzz.py -q

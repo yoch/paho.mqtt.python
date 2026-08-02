@@ -1,0 +1,82 @@
+{
+  "tag": "baseline",
+  "samples": [
+    {
+      "track": "C",
+      "name": "e2e_pub_qos0_p64_rm20",
+      "ops_per_s": 120565.47522755273,
+      "unit": "msg/s",
+      "notes": "count=80000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos1_p64_rm20",
+      "ops_per_s": 37416.98941508954,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos2_p64_rm20",
+      "ops_per_s": 23471.359636838835,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm20",
+      "ops_per_s": 37688.71933659372,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm100",
+      "ops_per_s": 41213.63709635527,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm500",
+      "ops_per_s": 42130.5504382326,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_rm2000",
+      "ops_per_s": 42073.08917640775,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm20",
+      "ops_per_s": 23435.132732870923,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm100",
+      "ops_per_s": 25894.083011923463,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm500",
+      "ops_per_s": 26894.385486496612,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_rm2000",
+      "ops_per_s": 27302.476849644903,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    }
+  ]
+}
