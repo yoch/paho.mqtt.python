@@ -89,8 +89,27 @@ class AsyncClient:
             )
         if max_pending_messages <= 0:
             raise ValueError("max_pending_messages must be greater than 0")
+        if max_outbound_messages <= 0:
+            raise ValueError("max_outbound_messages must be greater than 0")
+        if max_outbound_bytes <= 0:
+            raise ValueError("max_outbound_bytes must be greater than 0")
+        if ack_timeout <= 0:
+            raise ValueError("ack_timeout must be greater than 0")
+        if ping_timeout is not None and ping_timeout <= 0:
+            raise ValueError("ping_timeout must be greater than 0")
+        if not isinstance(client_id, str):
+            raise ValueError("client_id must be a string")
+        if username is not None and not isinstance(username, str):
+            raise ValueError("username must be a string or None")
+        if password is not None and not isinstance(password, (bytes, str)):
+            raise ValueError("password must be bytes, str, or None")
         self._message_delivery = message_delivery
         self._max_pending_messages = max_pending_messages
+        effective_max_packet_size = (
+            maximum_packet_size
+            if maximum_packet_size is not None
+            else DEFAULT_MAX_PACKET_SIZE
+        )
         pwd = password.encode("utf-8") if isinstance(password, str) else password
         self._engine = ProtocolEngine(
             EngineConfig(
@@ -104,15 +123,16 @@ class AsyncClient:
                 connect_properties=connect_properties,
                 will=will,
                 will_properties=will_properties,
-                maximum_packet_size=maximum_packet_size,
+                maximum_packet_size=effective_max_packet_size,
                 topic_alias_maximum=topic_alias_maximum,
                 manual_ack=manual_ack,
                 accept_auth=auth_handler is not None,
             ),
             store=store,
         )
-        max_pkt = maximum_packet_size or DEFAULT_MAX_PACKET_SIZE
-        self._decoder = IncrementalDecoder(max_packet_size=max_pkt)
+        self._decoder = IncrementalDecoder(
+            max_packet_size=effective_max_packet_size
+        )
         self._transport: AsyncTransport | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._writer_task: asyncio.Task[None] | None = None

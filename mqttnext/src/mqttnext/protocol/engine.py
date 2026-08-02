@@ -152,6 +152,24 @@ class EngineConfig:
     # AsyncClient sets this True when an auth_handler is registered.
     accept_auth: bool = False
 
+    def __post_init__(self) -> None:
+        if not 0 <= self.keepalive <= 65535:
+            raise ValueError("keepalive must be between 0 and 65535")
+        if not 1 <= self.local_receive_maximum <= 65535:
+            raise ValueError("local_receive_maximum must be between 1 and 65535")
+        if self.max_outbound_inflight is not None and not (
+            1 <= self.max_outbound_inflight <= 65535
+        ):
+            raise ValueError("max_outbound_inflight must be between 1 and 65535")
+        if self.max_queued < 0:
+            raise ValueError("max_queued must be non-negative")
+        if self.maximum_packet_size is not None and not (
+            2 <= self.maximum_packet_size <= 268_435_460
+        ):
+            raise ValueError("maximum_packet_size must be between 2 and 268435460")
+        if not 0 <= self.topic_alias_maximum <= 65535:
+            raise ValueError("topic_alias_maximum must be between 0 and 65535")
+
 
 class ProtocolEngine:
     """Pure MQTT session/QoS state machine."""
@@ -225,6 +243,9 @@ class ProtocolEngine:
         self.state = ConnectionState.CONNECTING
         self._pending_connect = True
         self._topic_aliases.clear()
+        # Negotiated capabilities are connection-scoped. Queued messages are
+        # validated against the new values only after the next CONNACK.
+        self.negotiated = NegotiatedSettings()
         self._inbound_inflight = 0
 
         clean_start = self.config.clean_start

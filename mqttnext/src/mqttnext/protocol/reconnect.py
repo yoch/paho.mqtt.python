@@ -36,6 +36,18 @@ class ReconnectPolicy:
     _current_delay: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.initial_delay < 0:
+            raise ValueError("initial_delay must be non-negative")
+        if self.multiplier < 1:
+            raise ValueError("multiplier must be at least 1")
+        if self.max_delay < self.initial_delay:
+            raise ValueError("max_delay must be greater than or equal to initial_delay")
+        if self.max_retries is not None and self.max_retries < 0:
+            raise ValueError("max_retries must be non-negative or None")
+        if self.stable_after < 0:
+            raise ValueError("stable_after must be non-negative")
+        if self.connect_timeout <= 0:
+            raise ValueError("connect_timeout must be greater than 0")
         self._attempt = 0
         self._current_delay = self.initial_delay
 
