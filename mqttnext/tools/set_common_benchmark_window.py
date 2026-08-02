@@ -3,6 +3,8 @@ from pathlib import Path
 
 path = Path("mqttnext/benchmarks/compare_libs.py")
 text = path.read_text()
+if "WINDOW = 10\n" in text:
+    raise SystemExit(0)
 old = "WINDOW = 20\n"
 new = "# gmqtt 0.7.x exhausts its internal ID generator above ten queued QoS messages.\n# Use the largest common supported window so the comparison remains equivalent.\nWINDOW = 10\n"
 if text.count(old) != 1:
