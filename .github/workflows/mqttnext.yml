@@ -31,6 +31,7 @@ jobs:
             echo "Authentication contract batch already applied"
             exit 0
           fi
+          python mqttnext/tools/fix_auth_script.py
           python mqttnext/tools/apply_auth_contracts.py
       - name: Install package
         run: pip install -e './mqttnext[dev]'
