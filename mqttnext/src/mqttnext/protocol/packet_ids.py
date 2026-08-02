@@ -33,6 +33,9 @@ class PacketIdPool:
             mid = self._free.pop()
             self._used.add(mid)
             return mid
+        # Skip ids reserved via hydrate (store) that precede _next.
+        while self._next <= self._size and self._next in self._used:
+            self._next += 1
         if self._next <= self._size:
             mid = self._next
             self._next += 1

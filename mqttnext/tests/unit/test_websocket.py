@@ -75,10 +75,10 @@ async def test_websocket_binary_roundtrip_and_pong() -> None:
                 break
             buf.extend(chunk)
             while True:
-                parsed = _parse_frame(buf)
+                parsed = _parse_frame(buf, 16 * 1024 * 1024)
                 if parsed is None:
                     break
-                opcode, payload = parsed
+                fin, opcode, payload = parsed
                 if opcode == 0xA and not got_pong.done():
                     got_pong.set_result(payload)
                 if opcode == 0x2 and not got_mqtt.done():
@@ -107,7 +107,8 @@ async def test_websocket_binary_roundtrip_and_pong() -> None:
 def test_mask_frame_roundtrip_parse() -> None:
     frame = _mask_client_frame(0x2, b"abc")
     buf = bytearray(frame)
-    opcode, payload = _parse_frame(buf)  # type: ignore[misc]
+    fin, opcode, payload = _parse_frame(buf, 16 * 1024 * 1024)
+    assert fin is True
     assert opcode == 0x2
     assert payload == b"abc"
     assert buf == b""

@@ -56,8 +56,10 @@ class TopicMatcher:
     def iter_match(self, topic: str) -> Iterator[Any]:
         parts = topic.split("/")
         allow_wildcard = not topic.startswith("$")
-
-        def rec(node: TopicMatcher.Node, index: int) -> Iterator[Any]:
+        # Iterative DFS (explicit stack) — no recursion limit on deep topics.
+        stack: list[tuple[TopicMatcher.Node, int]] = [(self._root, 0)]
+        while stack:
+            node, index = stack.pop()
             if index == len(parts):
                 if node.content is not None:
                     yield node.content
@@ -66,16 +68,14 @@ class TopicMatcher:
                     content = node.children["#"].content
                     if content is not None:
                         yield content
-                return
+                continue
             part = parts[index]
-            child = node.children.get(part)
-            if child is not None:
-                yield from rec(child, index + 1)
-            if "+" in node.children and (allow_wildcard or index > 0):
-                yield from rec(node.children["+"], index + 1)
             if "#" in node.children and (allow_wildcard or index > 0):
                 content = node.children["#"].content
                 if content is not None:
                     yield content
-
-        return rec(self._root, 0)
+            if "+" in node.children and (allow_wildcard or index > 0):
+                stack.append((node.children["+"], index + 1))
+            child = node.children.get(part)
+            if child is not None:
+                stack.append((child, index + 1))

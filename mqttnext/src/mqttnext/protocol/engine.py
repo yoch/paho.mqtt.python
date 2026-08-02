@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
@@ -111,11 +111,11 @@ class EngineConfig:
     clean_start: bool = True
     keepalive: int = 60
     username: str | None = None
-    password: bytes | None = None
+    password: bytes | None = field(default=None, repr=False)
     local_receive_maximum: int = 65535
     max_queued: int = 0  # 0 = unlimited queued (not yet inflight)
     connect_properties: Properties | None = None
-    will: Message | None = None
+    will: Message | None = field(default=None, repr=False)
     will_properties: Properties | None = None
     # Local maximum packet size announced to broker (and enforced on ingress).
     maximum_packet_size: int | None = None
@@ -175,6 +175,8 @@ class ProtocolEngine:
                 OutboundQoSState.WAIT_PUBCOMP,
             ):
                 self.flow.try_acquire()
+        # MIDs of in-flight SUBSCRIBE/UNSUBSCRIBE (never collide with PUBLISH).
+        self._pending_sub_mids: set[int] = set()
 
     def take_effects(self) -> list[EngineEffect]:
         effects = self._effects
@@ -297,7 +299,11 @@ class ProtocolEngine:
         # Defer wire encode until launch: avoids double work when messages sit
         # in the Receive Maximum queue. Still enforce maximum_packet_size via
         # a cheap upper-bound estimate when the broker advertised a limit.
-        self._check_outbound_publish_budget(topic, payload, qos, properties)
+        try:
+            self._check_outbound_publish_budget(topic, payload, qos, properties)
+        except Exception:
+            self.packet_ids.release(mid)
+            raise
 
         if self.state == ConnectionState.CONNECTED and self.flow.try_acquire():
             self._launch_outbound(msg)
@@ -341,13 +347,18 @@ class ProtocolEngine:
                 subscriptions.append(Subscription(topic=topic, options=options))
 
         mid = self.packet_ids.allocate()
-        packet = SubscribePacket(
-            mid=mid,
-            subscriptions=tuple(subscriptions),
-            properties=properties,
-        )
-        wire = packet.encode(self.config.protocol)
-        self._check_outbound_size(wire)
+        try:
+            packet = SubscribePacket(
+                mid=mid,
+                subscriptions=tuple(subscriptions),
+                properties=properties,
+            )
+            wire = packet.encode(self.config.protocol)
+            self._check_outbound_size(wire)
+        except Exception:
+            self.packet_ids.release(mid)
+            raise
+        self._pending_sub_mids.add(mid)
         self._send(wire)
         return mid
 
@@ -361,8 +372,15 @@ class ProtocolEngine:
         if not topic_list:
             raise ProtocolError("unsubscribe requires at least one topic")
         mid = self.packet_ids.allocate()
-        packet = UnsubscribePacket(mid=mid, topics=topic_list)
-        self._send(packet.encode(self.config.protocol))
+        try:
+            packet = UnsubscribePacket(mid=mid, topics=topic_list)
+            wire = packet.encode(self.config.protocol)
+            self._check_outbound_size(wire)
+        except Exception:
+            self.packet_ids.release(mid)
+            raise
+        self._pending_sub_mids.add(mid)
+        self._send(wire)
         return mid
 
     def queue_ping(self) -> None:
@@ -380,6 +398,11 @@ class ProtocolEngine:
         was = self.state
         self.state = ConnectionState.DISCONNECTED
         self._topic_aliases.clear()
+        self._pending_connect = False
+        # Release sub/unsub MIDs still in flight — no ACK will arrive now.
+        for mid in self._pending_sub_mids:
+            self.packet_ids.release(mid)
+        self._pending_sub_mids.clear()
         if was != ConnectionState.DISCONNECTED:
             self._emit(EffectKind.DISCONNECTED, DisconnectInfo(from_broker=False))
 
@@ -396,6 +419,8 @@ class ProtocolEngine:
 
 
     def _on_connack(self, raw: RawPacket) -> None:
+        if not self._pending_connect or self.state != ConnectionState.CONNECTING:
+            raise ProtocolError("Unexpected CONNACK (already negotiated)")
         connack = ConnAckPacket.decode(raw.remaining, self.config.protocol)
         self._pending_connect = False
         if connack.reason_code != 0:
@@ -651,11 +676,20 @@ class ProtocolEngine:
 
     def _on_suback(self, raw: RawPacket) -> None:
         ack = SubAckPacket.decode(raw.remaining, self.config.protocol)
+        if ack.mid not in self._pending_sub_mids:
+            # Orphan / cross-mid SUBACK: do not release a foreign packet id.
+            self._emit(EffectKind.PROTOCOL_ERROR, f"SUBACK for unknown mid {ack.mid}")
+            return
+        self._pending_sub_mids.discard(ack.mid)
         self.packet_ids.release(ack.mid)
         self._emit(EffectKind.SUBACK, ack)
 
     def _on_unsuback(self, raw: RawPacket) -> None:
         ack = UnsubAckPacket.decode(raw.remaining, self.config.protocol)
+        if ack.mid not in self._pending_sub_mids:
+            self._emit(EffectKind.PROTOCOL_ERROR, f"UNSUBACK for unknown mid {ack.mid}")
+            return
+        self._pending_sub_mids.discard(ack.mid)
         self.packet_ids.release(ack.mid)
         self._emit(EffectKind.UNSUBACK, ack)
 
@@ -761,7 +795,11 @@ class ProtocolEngine:
                 self._send(msg.encoded_pubrel)
                 continue
             if not self.flow.try_acquire():
+                # Deferred retransmission must still carry DUP=1: drop the
+                # stale encoded frame so _launch_outbound re-encodes.
                 msg.state = OutboundQoSState.QUEUED
+                msg.dup = True
+                msg.encoded_publish = None
                 self.store.update_out(msg)
                 self._queued.append(msg)
                 continue
@@ -786,6 +824,8 @@ class ProtocolEngine:
         props = packet.properties
         alias = props.get("topic_alias") if props else None
         if alias is None:
+            if not packet.topic:
+                raise ProtocolError("PUBLISH with empty topic and no topic alias")
             return packet.topic
         alias = int(alias)
         max_alias = self.config.topic_alias_maximum

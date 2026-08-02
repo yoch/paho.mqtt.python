@@ -79,10 +79,14 @@ class PropertySpec:
     multiple: bool = False
     # Extra constraint: value must not be zero.
     nonzero: bool = False
+    # Extra constraint: BYTE value must be 0 or 1.
+    zero_one: bool = False
 
 
 _SPECS: tuple[PropertySpec, ...] = (
-    PropertySpec(0x01, "payload_format_indicator", PropType.BYTE, frozenset({PUBLISH, WILL})),
+    PropertySpec(
+        0x01, "payload_format_indicator", PropType.BYTE, frozenset({PUBLISH, WILL}), zero_one=True
+    ),
     PropertySpec(0x02, "message_expiry_interval", PropType.U32, frozenset({PUBLISH, WILL})),
     PropertySpec(0x03, "content_type", PropType.STRING, frozenset({PUBLISH, WILL})),
     PropertySpec(0x08, "response_topic", PropType.STRING, frozenset({PUBLISH, WILL})),
@@ -115,9 +119,9 @@ _SPECS: tuple[PropertySpec, ...] = (
         PropType.BINARY,
         frozenset({CONNECT, CONNACK, AUTH}),
     ),
-    PropertySpec(0x17, "request_problem_information", PropType.BYTE, frozenset({CONNECT})),
+    PropertySpec(0x17, "request_problem_information", PropType.BYTE, frozenset({CONNECT}), zero_one=True),
     PropertySpec(0x18, "will_delay_interval", PropType.U32, frozenset({WILL})),
-    PropertySpec(0x19, "request_response_information", PropType.BYTE, frozenset({CONNECT})),
+    PropertySpec(0x19, "request_response_information", PropType.BYTE, frozenset({CONNECT}), zero_one=True),
     PropertySpec(0x1A, "response_information", PropType.STRING, frozenset({CONNACK})),
     PropertySpec(0x1C, "server_reference", PropType.STRING, frozenset({CONNACK, DISCONNECT})),
     PropertySpec(
@@ -147,8 +151,8 @@ _SPECS: tuple[PropertySpec, ...] = (
     ),
     PropertySpec(0x22, "topic_alias_maximum", PropType.U16, frozenset({CONNECT, CONNACK})),
     PropertySpec(0x23, "topic_alias", PropType.U16, frozenset({PUBLISH}), nonzero=True),
-    PropertySpec(0x24, "maximum_qos", PropType.BYTE, frozenset({CONNACK})),
-    PropertySpec(0x25, "retain_available", PropType.BYTE, frozenset({CONNACK})),
+    PropertySpec(0x24, "maximum_qos", PropType.BYTE, frozenset({CONNACK}), zero_one=True),
+    PropertySpec(0x25, "retain_available", PropType.BYTE, frozenset({CONNACK}), zero_one=True),
     PropertySpec(0x26, "user_property", PropType.STRING_PAIR, ALL_PACKETS, multiple=True),
     PropertySpec(
         0x27,
@@ -162,18 +166,21 @@ _SPECS: tuple[PropertySpec, ...] = (
         "wildcard_subscription_available",
         PropType.BYTE,
         frozenset({CONNACK}),
+        zero_one=True,
     ),
     PropertySpec(
         0x29,
         "subscription_identifier_available",
         PropType.BYTE,
         frozenset({CONNACK}),
+        zero_one=True,
     ),
     PropertySpec(
         0x2A,
         "shared_subscription_available",
         PropType.BYTE,
         frozenset({CONNACK}),
+        zero_one=True,
     ),
 )
 
@@ -273,8 +280,8 @@ def encode_properties(props: Properties | None, packet: str) -> bytes:
         for item in values:
             if spec.nonzero and item == 0:
                 raise ProtocolError(f"Property {name!r} must not be zero")
-            if name == "maximum_qos" and item not in (0, 1):
-                raise ProtocolError("maximum_qos must be 0 or 1")
+            if spec.zero_one and item not in (0, 1):
+                raise ProtocolError(f"Property {name!r} must be 0 or 1")
             body.append(spec.id)
             body.extend(_encode_value(spec.type, item))
 
@@ -313,8 +320,8 @@ def decode_properties(
         value, pos = _decode_value(spec.type, buf, pos)
         if spec.nonzero and value == 0:
             raise MalformedPacketError(f"Property {spec.name} must not be zero")
-        if spec.name == "maximum_qos" and value not in (0, 1):
-            raise MalformedPacketError("maximum_qos must be 0 or 1")
+        if spec.zero_one and value not in (0, 1):
+            raise MalformedPacketError(f"Property {spec.name} must be 0 or 1")
 
         if spec.multiple:
             if spec.name == "subscription_identifier" and packet == SUBSCRIBE:

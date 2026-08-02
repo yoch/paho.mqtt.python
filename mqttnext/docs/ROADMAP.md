@@ -60,6 +60,7 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 - [x] Sprint perf mesuré piste-par-piste (`docs/PERF-SPRINT.md`) — codec/ingress/writer/RM
 - [x] AUTH MQTT 5 (`AuthPacket` + `auth_handler` / `AsyncClient.auth`)
 - [x] Jalon D : sous-ensemble comportemental `tests/lib` via compat (`test_compat_lib_subset.py`)
+- [x] Audit complet 4 axes + correctifs (`docs/AUDIT-FINAL.md`, `test_audit_full.py`)
 
 ## Jalons de qualité
 

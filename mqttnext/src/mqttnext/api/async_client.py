@@ -236,10 +236,13 @@ class AsyncClient:
     ) -> ConnAckPacket:
         if self.is_connected:
             raise ProtocolError("Already connected")
-        transport = await self._transport_factory(host, port, ssl=ssl)
+        transport = await asyncio.wait_for(
+            self._transport_factory(host, port, ssl=ssl), timeout=timeout
+        )
         self._transport = transport
         self._closed.clear()
         self._disconnect_exc = None
+        self._last_disconnect = None
         self._decoder.clear()
         self._outbound = asyncio.Queue()
         self._outbound_bytes = 0
@@ -282,7 +285,9 @@ class AsyncClient:
         packet = self._engine.begin_disconnect(reason_code)
         await self._enqueue_outbound(packet)
         try:
-            await asyncio.wait_for(self._outbound.join(), timeout=5.0)
+            # Skip the wait if the writer already died (connection lost).
+            if self._writer_task is not None and not self._writer_task.done():
+                await asyncio.wait_for(self._outbound.join(), timeout=5.0)
         except TimeoutError:
             pass
         await self._force_close()
@@ -350,7 +355,8 @@ class AsyncClient:
             )
         except TimeoutError as exc:
             self._sub_futs.pop(mid, None)
-            self._engine.packet_ids.release(mid)
+            # Do NOT release the mid: a late SUBACK must still resolve it
+            # (engine tracks pending sub mids and releases on receipt).
             raise MQTTTimeoutError(f"SUBACK timed out for mid={mid}") from exc
 
     async def unsubscribe(
@@ -370,7 +376,6 @@ class AsyncClient:
             )
         except TimeoutError as exc:
             self._unsub_futs.pop(mid, None)
-            self._engine.packet_ids.release(mid)
             raise MQTTTimeoutError(f"UNSUBACK timed out for mid={mid}") from exc
 
     async def messages(self) -> AsyncIterator[Message]:
@@ -429,6 +434,22 @@ class AsyncClient:
             will_reconnect = self._will_reconnect()
             if not will_reconnect:
                 self._fail_pending(self._disconnect_exc)
+                # Wake any publish() parked on outbound backpressure.
+                async with self._outbound_space:
+                    self._outbound_space.notify_all()
+                # Cancel writer + close transport so no task/fd leaks.
+                if self._writer_task is not None and self._writer_task is not asyncio.current_task():
+                    self._writer_task.cancel()
+                    try:
+                        await self._writer_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    self._writer_task = None
+                if self._transport is not None:
+                    try:
+                        await self._transport.close()
+                    except Exception:
+                        pass
             self._closed.set()
             if not will_reconnect:
                 try:
@@ -442,8 +463,13 @@ class AsyncClient:
                         self._messages.put_nowait(_MESSAGE_SENTINEL)
                     except asyncio.QueueFull:
                         pass
-            await self._invoke(self.on_disconnect, self._disconnect_exc)
-            if will_reconnect and self._reconnect_task is None:
+            try:
+                await self._invoke(self.on_disconnect, self._disconnect_exc)
+            except Exception:
+                pass
+            if will_reconnect and (
+                self._reconnect_task is None or self._reconnect_task.done()
+            ):
                 self._reconnect_task = asyncio.create_task(
                     self._reconnect_loop(), name="mqttnext-reconnect"
                 )
@@ -574,7 +600,11 @@ class AsyncClient:
                 due = self._last_outbound + k
                 if now >= due:
                     self._engine.queue_ping()
-                    await self._flush_effects()
+                    # A lost PINGREQ beats a wedged keepalive under backpressure.
+                    try:
+                        await self._flush_effects(nowait=True)
+                    except FlowControlError:
+                        pass
                     self._ping_pending = True
                     ping_to = self._ping_timeout
                     if ping_to is None:
@@ -617,7 +647,9 @@ class AsyncClient:
                     await asyncio.sleep(self._reconnect.stable_after)
                     if self.is_connected:
                         self._reconnect.reset()
-                    return
+                        return
+                    # Dropped again during the stability window — keep retrying.
+                    continue
                 except Exception as exc:
                     self._disconnect_exc = exc
                     continue
@@ -647,7 +679,10 @@ class AsyncClient:
                 connack: ConnAckPacket = effect.data
                 if self._connack_fut is not None and not self._connack_fut.done():
                     self._connack_fut.set_result(connack)
-                await self._invoke(self.on_connect, connack)
+                if self.on_connect is not None:
+                    # Schedule independently: an on_connect that awaits
+                    # subscribe()/publish() must not block the reader.
+                    asyncio.create_task(self._invoke(self.on_connect, connack))
             elif kind is EffectKind.AUTH:
                 challenge: AuthPacket = effect.data
                 if self.auth_handler is None:
@@ -657,7 +692,9 @@ class AsyncClient:
                         nowait=nowait,
                     )
                     continue
-                response = await self._invoke(self.auth_handler, challenge)
+                response = await asyncio.wait_for(
+                    self._invoke(self.auth_handler, challenge), timeout=10.0
+                )
                 if isinstance(response, AuthPacket):
                     await self._enqueue_outbound(
                         response.encode(self._engine.config.protocol),
@@ -698,6 +735,13 @@ class AsyncClient:
                 info = effect.data
                 if isinstance(info, DisconnectInfo):
                     self._last_disconnect = info
+                    if info.from_broker and self._transport is not None:
+                        # Broker ended the session — close proactively so the
+                        # reader exits and reconnect/cleanup can proceed.
+                        try:
+                            await self._transport.close()
+                        except Exception:
+                            pass
                 continue
             elif kind is EffectKind.PROTOCOL_ERROR:
                 raise ProtocolError(str(effect.data))

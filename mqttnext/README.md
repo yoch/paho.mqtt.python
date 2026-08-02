@@ -38,6 +38,7 @@ Reste principal : spin-out dépôt dédié (+ plugins AUTH concrets / jalon E fu
 - [`docs/MIGRATION.md`](docs/MIGRATION.md) — migration Paho / gmqtt
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phases
 - [`docs/AUDIT-CORRECTNESS.md`](docs/AUDIT-CORRECTNESS.md) — audit correctness + benches
+- [`docs/AUDIT-FINAL.md`](docs/AUDIT-FINAL.md) — audit complet (stabilité/bugs/perf/sécurité)
 - [`docs/PERF-SPRINT.md`](docs/PERF-SPRINT.md) — mesures perf isolées
 
 ## Quick start (dev)

@@ -68,6 +68,14 @@ def _validate_filter_levels(topic_filter: str) -> None:
 
 
 def _check_utf8_mqtt_topic(topic: str) -> None:
+    # Fast path: pure ASCII cannot contain surrogates or U+FEFF, and
+    # len(utf-8) == len(str).
+    if topic.isascii():
+        if "\x00" in topic:
+            raise ProtocolError("Topic must not contain null character")
+        if len(topic) > 65535:
+            raise ProtocolError("Topic exceeds 65535 UTF-8 bytes")
+        return
     encoded = topic.encode("utf-8")
     if len(encoded) > 65535:
         raise ProtocolError("Topic exceeds 65535 UTF-8 bytes")
