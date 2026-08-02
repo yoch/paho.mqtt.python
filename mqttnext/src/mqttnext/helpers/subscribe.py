@@ -38,6 +38,7 @@ async def simple(
         keepalive=keepalive,
         username=username,
         password=password,
+        message_delivery="callback",
     )
     collected: list[Message] = []
     done = asyncio.Event()
@@ -84,6 +85,7 @@ async def callback(
         keepalive=keepalive,
         username=username,
         password=password,
+        message_delivery="callback",
     )
     client.on_message = on_message
     await client.connect(hostname, port, ssl=ssl)

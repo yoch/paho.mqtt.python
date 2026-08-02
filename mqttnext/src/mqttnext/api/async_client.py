@@ -16,7 +16,7 @@ import ssl
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from typing import Any, Never
+from typing import Any, Literal, Never
 
 from mqttnext.api.models import PublishReceipt, SubscribeResult, UnsubscribeResult
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder
@@ -51,6 +51,7 @@ OnMessage = Callable[[Message], Any]
 OnConnect = Callable[[ConnAckPacket], Any]
 OnDisconnect = Callable[[BaseException | None], Any]
 OnAuth = Callable[[AuthPacket], Any]
+MessageDelivery = Literal["auto", "iterator", "callback", "both"]
 
 _MESSAGE_SENTINEL = object()
 
@@ -77,10 +78,19 @@ class AsyncClient:
         max_outbound_bytes: int = 1 * 1024 * 1024,
         max_outbound_messages: int = 10_000,
         max_pending_messages: int = 65_536,
+        message_delivery: MessageDelivery = "auto",
         manual_ack: bool = False,
         store: InflightStore | None = None,
         auth_handler: OnAuth | None = None,
     ) -> None:
+        if message_delivery not in ("auto", "iterator", "callback", "both"):
+            raise ValueError(
+                "message_delivery must be 'auto', 'iterator', 'callback', or 'both'"
+            )
+        if max_pending_messages <= 0:
+            raise ValueError("max_pending_messages must be greater than 0")
+        self._message_delivery = message_delivery
+        self._max_pending_messages = max_pending_messages
         pwd = password.encode("utf-8") if isinstance(password, str) else password
         self._engine = ProtocolEngine(
             EngineConfig(
@@ -124,7 +134,7 @@ class AsyncClient:
         self._sub_futs: dict[int, asyncio.Future[SubscribeResult]] = {}
         self._unsub_futs: dict[int, asyncio.Future[UnsubscribeResult]] = {}
         self._messages: asyncio.Queue[Message | object] = asyncio.Queue(
-            maxsize=max_pending_messages
+            maxsize=self._max_pending_messages
         )
         self._closed = asyncio.Event()
         self._disconnect_exc: BaseException | None = None
@@ -175,6 +185,7 @@ class AsyncClient:
         timeout: float | None = None,
     ) -> ConnAckPacket:
         async with self._lifecycle_lock:
+            self._reset_message_stream()
             self._host = host
             self._port = port
             self._ssl = ssl
@@ -197,6 +208,7 @@ class AsyncClient:
     ) -> ConnAckPacket:
         """Connect over a Unix domain socket (AF_UNIX)."""
         async with self._lifecycle_lock:
+            self._reset_message_stream()
             self._unix_path = path
             self._ws_url = None
             self._ws_headers = None
@@ -228,6 +240,7 @@ class AsyncClient:
     ) -> ConnAckPacket:
         """Connect over MQTT-over-WebSocket (``ws://`` / ``wss://``)."""
         async with self._lifecycle_lock:
+            self._reset_message_stream()
             self._ws_url = url
             self._ws_headers = extra_headers
             self._unix_path = None
@@ -810,8 +823,18 @@ class AsyncClient:
                 )
         elif kind is EffectKind.MESSAGE:
             msg: Message = effect.data
-            await self._messages.put(msg)
-            if self.on_message is not None:
+            callback_delivery = self.on_message is not None and self._message_delivery in (
+                "auto",
+                "callback",
+                "both",
+            )
+            iterator_delivery = self._message_delivery in ("iterator", "both") or (
+                self._message_delivery == "auto" and self.on_message is None
+            )
+            if iterator_delivery:
+                await self._messages.put(msg)
+            if callback_delivery:
+                assert self.on_message is not None
                 self._spawn_callback(self.on_message, msg)
         elif kind is EffectKind.PUBLISH_COMPLETE:
             mid: int = effect.data
@@ -851,6 +874,11 @@ class AsyncClient:
         else:
             never: Never = kind
             raise MQTTError(f"Unhandled effect {never!r}")
+
+    def _reset_message_stream(self) -> None:
+        if self._closed.is_set():
+            self._messages = asyncio.Queue(maxsize=self._max_pending_messages)
+            self._closed.clear()
 
     def _spawn_callback(self, callback: Callable[..., Any], *args: Any) -> None:
         task = asyncio.create_task(self._invoke(callback, *args))
