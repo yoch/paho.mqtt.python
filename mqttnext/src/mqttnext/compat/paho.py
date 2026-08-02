@@ -205,6 +205,43 @@ class Client:
             return fut
         return fut.result(timeout)
 
+    def _queue_loop_command(self, command: Callable[[], Any]) -> Any:
+        """Run an engine command on the dedicated loop and flush its effects.
+
+        Callback code already executes on that loop, so it may run the short
+        synchronous engine command directly. Calls from other threads use a
+        bounded handoff and never mutate AsyncClient state off-loop.
+        """
+        if self._loop is None:
+            self.loop_start()
+        assert self._loop is not None
+
+        if self._in_callback:
+            result = command()
+            asyncio.create_task(self._async._flush_effects())
+            return result
+
+        handoff: dict[str, Any] = {}
+        done = threading.Event()
+
+        async def _run() -> None:
+            try:
+                handoff["result"] = command()
+                await self._async._flush_effects()
+            except BaseException as exc:  # propagate the real loop-side failure
+                handoff["error"] = exc
+            finally:
+                done.set()
+
+        fut = asyncio.run_coroutine_threadsafe(_run(), self._loop)
+        if not done.wait(timeout=5.0):
+            fut.cancel()
+            raise RuntimeError("command handoff to event loop timed out")
+        error = handoff.get("error")
+        if error is not None:
+            raise error
+        return handoff["result"]
+
     def connect(self, host: str, port: int = 1883, keepalive: int = 60) -> int:
         self._async._engine.config.keepalive = keepalive
         self._submit(self._async.connect(host, port))
@@ -245,25 +282,6 @@ class Client:
         if self._in_callback:
             # Already on the loop thread: queue directly, no handoff needed.
             handle = self._async._engine.queue_publish(topic, data, qos=qos, retain=retain)
-            receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=None)
-            if handle.mid is not None:
-                self._async._receipts[handle.mid] = receipt
-
-            async def _flush() -> None:
-                await self._async._flush_effects()
-
-            self._submit(_flush(), wait=False)
-            info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
-            if self.on_publish is not None and receipt.qos != QoS.AT_MOST_ONCE:
-                asyncio.run_coroutine_threadsafe(self._watch_publish(receipt), self._loop)
-            return info
-
-        # Off-loop thread: bounded handoff to allocate mid + receipt on the loop.
-        handoff: dict[str, Any] = {}
-        done = threading.Event()
-
-        async def _queue() -> None:
-            handle = self._async._engine.queue_publish(topic, data, qos=qos, retain=retain)
             receipt = PublishReceipt(
                 mid=handle.mid,
                 qos=handle.qos,
@@ -271,15 +289,45 @@ class Client:
             )
             if handle.mid is not None:
                 self._async._receipts[handle.mid] = receipt
-            handoff["receipt"] = receipt
-            await self._async._flush_effects()
-            done.set()
 
-        asyncio.run_coroutine_threadsafe(_queue(), self._loop)
-        # Bounded: the handoff completes as soon as the loop schedules _queue,
-        # independent of network. Generous timeout guards a wedged loop.
+            asyncio.create_task(self._async._flush_effects())
+            info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
+            if self.on_publish is not None and receipt.qos != QoS.AT_MOST_ONCE:
+                asyncio.create_task(self._watch_publish(receipt))
+            return info
+
+        # Off-loop thread: bounded handoff to allocate mid + receipt on the loop.
+        handoff: dict[str, Any] = {}
+        done = threading.Event()
+
+        async def _queue() -> None:
+            try:
+                handle = self._async._engine.queue_publish(
+                    topic, data, qos=qos, retain=retain
+                )
+                receipt = PublishReceipt(
+                    mid=handle.mid,
+                    qos=handle.qos,
+                    _event=None if handle.qos == QoS.AT_MOST_ONCE else asyncio.Event(),
+                )
+                if handle.mid is not None:
+                    self._async._receipts[handle.mid] = receipt
+                handoff["receipt"] = receipt
+                await self._async._flush_effects()
+            except BaseException as exc:
+                handoff["error"] = exc
+            finally:
+                done.set()
+
+        fut = asyncio.run_coroutine_threadsafe(_queue(), self._loop)
+        # Bounded: the handoff completes as soon as the loop queues the publish,
+        # independent of broker acknowledgements.
         if not done.wait(timeout=5.0):
+            fut.cancel()
             raise RuntimeError("publish handoff to event loop timed out")
+        error = handoff.get("error")
+        if error is not None:
+            raise error
         receipt = handoff["receipt"]
         info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
         if self.on_publish is not None and receipt.qos == QoS.AT_MOST_ONCE:
@@ -303,25 +351,16 @@ class Client:
             )
 
     def subscribe(self, topic: str, qos: int = 0) -> tuple[int, int]:
-        """Paho-style: return ``(0, mid)`` immediately; SUBACK is not awaited.
-
-        Safe to call from ``on_connect`` (fire-and-forget on the loop thread).
-        """
-        mid = self._async._engine.queue_subscribe(topic, qos=qos)
-
-        async def _flush() -> None:
-            await self._async._flush_effects()
-
-        self._submit(_flush(), wait=False)
+        """Paho-style: return ``(0, mid)`` without awaiting SUBACK."""
+        mid = self._queue_loop_command(
+            lambda: self._async._engine.queue_subscribe(topic, qos=qos)
+        )
         return (0, mid)
 
     def unsubscribe(self, topic: str) -> tuple[int, int]:
-        mid = self._async._engine.queue_unsubscribe(topic)
-
-        async def _flush() -> None:
-            await self._async._flush_effects()
-
-        self._submit(_flush(), wait=False)
+        mid = self._queue_loop_command(
+            lambda: self._async._engine.queue_unsubscribe(topic)
+        )
         return (0, mid)
 
     def _safe_callback(self, cb: Callable[..., Any], *args: Any) -> None:
