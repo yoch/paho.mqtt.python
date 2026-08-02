@@ -38,6 +38,40 @@ def test_sqlite_outbound_roundtrip(tmp_path: Path) -> None:
     store2.close()
 
 
+def test_sqlite_properties_binary_and_user_property(tmp_path: Path) -> None:
+    from mqttnext.types import Properties
+
+    path = tmp_path / "props.db"
+    store = SqliteInflightStore(path)
+    props = Properties()
+    props.set("correlation_data", b"\x00\xffbinary")
+    props.set("content_type", "application/octet-stream")
+    props.add_user_property("k", "v")
+    props.add_user_property("k2", "v2")
+    props.values["subscription_identifier"] = [11, 22]
+    msg = OutboundMessage(
+        mid=9,
+        topic="p",
+        payload=b"x",
+        qos=QoS.EXACTLY_ONCE,
+        retain=False,
+        state=OutboundQoSState.WAIT_PUBREC,
+        properties=props,
+    )
+    store.put_out(msg)
+    store.close()
+
+    store2 = SqliteInflightStore(path)
+    got = store2.get_out(9)
+    assert got is not None
+    assert got.properties is not None
+    assert got.properties.get("correlation_data") == b"\x00\xffbinary"
+    assert got.properties.get("content_type") == "application/octet-stream"
+    assert got.properties.get("user_property") == [("k", "v"), ("k2", "v2")]
+    assert got.properties.get("subscription_identifier") == [11, 22]
+    store2.close()
+
+
 def test_sqlite_inbound_manual_ack_flag(tmp_path: Path) -> None:
     path = tmp_path / "in.db"
     store = SqliteInflightStore(path)

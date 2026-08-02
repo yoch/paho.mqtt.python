@@ -19,14 +19,15 @@ des bugs protocolaires gmqtt.
 
 ## État
 
-**Hardening production + compat Paho** (voir `docs/ROADMAP.md`) :
+**Feature-complete pour v0** (voir `docs/ROADMAP.md`) :
 
 - Engine / AsyncClient durcis (flags, MID, DISCONNECT, Clean Start resume, inbound RM, offline limits, receipts/reconnect)
-- Façade `compat.paho` VERSION2 + politique documentée dans `docs/COMPAT.md`
-- Helpers, SQLite best-effort, CI Mosquitto, licence Apache-2.0
-- **87+ tests** ; benches `benchmarks/results/compare_libs.md`
+- `connect_ws` / Unix / TCP+TLS, AUTH MQTT 5 (`auth_handler`), SQLite props binaires
+- Façade `compat.paho` VERSION2 + jalon D (`test_compat_lib_subset.py`)
+- Helpers, CI Mosquitto, licence Apache-2.0, sprint perf documenté
+- **104 tests** ; benches `benchmarks/results/compare_libs.md`
 
-Reste principal : spin-out dépôt dédié.
+Reste principal : spin-out dépôt dédié (+ plugins AUTH concrets / jalon E fuzz long).
 
 ## Documentation
 
@@ -37,6 +38,7 @@ Reste principal : spin-out dépôt dédié.
 - [`docs/MIGRATION.md`](docs/MIGRATION.md) — migration Paho / gmqtt
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phases
 - [`docs/AUDIT-CORRECTNESS.md`](docs/AUDIT-CORRECTNESS.md) — audit correctness + benches
+- [`docs/PERF-SPRINT.md`](docs/PERF-SPRINT.md) — mesures perf isolées
 
 ## Quick start (dev)
 

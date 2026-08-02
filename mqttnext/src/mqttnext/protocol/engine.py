@@ -23,6 +23,7 @@ from mqttnext.enums import (
     QoS,
 )
 from mqttnext.packets import (
+    AuthPacket,
     ConnAckPacket,
     ConnectPacket,
     DisconnectPacket,
@@ -73,6 +74,7 @@ class EffectKind(Enum):
     DISCONNECTED = auto()
     PROTOCOL_ERROR = auto()
     PINGRESP = auto()
+    AUTH = auto()
 
 
 @dataclass(slots=True)
@@ -119,6 +121,9 @@ class EngineConfig:
     maximum_packet_size: int | None = None
     topic_alias_maximum: int = 0  # announced to broker for inbound aliases
     manual_ack: bool = False  # defer PUBACK (QoS1) / PUBCOMP (QoS2) until ack()
+    # When False, inbound AUTH is rejected with DISCONNECT 0x8C (legacy stub).
+    # AsyncClient sets this True when an auth_handler is registered.
+    accept_auth: bool = False
 
 
 class ProtocolEngine:
@@ -674,15 +679,42 @@ class ProtocolEngine:
         )
 
     def _on_auth(self, raw: RawPacket) -> None:
-        # Phase 1 stub: reject unsolicited AUTH.
-        self._send(
-            encode_disconnect(
-                0x8C,
-                self.config.protocol,
+        if self.config.protocol != MQTTProtocolVersion.MQTTv5:
+            self._send(encode_disconnect(0x82, self.config.protocol))
+            self.state = ConnectionState.DISCONNECTED
+            self._emit(
+                EffectKind.DISCONNECTED,
+                DisconnectInfo(reason_code=0x82, from_broker=False),
             )
-        )
-        self.state = ConnectionState.DISCONNECTED
-        self._emit(EffectKind.DISCONNECTED, DisconnectInfo(reason_code=0x8C, from_broker=False))
+            return
+        packet = AuthPacket.decode(raw.remaining, self.config.protocol)
+        if not self.config.accept_auth:
+            # No enhanced-auth handler configured — reject broker-initiated AUTH.
+            self._send(
+                encode_disconnect(
+                    0x8C,
+                    self.config.protocol,
+                )
+            )
+            self.state = ConnectionState.DISCONNECTED
+            self._emit(
+                EffectKind.DISCONNECTED,
+                DisconnectInfo(reason_code=0x8C, from_broker=False),
+            )
+            return
+        self._emit(EffectKind.AUTH, packet)
+
+    def queue_auth(
+        self,
+        reason_code: int = 0x19,
+        properties: Properties | None = None,
+    ) -> None:
+        """Queue a client AUTH (continue / re-authenticate). MQTT 5 only."""
+        if self.config.protocol != MQTTProtocolVersion.MQTTv5:
+            raise ProtocolError("AUTH requires MQTT 5")
+        if self.state not in (ConnectionState.CONNECTING, ConnectionState.CONNECTED):
+            raise NotConnectedError("AUTH requires an active or pending connection")
+        self._send(AuthPacket(reason_code=reason_code, properties=properties).encode())
 
     def _launch_outbound(self, msg: OutboundMessage) -> None:
         if msg.encoded_publish is None:

@@ -232,8 +232,7 @@ régression avant merge.
 ## Hors scope v0
 
 - Bridge mode Paho.
-- Enhanced AUTH MQTT 5 complet (stub possible).
-- Persistance disque (interface seulement).
+- Plugins AUTH concrets (SCRAM, OAuth) — l’API `auth_handler` est fournie.
 - Proxy SOCKS (import différé plus tard).
 - Alias automatiques.
 - Free-threading production guarantees (mais éviter les globaux mutables).

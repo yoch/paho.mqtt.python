@@ -6,7 +6,7 @@ import base64
 import json
 import sqlite3
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from mqttnext.enums import InboundQoSState, OutboundQoSState, QoS
 from mqttnext.types import InboundMessage, OutboundMessage, Properties
@@ -20,16 +20,52 @@ def _decode_payload(data: str) -> bytes:
     return base64.b64decode(data.encode("ascii"))
 
 
+def _json_sanitize(value: Any) -> Any:
+    """Convert property values to JSON-safe forms (bytes / tuples)."""
+    if isinstance(value, bytes):
+        return {"__mqttnext_bytes__": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, tuple):
+        return {"__mqttnext_tuple__": [_json_sanitize(v) for v in value]}
+    if isinstance(value, list):
+        return [_json_sanitize(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_sanitize(v) for k, v in value.items()}
+    return value
+
+
+def _json_revive(value: Any) -> Any:
+    if isinstance(value, dict):
+        if "__mqttnext_bytes__" in value and len(value) == 1:
+            return base64.b64decode(value["__mqttnext_bytes__"].encode("ascii"))
+        if "__mqttnext_tuple__" in value and len(value) == 1:
+            return tuple(_json_revive(v) for v in value["__mqttnext_tuple__"])
+        return {k: _json_revive(v) for k, v in value.items()}
+    if isinstance(value, list):
+        # user_property pairs often round-trip as [[k,v], ...] — restore tuples.
+        revived = [_json_revive(v) for v in value]
+        if (
+            revived
+            and all(isinstance(item, list) and len(item) == 2 for item in revived)
+            and all(isinstance(item[0], str) for item in revived)
+        ):
+            return [tuple(item) for item in revived]
+        return revived
+    return value
+
+
 def _props_to_json(props: Properties | None) -> str | None:
     if props is None or not props.values:
         return None
-    return json.dumps(props.values)
+    return json.dumps(_json_sanitize(props.values), separators=(",", ":"))
 
 
 def _props_from_json(raw: str | None) -> Properties | None:
     if not raw:
         return None
-    return Properties(values=json.loads(raw))
+    values = _json_revive(json.loads(raw))
+    if not isinstance(values, dict):
+        raise ValueError("Invalid properties JSON payload")
+    return Properties(values=values)
 
 
 def _row_to_out(row: sqlite3.Row) -> OutboundMessage:
@@ -63,6 +99,8 @@ class SqliteInflightStore:
     """Persist inflight / queued messages across process restarts.
 
     Encoded wire bytes are not stored; they are rebuilt on session replay.
+    MQTT 5 property bags (including binary correlation_data and user_property
+    pairs) round-trip via a tagged JSON encoding.
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -71,6 +109,7 @@ class SqliteInflightStore:
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS outbound (

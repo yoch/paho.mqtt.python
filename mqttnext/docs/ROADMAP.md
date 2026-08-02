@@ -37,7 +37,7 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
 - [x] Backpressure octets + messages (file writer bornée)
 - [x] Segmented large payloads (≥ 1 MiB, header/payload séparés)
-- [x] WebSocket transport (client MQTT-over-WS) — *transport bas niveau ; pas encore branché sur AsyncClient*
+- [x] WebSocket transport (client MQTT-over-WS) — branché sur `AsyncClient.connect_ws` + ping/pong
 - [x] Topic alias explicite (déjà phase 1 + validation)
 - [x] Fuzzing codec (malformed / noise)
 - [x] Intégration Mosquitto live (v3.1.1 + v5, QoS 0/1/2)
@@ -50,7 +50,7 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
 - [x] `compat.paho.Client` (VERSION2) — loop_start/connect/publish/subscribe + userdata / topic callbacks / will / auth
 - [x] Helpers publish/subscribe (`mqttnext.helpers`)
-- [x] Persistence SQLite optionnelle (`SqliteInflightStore`) — *best effort*
+- [x] Persistence SQLite optionnelle (`SqliteInflightStore`) — props binaires / user_property
 - [x] Docs utilisateur + migration (`docs/MIGRATION.md`) + licence Apache-2.0
 - [x] Packaging + workflow CI dédié (`.github/workflows/mqttnext.yml` + Mosquitto IT)
 - [x] Politique compat Paho documentée (`docs/COMPAT.md`) + façade VERSION2 durcie
@@ -58,6 +58,8 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 - [ ] Nouveau dépôt open-source (extraction) — en attente spin-out
 - [x] Audit de correctness post-phase 3 (`docs/AUDIT-CORRECTNESS.md`)
 - [x] Sprint perf mesuré piste-par-piste (`docs/PERF-SPRINT.md`) — codec/ingress/writer/RM
+- [x] AUTH MQTT 5 (`AuthPacket` + `auth_handler` / `AsyncClient.auth`)
+- [x] Jalon D : sous-ensemble comportemental `tests/lib` via compat (`test_compat_lib_subset.py`)
 
 ## Jalons de qualité
 
@@ -66,5 +68,5 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 | A | Tests QoS 2 phase matrix verts hors réseau |
 | B | Ping Mosquitto local : pub/sub QoS 0/1/2 |
 | C | Microbench ingress ≥ baseline gmqtt sur même machine |
-| D | Façade Paho fait passer un sous-ensemble `tests/lib` Paho |
+| D | Façade Paho : sous-ensemble comportemental `tests/lib` (`test_compat_lib_subset.py`) |
 | E | Audit externe / fuzz 24h sans crash |

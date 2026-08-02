@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from mqttnext.codec.primitives import pack_utf8, pack_u16, unpack_utf8, unpack_u16
 from mqttnext.codec.properties import (
+    AUTH,
     CONNACK,
     CONNECT,
     DISCONNECT,
@@ -490,6 +491,40 @@ class DisconnectPacket:
         properties: Properties | None = None
         if len(remaining) > 1:
             properties, _ = decode_properties(remaining, 1, DISCONNECT)
+        return cls(reason_code=reason, properties=properties)
+
+
+@dataclass(slots=True, frozen=True)
+class AuthPacket:
+    """MQTT 5 AUTH (enhanced authentication exchange)."""
+
+    reason_code: int = 0
+    properties: Properties | None = None
+
+    def encode(self, protocol: MQTTProtocolVersion = MQTTProtocolVersion.MQTTv5) -> bytes:
+        if protocol != MQTTProtocolVersion.MQTTv5:
+            raise ProtocolError("AUTH requires MQTT 5")
+        body = bytearray()
+        body.append(self.reason_code & 0xFF)
+        body.extend(encode_properties(self.properties, AUTH))
+        return encode_frame(PacketType.AUTH, 0, body)
+
+    @classmethod
+    def decode(
+        cls,
+        remaining: bytes,
+        protocol: MQTTProtocolVersion = MQTTProtocolVersion.MQTTv5,
+    ) -> AuthPacket:
+        if protocol != MQTTProtocolVersion.MQTTv5:
+            raise ProtocolError("AUTH requires MQTT 5")
+        if not remaining:
+            return cls(reason_code=0, properties=Properties())
+        reason = remaining[0]
+        properties: Properties | None = None
+        if len(remaining) > 1:
+            properties, _ = decode_properties(remaining, 1, AUTH)
+        else:
+            properties = Properties()
         return cls(reason_code=reason, properties=properties)
 
 

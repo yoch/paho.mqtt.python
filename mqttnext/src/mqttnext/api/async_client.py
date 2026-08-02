@@ -20,8 +20,8 @@ from typing import Any, Never
 from mqttnext.api.models import PublishReceipt, SubscribeResult, UnsubscribeResult
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder
 from mqttnext.enums import ConnectionState, MQTTProtocolVersion, QoS
-from mqttnext.errors import MQTTError, MQTTTimeoutError, ProtocolError
-from mqttnext.packets import ConnAckPacket, SubscribeOptions
+from mqttnext.errors import FlowControlError, MQTTError, MQTTTimeoutError, ProtocolError
+from mqttnext.packets import AuthPacket, ConnAckPacket, SubscribeOptions, encode_disconnect
 from mqttnext.protocol.engine import (
     DisconnectInfo,
     EffectKind,
@@ -34,12 +34,14 @@ from mqttnext.protocol.reconnect import ReconnectPolicy
 from mqttnext.persistence.memory import InflightStore
 from mqttnext.transport.tcp import AsyncTransport, TcpTransport
 from mqttnext.transport.unix import UnixSocketTransport
+from mqttnext.transport.websocket import WebSocketTransport
 from mqttnext.transport.writes import WriteItem, item_size
 from mqttnext.types import Message, Properties
 
 OnMessage = Callable[[Message], Any]
 OnConnect = Callable[[ConnAckPacket], Any]
 OnDisconnect = Callable[[BaseException | None], Any]
+OnAuth = Callable[[AuthPacket], Any]
 
 _MESSAGE_SENTINEL = object()
 
@@ -68,6 +70,7 @@ class AsyncClient:
         max_pending_messages: int = 65_536,
         manual_ack: bool = False,
         store: InflightStore | None = None,
+        auth_handler: OnAuth | None = None,
     ) -> None:
         pwd = password.encode("utf-8") if isinstance(password, str) else password
         self._engine = ProtocolEngine(
@@ -85,6 +88,7 @@ class AsyncClient:
                 maximum_packet_size=maximum_packet_size,
                 topic_alias_maximum=topic_alias_maximum,
                 manual_ack=manual_ack,
+                accept_auth=auth_handler is not None,
             ),
             store=store,
         )
@@ -118,6 +122,8 @@ class AsyncClient:
         self._port = 1883
         self._ssl: ssl.SSLContext | bool | None = None
         self._unix_path: str | None = None
+        self._ws_url: str | None = None
+        self._ws_headers: dict[str, str] | None = None
         self._reconnect = reconnect if reconnect is not None else ReconnectPolicy(enabled=False)
         self._ping_timeout = ping_timeout
         self._ack_timeout = ack_timeout
@@ -128,6 +134,7 @@ class AsyncClient:
         self.on_message: OnMessage | None = None
         self.on_connect: OnConnect | None = None
         self.on_disconnect: OnDisconnect | None = None
+        self.auth_handler: OnAuth | None = auth_handler
 
     @property
     def state(self) -> ConnectionState:
@@ -156,9 +163,11 @@ class AsyncClient:
         self._host = host
         self._port = port
         self._ssl = ssl
-        was_unix = self._unix_path is not None
+        was_alt = self._unix_path is not None or self._ws_url is not None
         self._unix_path = None
-        if was_unix:
+        self._ws_url = None
+        self._ws_headers = None
+        if was_alt:
             self._transport_factory = TcpTransport.connect
         self._intentional_disconnect = False
         timeout = timeout if timeout is not None else self._reconnect.connect_timeout
@@ -173,6 +182,8 @@ class AsyncClient:
     ) -> ConnAckPacket:
         """Connect over a Unix domain socket (AF_UNIX)."""
         self._unix_path = path
+        self._ws_url = None
+        self._ws_headers = None
         self._host = path
         self._port = 0
         self._ssl = None
@@ -185,6 +196,35 @@ class AsyncClient:
         timeout = timeout if timeout is not None else self._reconnect.connect_timeout
         self._reconnect.reset()
         return await self._connect_once(path, 0, ssl=None, timeout=timeout)
+
+    async def connect_ws(
+        self,
+        url: str,
+        *,
+        ssl: ssl.SSLContext | bool | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> ConnAckPacket:
+        """Connect over MQTT-over-WebSocket (``ws://`` / ``wss://``)."""
+        self._ws_url = url
+        self._ws_headers = extra_headers
+        self._unix_path = None
+        self._host = url
+        self._port = 0
+        self._ssl = ssl
+        self._intentional_disconnect = False
+
+        async def _factory(host: str, port: int, *, ssl: object | None = None) -> AsyncTransport:
+            return await WebSocketTransport.connect(
+                self._ws_url or host,
+                ssl=ssl if ssl is not None else self._ssl,
+                extra_headers=self._ws_headers,
+            )
+
+        self._transport_factory = _factory
+        timeout = timeout if timeout is not None else self._reconnect.connect_timeout
+        self._reconnect.reset()
+        return await self._connect_once(url, 0, ssl=ssl, timeout=timeout)
 
     async def _connect_once(
         self,
@@ -255,6 +295,7 @@ class AsyncClient:
         qos: int | QoS = 0,
         retain: bool = False,
         properties: Properties | None = None,
+        nowait: bool = False,
     ) -> PublishReceipt:
         data = payload.encode("utf-8") if isinstance(payload, str) else payload
         handle = self._engine.queue_publish(
@@ -272,8 +313,23 @@ class AsyncClient:
             event = asyncio.Event()
             receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=event)
             self._receipts[handle.mid] = receipt
-        await self._flush_effects()
+        await self._flush_effects(nowait=nowait)
         return receipt
+
+    async def auth(
+        self,
+        reason_code: int = 0x19,
+        properties: Properties | None = None,
+    ) -> None:
+        """Send a client AUTH packet (MQTT 5 continue / re-authenticate)."""
+        self._engine.config.accept_auth = True
+        self._engine.queue_auth(reason_code=reason_code, properties=properties)
+        await self._flush_effects()
+
+    def set_auth_handler(self, handler: OnAuth | None) -> None:
+        """Register or clear the enhanced-authentication handler."""
+        self.auth_handler = handler
+        self._engine.config.accept_auth = handler is not None
 
     async def subscribe(
         self,
@@ -461,7 +517,7 @@ class AsyncClient:
             if self._transport is not None:
                 await self._transport.close()
 
-    async def _enqueue_outbound(self, item: WriteItem) -> None:
+    async def _enqueue_outbound(self, item: WriteItem, *, nowait: bool = False) -> None:
         size = item_size(item)
         # Fast path (no Condition): safe under asyncio's cooperative scheduling
         # as long as we do not await between the capacity check and the update.
@@ -474,6 +530,8 @@ class AsyncClient:
             self._outbound.put_nowait(item)
             self._outbound_bytes += size
             return
+        if nowait:
+            raise FlowControlError("Outbound backpressure limit reached")
 
         async with self._outbound_space:
             while True:
@@ -574,13 +632,13 @@ class AsyncClient:
             return negotiated
         return self._engine.config.keepalive
 
-    async def _flush_effects(self) -> None:
+    async def _flush_effects(self, *, nowait: bool = False) -> None:
         effects = self._engine.take_effects()
         # Protocol bytes first (PUBACK/PUBREC/…), then app delivery. Keeps the
         # wire moving even if the message queue or user callback blocks.
         for effect in effects:
             if effect.kind is EffectKind.SEND:
-                await self._enqueue_outbound(effect.data)
+                await self._enqueue_outbound(effect.data, nowait=nowait)
         for effect in effects:
             kind = effect.kind
             if kind is EffectKind.SEND:
@@ -590,6 +648,21 @@ class AsyncClient:
                 if self._connack_fut is not None and not self._connack_fut.done():
                     self._connack_fut.set_result(connack)
                 await self._invoke(self.on_connect, connack)
+            elif kind is EffectKind.AUTH:
+                challenge: AuthPacket = effect.data
+                if self.auth_handler is None:
+                    # Should not happen when accept_auth is False (engine rejects).
+                    await self._enqueue_outbound(
+                        encode_disconnect(0x8C, self._engine.config.protocol),
+                        nowait=nowait,
+                    )
+                    continue
+                response = await self._invoke(self.auth_handler, challenge)
+                if isinstance(response, AuthPacket):
+                    await self._enqueue_outbound(
+                        response.encode(self._engine.config.protocol),
+                        nowait=nowait,
+                    )
             elif kind is EffectKind.MESSAGE:
                 msg: Message = effect.data
                 await self._messages.put(msg)
@@ -647,12 +720,13 @@ class AsyncClient:
                 fut.set_exception(exc)
         self._unsub_futs.clear()
 
-    async def _invoke(self, callback: Callable[..., Any] | None, *args: Any) -> None:
+    async def _invoke(self, callback: Callable[..., Any] | None, *args: Any) -> Any:
         if callback is None:
-            return
+            return None
         result = callback(*args)
         if isinstance(result, Awaitable):
-            await result
+            return await result
+        return result
 
     async def _force_close(self, *, preserve_reconnect: bool = False) -> None:
         current = asyncio.current_task()

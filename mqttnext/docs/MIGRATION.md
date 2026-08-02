@@ -43,6 +43,8 @@ await receipt.wait()
 - `connect_async` historique n’existe pas ; utiliser `await connect()` ou la
   façade sync.
 - Persistence : passer `store=SqliteInflightStore(path)` à `AsyncClient`.
+- WebSocket : `await client.connect_ws("ws://host:9001/mqtt")` (pas via la façade sync).
+- AUTH MQTT 5 : `AsyncClient(..., auth_handler=...)` ou `await client.auth(...)`.
 
 ## Depuis gmqtt
 

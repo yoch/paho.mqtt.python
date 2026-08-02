@@ -239,9 +239,8 @@ Ne jamais masquer les builtins (`TimeoutError` a été renommé).
   En v3.1.1, seuls `qos` est encodé ; options v5 → `ProtocolError`.
 - Will : paramètres du constructeur (`will=Message(...)` + will properties
   v5, table §2). Payload format/expiry validés comme un PUBLISH.
-- AUTH (0xF0) : phase 1 = stub qui répond DISCONNECT 0x8C si le broker
-  initie un échange AUTH non configuré ; l'API `auth_handler` complète est
-  phase 3.
+- AUTH (0xF0) : `AuthPacket` + `AsyncClient.auth_handler` / `auth()` ; sans
+  handler le moteur refuse avec DISCONNECT 0x8C (comportement stub historique).
 - `messages()` doit remplacer le polling 0.5 s par un sentinel de fermeture
   poussé dans la file (dette phase 0 assumée).
 

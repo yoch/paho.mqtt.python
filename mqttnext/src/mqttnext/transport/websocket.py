@@ -14,13 +14,15 @@ from urllib.parse import urlparse
 class WebSocketTransport:
     """Minimal MQTT-over-WebSocket client transport (RFC 6455 binary frames)."""
 
-    __slots__ = ("_reader", "_writer", "_recv_buf", "_closing")
+    __slots__ = ("_reader", "_writer", "_recv_buf", "_closing", "_pending_control")
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._reader = reader
         self._writer = writer
         self._recv_buf = bytearray()
         self._closing = False
+        # Control payloads to write (pong) before the next application write.
+        self._pending_control: list[bytes] = []
 
     @classmethod
     async def connect(
@@ -80,8 +82,19 @@ class WebSocketTransport:
         return transport
 
     async def write(self, data: bytes) -> None:
+        await self._flush_control()
         frame = _mask_client_frame(0x2, data)  # binary
         self._writer.write(frame)
+        if self._writer.transport.get_write_buffer_size() > 64 * 1024:
+            await self._writer.drain()
+
+    async def write_many(self, parts: list[bytes]) -> None:
+        if not parts:
+            return
+        await self._flush_control()
+        # One binary frame per MQTT chunk keeps framing simple and correct.
+        frames = [_mask_client_frame(0x2, p) for p in parts]
+        self._writer.writelines(frames)
         if self._writer.transport.get_write_buffer_size() > 64 * 1024:
             await self._writer.drain()
 
@@ -90,8 +103,10 @@ class WebSocketTransport:
 
     async def read(self, n: int = 65536) -> bytes:
         while True:
-            payload = _try_extract_binary_frame(self._recv_buf)
+            payload = self._try_extract_application_payload()
             if payload is not None:
+                if self._pending_control:
+                    await self._flush_control()
                 return payload
             chunk = await self._reader.read(n)
             if not chunk:
@@ -115,6 +130,32 @@ class WebSocketTransport:
     def is_closing(self) -> bool:
         return self._closing or self._writer.is_closing()
 
+    async def _flush_control(self) -> None:
+        if not self._pending_control:
+            return
+        self._writer.writelines(self._pending_control)
+        self._pending_control.clear()
+        if self._writer.transport.get_write_buffer_size() > 64 * 1024:
+            await self._writer.drain()
+
+    def _try_extract_application_payload(self) -> bytes | None:
+        """Extract next binary MQTT payload; queue pong replies for ping frames."""
+        while True:
+            parsed = _parse_frame(self._recv_buf)
+            if parsed is None:
+                return None
+            opcode, raw = parsed
+            if opcode == 0x8:  # close
+                return b""
+            if opcode == 0x9:  # ping → pong
+                self._pending_control.append(_mask_client_frame(0xA, raw))
+                continue
+            if opcode == 0xA:  # pong — ignore
+                continue
+            if opcode != 0x2:
+                continue
+            return raw
+
 
 def _mask_client_frame(opcode: int, payload: bytes) -> bytes:
     mask = os.urandom(4)
@@ -134,7 +175,8 @@ def _mask_client_frame(opcode: int, payload: bytes) -> bytes:
     return bytes(header) + masked
 
 
-def _try_extract_binary_frame(buf: bytearray) -> bytes | None:
+def _parse_frame(buf: bytearray) -> tuple[int, bytes] | None:
+    """Consume one WebSocket frame from *buf*; return (opcode, payload) or None."""
     if len(buf) < 2:
         return None
     b1 = buf[1]
@@ -162,11 +204,4 @@ def _try_extract_binary_frame(buf: bytearray) -> bytes | None:
     del buf[:total]
     if masked:
         raw = bytes(b ^ mask[i % 4] for i, b in enumerate(raw))
-    if opcode == 0x8:  # close
-        return b""
-    if opcode == 0x9:  # ping — ignore at this layer (respond elsewhere if needed)
-        return _try_extract_binary_frame(buf)
-    if opcode != 0x2:
-        # skip non-binary
-        return _try_extract_binary_frame(buf)
-    return raw
+    return opcode, raw

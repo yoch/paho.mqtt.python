@@ -38,7 +38,7 @@ Helpers one-shot : préférer `mqttnext.helpers` (async natif) plutôt que
 | Republish QoS>0 non conforme sur clean session | Comportement historique flou | **Strict MQTT** | Correctness > bug-compat |
 | MID pour QoS 0 | Alloué | `None` | Pas d’identifiant protocolaire ; info locale inutile |
 | Appels bloquants **depuis** un callback réseau | Souvent « ça passe » | **Interdit** (RuntimeError) | Deadlock certain avec notre writer unique |
-| WebSocket / proxy / socks | Large surface | Pas via façade | Couche transport séparée ; pas de monolithe |
+| WebSocket / proxy / socks | Large surface | WS via `AsyncClient.connect_ws` ; pas via façade sync | Couche transport séparée ; pas de monolithe |
 | Persistence fichier Paho | Formats historiques | `SqliteInflightStore` sur `AsyncClient` | Pas de format binaire Paho |
 | `suppress_exceptions` | Oui | Non | Les erreurs doivent remonter |
 | `max_inflight_messages` public Paho | Couplé MID | `local_receive_maximum` + `FlowControl` | Receive Maximum ≠ espace MID (bug gmqtt évité) |
@@ -92,4 +92,4 @@ PUBCOMP = correct + stable. Réévaluer avec métriques avant de rouvrir.
 ## Tests de non-régression
 
 - `tests/unit/test_compat_paho.py` — connect/publish/callbacks/filtres
-- Élargissement futur : sous-ensemble `tests/lib` Paho (jalon D roadmap)
+- `tests/unit/test_compat_lib_subset.py` — jalon D (miroir comportemental `tests/lib`)

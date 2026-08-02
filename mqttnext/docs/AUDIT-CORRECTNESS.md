@@ -53,11 +53,16 @@ façade Paho VERSION2, CI Mosquitto, deadlock writer `drain()`.
 
 Encore ouvert :
 
-1. AUTH handler complet / enhanced auth
-2. WebSocket branché sur `AsyncClient` + frames de contrôle
-3. SQLite : sérialisation props binaires, identité d’objets long-terme
-4. Sous-ensemble `tests/lib` Paho (jalon D)
-5. Spin-out dépôt dédié
+1. Spin-out dépôt dédié (hors ce fork)
+2. SCRAM / plugins AUTH concrets (l’API `auth_handler` est en place)
+3. Audit externe / fuzz longue durée (jalon E)
+
+### Livré depuis l’audit initial
+
+- AUTH MQTT 5 : `AuthPacket`, `EngineConfig.accept_auth`, `AsyncClient.auth_handler` / `auth()`
+- WebSocket branché : `AsyncClient.connect_ws`, ping→pong, `write_many`
+- SQLite : sérialisation props taguée (bytes / tuples / user_property)
+- Jalon D : `tests/unit/test_compat_lib_subset.py` (miroir comportemental tests/lib)
 
 ### Choix perf QoS 2
 
@@ -102,8 +107,6 @@ Broker : Mosquitto `127.0.0.1:11883`, Python 3.12, VM cloud agent.
 
 ## Recommandations
 
-1. Traiter la dette « validation paquets » avant tout claim de référence open-source.
-2. Ne pas vendre WebSocket / SQLite / compat Paho comme feature-complete.
-3. Ajouter un test AsyncClient reconnect + survival de receipt (priorité #1 restante).
-4. CI avec Mosquitto pour verrouiller le jalon B.
-5. Spin-out : licence Apache-2.0 déjà posée ; extraire `mqttnext/` tel quel.
+1. Spin-out : licence Apache-2.0 déjà posée ; extraire `mqttnext/` tel quel.
+2. Brancher un `auth_handler` SCRAM réel derrière l’API AUTH pour les brokers qui l’exigent.
+3. Élargir le jalon D vers davantage de scénarios `tests/lib` si la façade sync croît.
