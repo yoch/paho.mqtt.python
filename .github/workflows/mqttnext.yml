@@ -10,45 +10,7 @@ on:
       - "mqttnext/**"
       - ".github/workflows/mqttnext.yml"
 
-permissions:
-  contents: write
-
 jobs:
-  agent_apply:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/mqttnext-hardening-audit'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/mqttnext-hardening-audit
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Apply symmetric UTF-8 validation
-        run: |
-          if [ -f mqttnext/tests/unit/test_utf8_symmetry.py ]; then
-            echo "UTF-8 batch already applied"
-            exit 0
-          fi
-          python mqttnext/tools/fix_utf8_script.py
-          python mqttnext/tools/apply_utf8_symmetry.py
-      - name: Install package
-        run: pip install -e './mqttnext[dev]'
-      - name: Run UTF-8 and codec regressions
-        run: python -m pytest -q mqttnext/tests/unit/test_utf8_symmetry.py mqttnext/tests/unit/test_codec.py mqttnext/tests/unit/test_packet_strictness.py mqttnext/tests/unit/test_hardening.py mqttnext/tests/unit/test_negotiation.py mqttnext/tests/unit/test_auth.py
-      - name: Validate and push
-        run: |
-          if git diff --quiet; then
-            exit 0
-          fi
-          git diff --check
-          git config user.name 'mqttnext-hardening-agent'
-          git config user.email 'actions@users.noreply.github.com'
-          git add mqttnext/src/mqttnext/codec/primitives.py mqttnext/src/mqttnext/packets/__init__.py mqttnext/src/mqttnext/topics.py mqttnext/tests/unit/test_utf8_symmetry.py
-          git commit -m '[agent-utf8] validate outbound MQTT strings symmetrically'
-          git push origin HEAD:agent/mqttnext-hardening-audit
-
   test:
     runs-on: ubuntu-latest
     strategy:
