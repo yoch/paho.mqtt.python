@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any, Never
 
@@ -33,6 +34,7 @@ from mqttnext.protocol.engine import (
     DisconnectInfo,
     EffectKind,
     EngineConfig,
+    EngineEffect,
     ProtocolEngine,
     PublishFailure,
 )
@@ -107,6 +109,10 @@ class AsyncClient:
         self._keepalive_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._lifecycle_lock = asyncio.Lock()
+        self._engine_lock = asyncio.Lock()
+        self._effect_flush_lock = asyncio.Lock()
+        self._pending_effects: deque[EngineEffect] = deque()
+        self._callback_tasks: set[asyncio.Task[Any]] = set()
         self._outbound: asyncio.Queue[WriteItem] = asyncio.Queue()
         self._outbound_bytes = 0
         self._max_outbound_bytes = max_outbound_bytes
@@ -347,22 +353,26 @@ class AsyncClient:
         nowait: bool = False,
     ) -> PublishReceipt:
         data = payload.encode("utf-8") if isinstance(payload, str) else payload
-        handle = self._engine.queue_publish(
-            topic,
-            data,
-            qos=qos,
-            retain=retain,
-            properties=properties,
-        )
-        if handle.qos == QoS.AT_MOST_ONCE:
-            # QoS 0 completes at queue time — skip Event allocation.
-            receipt = PublishReceipt(mid=None, qos=handle.qos, _event=None)
-        else:
-            assert handle.mid is not None
-            event = asyncio.Event()
-            receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=event)
-            self._receipts[handle.mid] = receipt
-        await self._flush_effects(nowait=nowait)
+        async with self._engine_lock:
+            handle = self._engine.queue_publish(
+                topic,
+                data,
+                qos=qos,
+                retain=retain,
+                properties=properties,
+            )
+            if handle.qos == QoS.AT_MOST_ONCE:
+                receipt = PublishReceipt(mid=None, qos=handle.qos, _event=None)
+            else:
+                assert handle.mid is not None
+                receipt = PublishReceipt(
+                    mid=handle.mid,
+                    qos=handle.qos,
+                    _event=asyncio.Event(),
+                )
+                self._receipts[handle.mid] = receipt
+            self._collect_effects_locked()
+        await self._drain_effects(nowait=nowait)
         return receipt
 
     async def auth(
@@ -371,9 +381,11 @@ class AsyncClient:
         properties: Properties | None = None,
     ) -> None:
         """Send a client AUTH packet (MQTT 5 continue / re-authenticate)."""
-        self._engine.config.accept_auth = True
-        self._engine.queue_auth(reason_code=reason_code, properties=properties)
-        await self._flush_effects()
+        async with self._engine_lock:
+            self._engine.config.accept_auth = True
+            self._engine.queue_auth(reason_code=reason_code, properties=properties)
+            self._collect_effects_locked()
+        await self._drain_effects()
 
     def set_auth_handler(self, handler: OnAuth | None) -> None:
         """Register or clear the enhanced-authentication handler."""
@@ -388,19 +400,23 @@ class AsyncClient:
         properties: Properties | None = None,
         timeout: float | None = None,
     ) -> SubscribeResult:
-        mid = self._engine.queue_subscribe(topics, qos=qos, properties=properties)
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[SubscribeResult] = loop.create_future()
-        self._sub_futs[mid] = fut
-        await self._flush_effects()
+        async with self._engine_lock:
+            mid = self._engine.queue_subscribe(
+                topics,
+                qos=qos,
+                properties=properties,
+            )
+            fut: asyncio.Future[SubscribeResult] = loop.create_future()
+            self._sub_futs[mid] = fut
+            self._collect_effects_locked()
+        await self._drain_effects()
         try:
             return await asyncio.wait_for(
                 fut, timeout=timeout if timeout is not None else self._ack_timeout
             )
         except TimeoutError as exc:
             self._sub_futs.pop(mid, None)
-            # Do NOT release the mid: a late SUBACK must still resolve it
-            # (engine tracks pending sub mids and releases on receipt).
             raise MQTTTimeoutError(f"SUBACK timed out for mid={mid}") from exc
 
     async def unsubscribe(
@@ -409,11 +425,13 @@ class AsyncClient:
         *,
         timeout: float | None = None,
     ) -> UnsubscribeResult:
-        mid = self._engine.queue_unsubscribe(topics)
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[UnsubscribeResult] = loop.create_future()
-        self._unsub_futs[mid] = fut
-        await self._flush_effects()
+        async with self._engine_lock:
+            mid = self._engine.queue_unsubscribe(topics)
+            fut: asyncio.Future[UnsubscribeResult] = loop.create_future()
+            self._unsub_futs[mid] = fut
+            self._collect_effects_locked()
+        await self._drain_effects()
         try:
             return await asyncio.wait_for(
                 fut, timeout=timeout if timeout is not None else self._ack_timeout
@@ -436,8 +454,10 @@ class AsyncClient:
         """
         if message.mid is None:
             return
-        self._engine.ack(message.mid)
-        await self._flush_effects()
+        async with self._engine_lock:
+            self._engine.ack(message.mid)
+            self._collect_effects_locked()
+        await self._drain_effects()
 
     async def _read_loop(self) -> None:
         assert self._transport is not None
@@ -452,15 +472,18 @@ class AsyncClient:
                 # One flush per read keeps SEND-before-MESSAGE ordering while
                 # avoiding N await points for N/100 batches.
                 handled = 0
-                while True:
-                    n = self._decoder.process_packets(
-                        self._engine.handle_raw, limit=256
-                    )
-                    if n == 0:
-                        break
-                    handled += n
+                async with self._engine_lock:
+                    while True:
+                        n = self._decoder.process_packets(
+                            self._engine.handle_raw, limit=256
+                        )
+                        if n == 0:
+                            break
+                        handled += n
+                    if handled:
+                        self._collect_effects_locked()
                 if handled:
-                    await self._flush_effects()
+                    await self._drain_effects()
         except asyncio.CancelledError:
             raise
         except (PacketTooLargeError, MalformedPacketError, ProtocolError) as exc:
@@ -475,9 +498,11 @@ class AsyncClient:
             if not self._will_reconnect():
                 self._fail_pending(exc)
         finally:
-            self._engine.notify_transport_closed()
+            async with self._engine_lock:
+                self._engine.notify_transport_closed()
+                self._collect_effects_locked()
             try:
-                await self._flush_effects()
+                await self._drain_effects()
             except (Exception, asyncio.CancelledError):
                 pass
             if self._disconnect_exc is None:
@@ -587,8 +612,10 @@ class AsyncClient:
             self._disconnect_exc = exc
             if not self._will_reconnect():
                 self._fail_pending(exc)
-            self._engine.notify_transport_closed()
-            await self._flush_effects()
+            async with self._engine_lock:
+                self._engine.notify_transport_closed()
+                self._collect_effects_locked()
+            await self._drain_effects()
             self._closed.set()
             # Close transport so the reader unblocks and runs shared cleanup.
             if self._transport is not None:
@@ -650,10 +677,12 @@ class AsyncClient:
                     continue
                 due = self._last_outbound + k
                 if now >= due:
-                    self._engine.queue_ping()
+                    async with self._engine_lock:
+                        self._engine.queue_ping()
+                        self._collect_effects_locked()
                     # A lost PINGREQ beats a wedged keepalive under backpressure.
                     try:
-                        await self._flush_effects(nowait=True)
+                        await self._drain_effects(nowait=True)
                     except FlowControlError:
                         pass
                     self._ping_pending = True
@@ -718,90 +747,122 @@ class AsyncClient:
             return negotiated
         return self._engine.config.keepalive
 
-    async def _flush_effects(self, *, nowait: bool = False) -> None:
+    def _collect_effects_locked(self) -> None:
         effects = self._engine.take_effects()
-        # Protocol bytes first (PUBACK/PUBREC/…), then app delivery. Keeps the
-        # wire moving even if the message queue or user callback blocks.
-        for effect in effects:
-            if effect.kind is EffectKind.SEND:
-                await self._enqueue_outbound(effect.data, nowait=nowait)
-        for effect in effects:
-            kind = effect.kind
-            if kind is EffectKind.SEND:
-                continue
-            elif kind is EffectKind.CONNACK:
-                connack: ConnAckPacket = effect.data
-                if self._connack_fut is not None and not self._connack_fut.done():
-                    self._connack_fut.set_result(connack)
-                if self.on_connect is not None:
-                    # Schedule independently: an on_connect that awaits
-                    # subscribe()/publish() must not block the reader.
-                    asyncio.create_task(self._invoke(self.on_connect, connack))
-            elif kind is EffectKind.AUTH:
-                challenge: AuthPacket = effect.data
-                if self.auth_handler is None:
-                    # Should not happen when accept_auth is False (engine rejects).
-                    await self._enqueue_outbound(
-                        encode_disconnect(0x8C, self._engine.config.protocol),
-                        nowait=nowait,
-                    )
-                    continue
-                response = await asyncio.wait_for(
-                    self._invoke(self.auth_handler, challenge), timeout=10.0
+        self._pending_effects.extend(
+            effect for effect in effects if effect.kind is EffectKind.SEND
+        )
+        self._pending_effects.extend(
+            effect for effect in effects if effect.kind is not EffectKind.SEND
+        )
+
+    async def _flush_effects(self, *, nowait: bool = False) -> None:
+        async with self._engine_lock:
+            self._collect_effects_locked()
+        await self._drain_effects(nowait=nowait)
+
+    async def _drain_effects(self, *, nowait: bool = False) -> None:
+        async with self._effect_flush_lock:
+            while self._pending_effects:
+                effect = self._pending_effects[0]
+                try:
+                    await self._apply_effect(effect, nowait=nowait)
+                except asyncio.CancelledError:
+                    raise
+                except FlowControlError:
+                    raise
+                except Exception:
+                    self._pending_effects.popleft()
+                    raise
+                else:
+                    self._pending_effects.popleft()
+
+    async def _apply_effect(
+        self,
+        effect: EngineEffect,
+        *,
+        nowait: bool,
+    ) -> None:
+        kind = effect.kind
+        if kind is EffectKind.SEND:
+            await self._enqueue_outbound(effect.data, nowait=nowait)
+        elif kind is EffectKind.CONNACK:
+            connack: ConnAckPacket = effect.data
+            if self._connack_fut is not None and not self._connack_fut.done():
+                self._connack_fut.set_result(connack)
+            if self.on_connect is not None:
+                self._spawn_callback(self.on_connect, connack)
+        elif kind is EffectKind.AUTH:
+            challenge: AuthPacket = effect.data
+            if self.auth_handler is None:
+                await self._enqueue_outbound(
+                    encode_disconnect(0x8C, self._engine.config.protocol),
+                    nowait=nowait,
                 )
-                if isinstance(response, AuthPacket):
-                    await self._enqueue_outbound(
-                        response.encode(self._engine.config.protocol),
-                        nowait=nowait,
-                    )
-            elif kind is EffectKind.MESSAGE:
-                msg: Message = effect.data
-                await self._messages.put(msg)
-                if self.on_message is not None:
-                    # Schedule independently so awaiting a receipt inside a
-                    # callback cannot deadlock the reader.
-                    asyncio.create_task(self._invoke(self.on_message, msg))
-            elif kind is EffectKind.PUBLISH_COMPLETE:
-                mid: int = effect.data
-                receipt = self._receipts.pop(mid, None)
-                if receipt is not None and receipt._event is not None:
+                return
+            response = await asyncio.wait_for(
+                self._invoke(self.auth_handler, challenge), timeout=10.0
+            )
+            if isinstance(response, AuthPacket):
+                await self._enqueue_outbound(
+                    response.encode(self._engine.config.protocol),
+                    nowait=nowait,
+                )
+        elif kind is EffectKind.MESSAGE:
+            msg: Message = effect.data
+            await self._messages.put(msg)
+            if self.on_message is not None:
+                self._spawn_callback(self.on_message, msg)
+        elif kind is EffectKind.PUBLISH_COMPLETE:
+            mid: int = effect.data
+            receipt = self._receipts.pop(mid, None)
+            if receipt is not None and receipt._event is not None:
+                receipt._event.set()
+        elif kind is EffectKind.PUBLISH_FAILED:
+            failure: PublishFailure = effect.data
+            receipt = self._receipts.pop(failure.mid, None)
+            if receipt is not None:
+                receipt._error = failure.reason
+                if receipt._event is not None:
                     receipt._event.set()
-            elif kind is EffectKind.PUBLISH_FAILED:
-                failure: PublishFailure = effect.data
-                receipt = self._receipts.pop(failure.mid, None)
-                if receipt is not None:
-                    receipt._error = failure.reason
-                    if receipt._event is not None:
-                        receipt._event.set()
-            elif kind is EffectKind.SUBACK:
-                result = SubscribeResult.from_packet(effect.data)
-                fut = self._sub_futs.pop(result.mid, None)
-                if fut is not None and not fut.done():
-                    fut.set_result(result)
-            elif kind is EffectKind.UNSUBACK:
-                result = UnsubscribeResult.from_packet(effect.data)
-                fut = self._unsub_futs.pop(result.mid, None)
-                if fut is not None and not fut.done():
-                    fut.set_result(result)
-            elif kind is EffectKind.PINGRESP:
-                self._ping_pending = False
-            elif kind is EffectKind.DISCONNECTED:
-                info = effect.data
-                if isinstance(info, DisconnectInfo):
-                    self._last_disconnect = info
-                    if info.from_broker and self._transport is not None:
-                        # Broker ended the session — close proactively so the
-                        # reader exits and reconnect/cleanup can proceed.
-                        try:
-                            await self._transport.close()
-                        except Exception:
-                            pass
-                continue
-            elif kind is EffectKind.PROTOCOL_ERROR:
-                raise ProtocolError(str(effect.data))
-            else:
-                never: Never = kind
-                raise MQTTError(f"Unhandled effect {never!r}")
+        elif kind is EffectKind.SUBACK:
+            result = SubscribeResult.from_packet(effect.data)
+            fut = self._sub_futs.pop(result.mid, None)
+            if fut is not None and not fut.done():
+                fut.set_result(result)
+        elif kind is EffectKind.UNSUBACK:
+            result = UnsubscribeResult.from_packet(effect.data)
+            fut = self._unsub_futs.pop(result.mid, None)
+            if fut is not None and not fut.done():
+                fut.set_result(result)
+        elif kind is EffectKind.PINGRESP:
+            self._ping_pending = False
+        elif kind is EffectKind.DISCONNECTED:
+            info = effect.data
+            if isinstance(info, DisconnectInfo):
+                self._last_disconnect = info
+                if info.from_broker and self._transport is not None:
+                    try:
+                        await self._transport.close()
+                    except Exception:
+                        pass
+        elif kind is EffectKind.PROTOCOL_ERROR:
+            raise ProtocolError(str(effect.data))
+        else:
+            never: Never = kind
+            raise MQTTError(f"Unhandled effect {never!r}")
+
+    def _spawn_callback(self, callback: Callable[..., Any], *args: Any) -> None:
+        task = asyncio.create_task(self._invoke(callback, *args))
+        self._callback_tasks.add(task)
+        task.add_done_callback(self._callback_done)
+
+    def _callback_done(self, task: asyncio.Task[Any]) -> None:
+        self._callback_tasks.discard(task)
+        try:
+            task.result()
+        except (asyncio.CancelledError, Exception):
+            pass
 
     def _fail_pending(self, exc: BaseException) -> None:
         for receipt in self._receipts.values():
@@ -851,6 +912,7 @@ class AsyncClient:
         tasks = [self._reader_task, self._writer_task, self._keepalive_task]
         if not preserve_reconnect:
             tasks.append(self._reconnect_task)
+        tasks.extend(self._callback_tasks)
         for task in tasks:
             if task is not None and task is not current:
                 task.cancel()
@@ -866,6 +928,11 @@ class AsyncClient:
             self._keepalive_task = None
         if not preserve_reconnect and self._reconnect_task is not current:
             self._reconnect_task = None
+        self._callback_tasks = {
+            task
+            for task in self._callback_tasks
+            if task is current and not task.done()
+        }
         if self._transport is not None:
             try:
                 await self._transport.close()
