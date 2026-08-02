@@ -57,10 +57,18 @@ def test_engine_rejects_auth_without_accept() -> None:
 
 
 def test_engine_emits_auth_when_accepted() -> None:
+    connect_props = Properties()
+    connect_props.set("authentication_method", "demo")
     engine = ProtocolEngine(
-        EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5, accept_auth=True)
+        EngineConfig(
+            client_id="c",
+            protocol=MQTTProtocolVersion.MQTTv5,
+            accept_auth=True,
+            connect_properties=connect_props,
+        )
     )
-    engine.state = ConnectionState.CONNECTING
+    engine.begin_connect()
+    engine.take_effects()
     full = AuthPacket(reason_code=0x18).encode()
     from mqttnext.codec.vbi import decode_vbi
 
@@ -113,9 +121,12 @@ async def test_async_client_auth_handler_exchange() -> None:
         props.set("authentication_data", b"token")
         return AuthPacket(reason_code=0x00, properties=props)
 
+    connect_props = Properties()
+    connect_props.set("authentication_method", "demo")
     client = AsyncClient(
         client_id="auth-c",
         protocol=MQTTProtocolVersion.MQTTv5,
+        connect_properties=connect_props,
         auth_handler=handler,
     )
     fake = FakeTransport()

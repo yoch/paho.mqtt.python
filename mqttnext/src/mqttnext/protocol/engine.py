@@ -195,6 +195,7 @@ class ProtocolEngine:
         self._prefer_session_resume = False
         # Server→client QoS>0 not yet fully acknowledged (Receive Maximum).
         self._inbound_inflight = 0
+        self._auth_method: str | None = None
         self._recovered_inbound_mids = {
             msg.mid for msg in self.store.in_items()
         }
@@ -240,6 +241,21 @@ class ProtocolEngine:
     def begin_connect(self) -> bytes:
         if self.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
             raise ProtocolError("Already connected or connecting")
+        configured_auth_method = None
+        if self.config.connect_properties is not None:
+            configured_auth_method = self.config.connect_properties.get(
+                "authentication_method"
+            )
+        if self.config.accept_auth:
+            if self.config.protocol != MQTTProtocolVersion.MQTTv5:
+                raise ProtocolError("Enhanced authentication requires MQTT 5")
+            if not configured_auth_method:
+                raise ProtocolError(
+                    "auth_handler requires authentication_method in CONNECT properties"
+                )
+        self._auth_method = (
+            str(configured_auth_method) if configured_auth_method is not None else None
+        )
         self.state = ConnectionState.CONNECTING
         self._pending_connect = True
         self._topic_aliases.clear()
@@ -499,6 +515,22 @@ class ProtocolEngine:
             raise ProtocolError("Unexpected CONNACK (already negotiated)")
         connack = ConnAckPacket.decode(raw.remaining, self.config.protocol)
         self._pending_connect = False
+        if self.config.protocol == MQTTProtocolVersion.MQTTv5:
+            connack_method = (
+                connack.properties.get("authentication_method")
+                if connack.properties is not None
+                else None
+            )
+            if connack_method is not None and connack_method != self._auth_method:
+                raise ProtocolError("CONNACK authentication_method does not match CONNECT")
+            if (
+                connack.properties is not None
+                and connack.properties.get("authentication_data") is not None
+                and self._auth_method is None
+            ):
+                raise ProtocolError(
+                    "CONNACK authentication_data requires authentication_method"
+                )
         if connack.reason_code != 0:
             self.state = ConnectionState.DISCONNECTED
             self._emit(EffectKind.CONNACK, connack)
@@ -862,6 +894,19 @@ class ProtocolEngine:
             )
             return
         packet = AuthPacket.decode(raw.remaining, self.config.protocol)
+        if self._auth_method is None:
+            self._reject_auth_method()
+            return
+        packet_method = (
+            packet.properties.get("authentication_method")
+            if packet.properties is not None
+            else None
+        )
+        if packet_method is not None and packet_method != self._auth_method:
+            self._reject_auth_method()
+            return
+        if packet.reason_code == 0x19 and self.state is ConnectionState.CONNECTING:
+            raise ProtocolError("Re-authenticate AUTH is invalid before CONNACK")
         if not self.config.accept_auth:
             # No enhanced-auth handler configured — reject broker-initiated AUTH.
             self._send(
@@ -878,6 +923,14 @@ class ProtocolEngine:
             return
         self._emit(EffectKind.AUTH, packet)
 
+    def _reject_auth_method(self) -> None:
+        self._send(encode_disconnect(0x8C, self.config.protocol))
+        self.state = ConnectionState.DISCONNECTED
+        self._emit(
+            EffectKind.DISCONNECTED,
+            DisconnectInfo(reason_code=0x8C, from_broker=False),
+        )
+
     def queue_auth(
         self,
         reason_code: int = 0x19,
@@ -888,7 +941,24 @@ class ProtocolEngine:
             raise ProtocolError("AUTH requires MQTT 5")
         if self.state not in (ConnectionState.CONNECTING, ConnectionState.CONNECTED):
             raise NotConnectedError("AUTH requires an active or pending connection")
-        self._send(AuthPacket(reason_code=reason_code, properties=properties).encode())
+        if self._auth_method is None:
+            raise ProtocolError("AUTH requires authentication_method in CONNECT")
+        if reason_code == 0x19 and self.state is not ConnectionState.CONNECTED:
+            raise ProtocolError("Re-authenticate AUTH requires a connected session")
+        auth_properties = Properties(
+            values=dict(properties.values) if properties is not None else {}
+        )
+        method = auth_properties.get("authentication_method")
+        if method is not None and method != self._auth_method:
+            raise ProtocolError("AUTH authentication_method does not match CONNECT")
+        if method is None:
+            auth_properties.set("authentication_method", self._auth_method)
+        self._send(
+            AuthPacket(
+                reason_code=reason_code,
+                properties=auth_properties,
+            ).encode(self.config.protocol)
+        )
 
     def _launch_outbound(self, msg: OutboundMessage) -> None:
         if msg.encoded_publish is None:

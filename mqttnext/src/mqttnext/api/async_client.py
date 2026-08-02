@@ -838,10 +838,12 @@ class AsyncClient:
                 self._invoke(self.auth_handler, challenge), timeout=10.0
             )
             if isinstance(response, AuthPacket):
-                await self._enqueue_outbound(
-                    response.encode(self._engine.config.protocol),
-                    nowait=nowait,
-                )
+                async with self._engine_lock:
+                    self._engine.queue_auth(
+                        reason_code=response.reason_code,
+                        properties=response.properties,
+                    )
+                    self._collect_effects_locked()
         elif kind is EffectKind.MESSAGE:
             msg: Message = effect.data
             callback_delivery = self.on_message is not None and self._message_delivery in (
