@@ -1,0 +1,15 @@
+diff --git a/mqttnext/src/mqttnext/api/async_client.py b/mqttnext/src/mqttnext/api/async_client.py
+--- a/mqttnext/src/mqttnext/api/async_client.py
++++ b/mqttnext/src/mqttnext/api/async_client.py
+@@ -249,10 +249,10 @@ class AsyncClient:
+         ssl: ssl.SSLContext | bool | None = None,
+         timeout: float = 30.0,
+     ) -> ConnAckPacket:
++        if self._engine.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
++            raise ProtocolError("Already connected or connecting")
+         try:
+-            if self._engine.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
+-                raise ProtocolError("Already connected or connecting")
+             try:
+                 transport = await asyncio.wait_for(
+                     self._transport_factory(host, port, ssl=ssl), timeout=timeout
