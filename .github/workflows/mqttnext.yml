@@ -33,6 +33,7 @@ jobs:
           fi
           python mqttnext/tools/fix_auth_script.py
           python mqttnext/tools/apply_auth_contracts.py
+          python mqttnext/tools/fix_auth_tests.py
       - name: Install package
         run: pip install -e './mqttnext[dev]'
       - name: Run authentication and connection regressions
