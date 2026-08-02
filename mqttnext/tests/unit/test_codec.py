@@ -38,6 +38,26 @@ def test_vbi_rejects_overlong() -> None:
         decode_vbi(bytes([0x80, 0x80, 0x80, 0x80, 0x01]))
 
 
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        b"\x80\x00",  # zero encoded on two bytes
+        b"\x81\x00",  # one encoded on two bytes
+        b"\xff\x00",  # 127 encoded on two bytes
+        b"\x80\x81\x00",  # 128 encoded on three bytes
+    ],
+)
+def test_vbi_rejects_non_canonical_encoding(encoded: bytes) -> None:
+    with pytest.raises(MalformedPacketError, match="Non-canonical"):
+        decode_vbi(encoded)
+
+
+@pytest.mark.parametrize("value", [-1, 268_435_456])
+def test_vbi_len_rejects_out_of_range(value: int) -> None:
+    with pytest.raises(ValueError):
+        vbi_len(value)
+
+
 def test_decoder_byte_by_byte_publish() -> None:
     packet = PublishPacket(topic="a/b", payload=b"hi", qos=0, retain=False, dup=False)
     wire = packet.encode()
