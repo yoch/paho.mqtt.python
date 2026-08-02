@@ -32,6 +32,7 @@ jobs:
             exit 0
           fi
           python mqttnext/tools/apply_lifecycle.py
+          sed -i 's/min_delay=0.01/initial_delay=0.01/' mqttnext/tests/unit/test_async_lifecycle.py
       - name: Install package
         run: pip install -e './mqttnext[dev]'
       - name: Run lifecycle and regression tests
