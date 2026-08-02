@@ -1,0 +1,138 @@
+{
+  "tag": "run",
+  "samples": [
+    {
+      "track": "A",
+      "name": "encode_qos0_mqtt311",
+      "ops_per_s": 985753.7148377808,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "encode_qos1_mqtt311",
+      "ops_per_s": 908131.7980663623,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "encode_qos0_mqtt5_empty_props",
+      "ops_per_s": 958131.6585419022,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "decode_qos0_mqtt311",
+      "ops_per_s": 503418.28567091766,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "decode_qos0_mqtt5_empty_props",
+      "ops_per_s": 454042.93220538594,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "B",
+      "name": "ingress_decode_50x",
+      "ops_per_s": 17449.198892869405,
+      "unit": "batch/s",
+      "notes": ""
+    },
+    {
+      "track": "B",
+      "name": "ingress_decode_500x",
+      "ops_per_s": 1794.3970365359123,
+      "unit": "batch/s",
+      "notes": ""
+    },
+    {
+      "track": "B",
+      "name": "ingress_engine_50x_qos0",
+      "ops_per_s": 4361.404066951814,
+      "unit": "batch/s",
+      "notes": ""
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos0_p64_w20",
+      "ops_per_s": 159414.31721877775,
+      "unit": "msg/s",
+      "notes": "count=80000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos1_p64_w20",
+      "ops_per_s": 35436.17454865645,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "C",
+      "name": "e2e_pub_qos2_p64_w20",
+      "ops_per_s": 20164.639949981236,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_w20",
+      "ops_per_s": 34471.78544354382,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_w100",
+      "ops_per_s": 43241.541241307226,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_w500",
+      "ops_per_s": 42654.708185080526,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos1_w2000",
+      "ops_per_s": 43853.877959858524,
+      "unit": "msg/s",
+      "notes": "count=8000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_w20",
+      "ops_per_s": 22232.503713374765,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_w100",
+      "ops_per_s": 28539.210891195995,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_w500",
+      "ops_per_s": 27137.560462365793,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    },
+    {
+      "track": "D",
+      "name": "e2e_qos2_w2000",
+      "ops_per_s": 29110.60190838663,
+      "unit": "msg/s",
+      "notes": "count=4000"
+    }
+  ]
+}

@@ -7,28 +7,28 @@
     {
       "name": "publish_encode_qos0_small",
       "library": "mqttnext",
-      "ops_per_s": 1390265.928124349,
+      "ops_per_s": 1018737.4337875202,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "publish_encode_qos0_small",
       "library": "gmqtt",
-      "ops_per_s": 1009279.4668500542,
+      "ops_per_s": 1033000.7055153912,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "publish_encode_qos0_small",
       "library": "paho",
-      "ops_per_s": 210484.13919532747,
+      "ops_per_s": NaN,
       "unit": "msg/s",
-      "notes": "publish()+_packet_write to null sock (includes queue)"
+      "notes": "N/A: public publish includes queue and I/O; not a codec benchmark"
     },
     {
       "name": "ingress_decode_50x_qos0_small",
       "library": "mqttnext",
-      "ops_per_s": 17763.39022122897,
+      "ops_per_s": 17985.954623659654,
       "unit": "batch/s",
       "notes": ""
     },
@@ -47,68 +47,26 @@
       "notes": "decoder coupled to Client loop; see e2e"
     },
     {
-      "name": "e2e_pub_qos0_p64",
+      "name": "e2e_puback_qos1_p64_w10",
       "library": "mqttnext",
-      "ops_per_s": 231814.73662869658,
+      "ops_per_s": 30110.69640474731,
       "unit": "msg/s",
-      "notes": ""
+      "notes": "count=8000; PUBACK complete; inflight window=10"
     },
     {
-      "name": "e2e_pub_qos0_p64",
+      "name": "e2e_puback_qos1_p64_w10",
       "library": "gmqtt",
-      "ops_per_s": 97678.69893033558,
+      "ops_per_s": 227.2894333689356,
       "unit": "msg/s",
-      "notes": ""
+      "notes": "count=8000; PUBACK complete; inflight window=10"
     },
     {
-      "name": "e2e_pub_qos0_p64",
+      "name": "e2e_puback_qos1_p64_w10",
       "library": "paho",
-      "ops_per_s": 75730.38223952673,
+      "ops_per_s": 31533.790068289327,
       "unit": "msg/s",
-      "notes": ""
-    },
-    {
-      "name": "e2e_pub_qos1_p64",
-      "library": "mqttnext",
-      "ops_per_s": 27448.248591709973,
-      "unit": "msg/s",
-      "notes": ""
-    },
-    {
-      "name": "e2e_pub_qos1_p64",
-      "library": "gmqtt",
-      "ops_per_s": 227.19544625117692,
-      "unit": "msg/s",
-      "notes": ""
-    },
-    {
-      "name": "e2e_pub_qos1_p64",
-      "library": "paho",
-      "ops_per_s": 21972.663062962933,
-      "unit": "msg/s",
-      "notes": ""
-    },
-    {
-      "name": "e2e_pub_qos2_p64",
-      "library": "mqttnext",
-      "ops_per_s": 15900.219887448086,
-      "unit": "msg/s",
-      "notes": ""
-    },
-    {
-      "name": "e2e_pub_qos2_p64",
-      "library": "gmqtt",
-      "ops_per_s": 51574.265780943955,
-      "unit": "msg/s",
-      "notes": ""
-    },
-    {
-      "name": "e2e_pub_qos2_p64",
-      "library": "paho",
-      "ops_per_s": 13513.492512692983,
-      "unit": "msg/s",
-      "notes": ""
+      "notes": "count=8000; PUBACK complete; inflight window=10"
     }
   ],
-  "table_md": "| Scenario | mqttnext | gmqtt | paho | mqttnext/gmqtt | mqttnext/paho |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| `publish_encode_qos0_small` | 1,390,266 | 1,009,279 | 210,484 | 1.4\u00d7 | 6.6\u00d7 |\n| `ingress_decode_50x_qos0_small` | 17,763 | n/a | n/a | n/a\u00d7 | n/a\u00d7 |\n| `e2e_pub_qos0_p64` | 231,815 | 97,679 | 75,730 | 2.4\u00d7 | 3.1\u00d7 |\n| `e2e_pub_qos1_p64` | 27,448 | 227.2 | 21,973 | 120.8\u00d7 | 1.2\u00d7 |\n| `e2e_pub_qos2_p64` | 15,900 | 51,574 | 13,513 | 0.3\u00d7 | 1.2\u00d7 |"
+  "table_md": "| Scenario | mqttnext | gmqtt | paho | mqttnext/gmqtt | mqttnext/paho |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| `publish_encode_qos0_small` | 1,018,737 | 1,033,001 | n/a | 1.0\u00d7 | n/a\u00d7 |\n| `ingress_decode_50x_qos0_small` | 17,986 | n/a | n/a | n/a\u00d7 | n/a\u00d7 |\n| `e2e_puback_qos1_p64_w10` | 30,111 | 227.3 | 31,534 | 132.5\u00d7 | 1.0\u00d7 |"
 }
