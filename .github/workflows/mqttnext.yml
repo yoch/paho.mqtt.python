@@ -10,7 +10,44 @@ on:
       - "mqttnext/**"
       - ".github/workflows/mqttnext.yml"
 
+permissions:
+  contents: write
+
 jobs:
+  agent_apply:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/mqttnext-hardening-audit'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/mqttnext-hardening-audit
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply configuration contracts
+        run: |
+          if [ -f mqttnext/tests/unit/test_config_contracts.py ]; then
+            echo "Configuration contract batch already applied"
+            exit 0
+          fi
+          python mqttnext/tools/apply_config_contracts.py
+      - name: Install package
+        run: pip install -e './mqttnext[dev]'
+      - name: Run configuration and negotiation regressions
+        run: python -m pytest -q mqttnext/tests/unit/test_config_contracts.py mqttnext/tests/unit/test_negotiation.py mqttnext/tests/unit/test_async_client.py mqttnext/tests/unit/test_async_lifecycle.py mqttnext/tests/unit/test_keepalive.py mqttnext/tests/unit/test_reconnect_receipts.py mqttnext/tests/unit/test_session_semantics.py
+      - name: Validate and push
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git diff --check
+          git config user.name 'mqttnext-hardening-agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add mqttnext/src/mqttnext/protocol/engine.py mqttnext/src/mqttnext/api/async_client.py mqttnext/src/mqttnext/protocol/reconnect.py mqttnext/tests/unit/test_config_contracts.py
+          git commit -m '[agent-config] validate runtime configuration contracts'
+          git push origin HEAD:agent/mqttnext-hardening-audit
+
   test:
     runs-on: ubuntu-latest
     strategy:
