@@ -837,6 +837,9 @@ class AsyncClient:
             if callback_delivery:
                 assert self.on_message is not None
                 self._spawn_callback(self.on_message, msg)
+            if msg.mid is not None:
+                async with self._engine_lock:
+                    self._engine.mark_inbound_delivered(msg.mid)
         elif kind is EffectKind.PUBLISH_COMPLETE:
             mid: int = effect.data
             receipt = self._receipts.pop(mid, None)

@@ -177,6 +177,9 @@ class ProtocolEngine:
         self._prefer_session_resume = False
         # Server→client QoS>0 not yet fully acknowledged (Receive Maximum).
         self._inbound_inflight = 0
+        self._recovered_inbound_mids = {
+            msg.mid for msg in self.store.in_items()
+        }
         self._handlers = {
             PacketType.CONNACK: self._on_connack,
             PacketType.PUBLISH: self._on_publish,
@@ -522,6 +525,8 @@ class ProtocolEngine:
                     ),
                 )
             self.store.clear_in()
+            self._recovered_inbound_mids.clear()
+            self._inbound_inflight = 0
             self.flow.reset()
             # Re-apply negotiated limit after reset.
             self.flow.apply_broker_receive_maximum(
@@ -534,6 +539,8 @@ class ProtocolEngine:
 
         self._fail_queued_violating_negotiation()
         self._emit(EffectKind.CONNACK, connack)
+        if connack.session_present:
+            self._replay_inbound_session()
         self._drain_queue()
 
     def _on_publish(self, raw: RawPacket) -> None:
@@ -564,10 +571,12 @@ class ProtocolEngine:
                 return
 
         if packet.qos == QoS.AT_LEAST_ONCE and self.config.manual_ack:
-            # Redelivery (DUP) of an already-tracked QoS1 must not re-acquire a
-            # Receive Maximum slot nor re-emit the message.
+            # A duplicate QoS1 publish reuses the existing Receive Maximum slot,
+            # but is surfaced again so an application can complete manual ACK
+            # after a reconnect or callback cancellation.
             existing = self.store.get_in(packet.mid)
             if existing is not None and existing.state is InboundQoSState.WAIT_PUBACK:
+                self._emit_inbound_message(existing, dup=True)
                 return
 
         self._acquire_inbound_slot()
@@ -593,7 +602,7 @@ class ProtocolEngine:
                         qos=packet.qos,
                         retain=packet.retain,
                         state=InboundQoSState.WAIT_PUBACK,
-                        delivered=True,
+                        delivered=False,
                         properties=packet.properties,
                     )
                 )
@@ -609,7 +618,7 @@ class ProtocolEngine:
             qos=packet.qos,
             retain=packet.retain,
             state=InboundQoSState.WAIT_PUBREL,
-            delivered=True,
+            delivered=False,
             properties=packet.properties,
         )
         self.store.put_in(inbound)
@@ -626,6 +635,48 @@ class ProtocolEngine:
             ),
         )
         self._send(PubRecPacket(mid=packet.mid).encode(self.config.protocol))
+
+    def mark_inbound_delivered(self, mid: int) -> None:
+        inbound = self.store.get_in(mid)
+        if inbound is None or inbound.delivered:
+            return
+        inbound.delivered = True
+        self.store.update_in(inbound)
+
+    def _emit_inbound_message(self, inbound: InboundMessage, *, dup: bool) -> None:
+        self._emit(
+            EffectKind.MESSAGE,
+            Message(
+                topic=inbound.topic,
+                payload=inbound.payload,
+                qos=inbound.qos,
+                retain=inbound.retain,
+                dup=dup,
+                mid=inbound.mid,
+                properties=inbound.properties,
+            ),
+        )
+
+    def _replay_inbound_session(self) -> None:
+        inbound_items = list(self.store.in_items())
+        self._inbound_inflight = len(inbound_items)
+        recovered = self._recovered_inbound_mids
+        for inbound in inbound_items:
+            should_redeliver = not inbound.delivered
+            if inbound.mid in recovered and self.config.manual_ack:
+                if inbound.state in (
+                    InboundQoSState.WAIT_PUBACK,
+                    InboundQoSState.WAIT_USER_ACK,
+                ):
+                    should_redeliver = True
+                elif (
+                    inbound.state is InboundQoSState.WAIT_PUBREL
+                    and not inbound.user_acked
+                ):
+                    should_redeliver = True
+            if should_redeliver:
+                self._emit_inbound_message(inbound, dup=True)
+        recovered.clear()
 
     def _on_puback(self, raw: RawPacket) -> None:
         ack = PubAckPacket.decode(raw.remaining, self.config.protocol)

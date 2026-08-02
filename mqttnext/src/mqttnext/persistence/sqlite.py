@@ -278,6 +278,11 @@ class SqliteInflightStore:
             raise KeyError(msg.mid)
         self._conn.commit()
 
+    def in_items(self) -> Iterator[InboundMessage]:
+        rows = self._conn.execute("SELECT * FROM inbound ORDER BY seq").fetchall()
+        for row in rows:
+            yield _row_to_in(row)
+
     def clear_in(self) -> None:
         self._conn.execute("DELETE FROM inbound")
         self._conn.commit()
