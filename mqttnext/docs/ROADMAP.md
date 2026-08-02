@@ -57,6 +57,7 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 - [x] Hardening production : flags/MID, DISCONNECT reasons, Clean Start resume, inbound RM, offline limits, receipts/reconnect
 - [ ] Nouveau dépôt open-source (extraction) — en attente spin-out
 - [x] Audit de correctness post-phase 3 (`docs/AUDIT-CORRECTNESS.md`)
+- [x] Sprint perf mesuré piste-par-piste (`docs/PERF-SPRINT.md`) — codec/ingress/writer/RM
 
 ## Jalons de qualité
 
