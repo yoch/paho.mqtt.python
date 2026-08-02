@@ -11,6 +11,25 @@ on:
       - ".github/workflows/mqttnext.yml"
 
 jobs:
+  quality_probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mqttnext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install quality tools
+        run: pip install -e ".[dev]" ruff mypy pytest-cov
+      - name: Ruff
+        run: ruff check src tests
+      - name: Mypy
+        run: mypy src/mqttnext --ignore-missing-imports --check-untyped-defs --show-error-codes
+      - name: Coverage
+        run: python -m pytest -q tests/unit --cov=mqttnext --cov-report=term-missing
+
   test:
     runs-on: ubuntu-latest
     strategy:
