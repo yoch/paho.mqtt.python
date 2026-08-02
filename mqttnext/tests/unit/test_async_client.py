@@ -104,3 +104,45 @@ async def test_qos0_receipt_immediate() -> None:
     assert receipt.is_done()
     await asyncio.wait_for(receipt.wait(), timeout=1.0)
     await client.disconnect()
+
+
+async def test_full_message_queue_close_loses_nothing() -> None:
+    """P1.7: the end-of-stream sentinel must never evict a queued message."""
+    client = AsyncClient(
+        client_id="test", max_pending_messages=4, message_delivery="iterator"
+    )
+    fake = FakeBrokerTransport()
+
+    async def factory(host: str, port: int, *, ssl: object = None) -> FakeBrokerTransport:
+        return fake
+
+    client._transport_factory = factory
+    await client.connect("fake", 1883, timeout=2.0)
+
+    for i in range(4):
+        fake._rx.put_nowait(
+            PublishPacket(
+                topic=f"t/{i}",
+                payload=b"x",
+                qos=QoS.AT_MOST_ONCE,
+                retain=False,
+                dup=False,
+                mid=None,
+            ).encode()
+        )
+    for _ in range(100):
+        if client._messages.qsize() == 4:
+            break
+        await asyncio.sleep(0.01)
+    assert client._messages.qsize() == 4
+
+    await fake.close()
+    # Wait for the reader's cleanup so the sentinel is inserted while the
+    # queue is still full (otherwise draining first would mask the eviction).
+    reader = client._reader_task
+    assert reader is not None
+    await asyncio.wait_for(reader, timeout=2.0)
+    received = []
+    async for msg in client.messages():
+        received.append(msg.topic)
+    assert received == ["t/0", "t/1", "t/2", "t/3"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from mqttnext.codec.buffer import IncrementalDecoder
 from mqttnext.codec.primitives import pack_u16
@@ -100,6 +101,8 @@ def test_message_callback_dispatch_only() -> None:
 
 def test_blocking_from_callback_rejected() -> None:
     client = Client(CallbackAPIVersion.VERSION2)
+    # Simulate running on the network loop thread inside a user callback.
+    client._thread = threading.current_thread()
     client._in_callback = True
     try:
         coro = _noop()
@@ -112,6 +115,42 @@ def test_blocking_from_callback_rejected() -> None:
             coro.close()  # avoid "never awaited" warning
     finally:
         client._in_callback = False
+        client._thread = None
+
+
+def test_off_loop_qos0_on_publish_keeps_handoff_path() -> None:
+    """QoS 0 on_publish fires on the caller thread; blocking calls made from it
+    must use the loop handoff, not the on-loop callback fast path."""
+    client = Client(CallbackAPIVersion.VERSION2, client_id="compat-race")
+    fake = FakeBrokerTransport()
+
+    async def factory(host: str, port: int, *, ssl: object = None) -> FakeBrokerTransport:
+        return fake
+
+    client._async._transport_factory = factory
+    subscribed = threading.Event()
+    errors: list[BaseException] = []
+
+    def on_publish(c, userdata, mid, reason_code, properties):
+        try:
+            rc, sub_mid = c.subscribe("race/#")
+            assert rc == 0 and sub_mid > 0
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            subscribed.set()
+
+    client.on_publish = on_publish
+    client.loop_start()
+    try:
+        assert client.connect("fake", 1883) == 0
+        info = client.publish("race/t", b"x", qos=0)
+        assert info.is_published()
+        assert subscribed.wait(timeout=3.0)
+        assert not errors
+    finally:
+        client.disconnect()
+        client.loop_stop()
 
 
 async def _noop() -> None:

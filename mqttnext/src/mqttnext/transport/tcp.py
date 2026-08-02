@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import socket
 from typing import Protocol
 
 
@@ -29,9 +31,6 @@ class TcpTransport:
         *,
         ssl: object | None = None,
     ) -> TcpTransport:
-        import asyncio
-        import socket
-
         reader, writer = await asyncio.open_connection(host, port, ssl=ssl)
         sock = writer.get_extra_info("socket")
         if sock is not None:

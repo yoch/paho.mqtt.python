@@ -56,6 +56,22 @@ MessageDelivery = Literal["auto", "iterator", "callback", "both"]
 _MESSAGE_SENTINEL = object()
 
 
+class _MessageStream(asyncio.Queue[Message | object]):
+    """Bounded queue whose terminal sentinel never evicts a real message.
+
+    The sentinel is the only wake-up ``messages()`` gets when the stream ends
+    while the queue is full; making room by dropping a queued message would
+    silently lose user data (audit P1.7). Uses the same ``_put`` extension
+    hook ``asyncio.Queue`` exposes to its own stdlib subclasses.
+    """
+
+    def put_sentinel(self, item: object) -> None:
+        # asyncio.Queue extension hooks (stable since 3.8, used the same way by
+        # stdlib subclasses); covered by test_full_message_queue_close_loses_nothing.
+        self._put(item)
+        self._wakeup_next(self._getters)  # type: ignore[attr-defined]
+
+
 class AsyncClient:
     def __init__(
         self,
@@ -155,9 +171,7 @@ class AsyncClient:
         self._receipts: dict[int, PublishReceipt] = {}
         self._sub_futs: dict[int, asyncio.Future[SubscribeResult]] = {}
         self._unsub_futs: dict[int, asyncio.Future[UnsubscribeResult]] = {}
-        self._messages: asyncio.Queue[Message | object] = asyncio.Queue(
-            maxsize=self._max_pending_messages
-        )
+        self._messages = _MessageStream(maxsize=self._max_pending_messages)
         self._closed = asyncio.Event()
         self._disconnect_exc: BaseException | None = None
         self._last_outbound = 0.0
@@ -564,17 +578,8 @@ class AsyncClient:
                         pass
             self._closed.set()
             if not will_reconnect:
-                try:
-                    self._messages.put_nowait(_MESSAGE_SENTINEL)
-                except asyncio.QueueFull:
-                    try:
-                        self._messages.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
-                    try:
-                        self._messages.put_nowait(_MESSAGE_SENTINEL)
-                    except asyncio.QueueFull:
-                        pass
+                # Never evict a queued message to make room (audit P1.7).
+                self._messages.put_sentinel(_MESSAGE_SENTINEL)
             try:
                 await self._invoke(self.on_disconnect, self._disconnect_exc)
             except Exception:
@@ -909,7 +914,7 @@ class AsyncClient:
 
     def _reset_message_stream(self) -> None:
         if self._closed.is_set():
-            self._messages = asyncio.Queue(maxsize=self._max_pending_messages)
+            self._messages = _MessageStream(maxsize=self._max_pending_messages)
             self._closed.clear()
 
     def _spawn_callback(self, callback: Callable[..., Any], *args: Any) -> None:

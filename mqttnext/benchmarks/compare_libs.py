@@ -32,7 +32,9 @@ import paho.mqtt.client as mqtt
 
 BROKER = ("127.0.0.1", 11883)
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
-WINDOW = 20
+# gmqtt 0.7.x exhausts its internal ID generator above ten queued QoS messages.
+# Use the largest common supported window so the comparison remains equivalent.
+WINDOW = 10
 
 
 @dataclass
@@ -368,7 +370,7 @@ async def amain() -> None:
     out.write_text(json.dumps(payload, indent=2))
     notes = """
 Notes:
-- Micro encode for paho includes queue + `_packet_write` to a null socket.
+- Paho is N/A for codec encode because it has no isolated codec API.
 - Micro decode is mqttnext-only (gmqtt/paho parsers are not isolatable).
 - Comparative E2E is limited to QoS 1, completed after PUBACK.
 - All libraries use the same outbound inflight window.

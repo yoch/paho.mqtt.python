@@ -29,6 +29,43 @@ Le projet reste toutefois un prototype avancé. Les risques principaux sont :
 4. façade sync qui contourne parfois le confinement à l'event loop ;
 5. benchmarks comparatifs dont les sémantiques ne sont pas équivalentes.
 
+## Revue de second passage (2026-08-02, branche `cursor/mqttnext-hardening-review-6c02`)
+
+Relecture complète des corrections de `agent/mqttnext-hardening-audit` :
+suite verte (213 tests), Ruff/mypy/coverage ≥ 80 % verts, fuzzers stricts
+(0 crash sur la session 24 h en cours, ~20 k rounds à ce stade).
+
+Constats et corrections de ce passage :
+
+1. **P1.7 réellement corrigé** : le chemin de fermeture évincait un message
+   réel quand la queue iterator était pleine pour insérer le sentinel.
+   `_MessageStream.put_sentinel()` insère désormais le sentinel hors borne ;
+   test rouge/vert ajouté (`test_full_message_queue_close_loses_nothing`).
+2. **CI auto-mutante supprimée** : le job `agent_benchmark` modifiait le source
+   puis commitait/pushait depuis la CI (avec `contents: write`), et le script
+   de transformation `mqttnext/tools/set_common_benchmark_window.py` survivait.
+   Le changement de benchmark (fenêtre commune 10, note Paho codec) est appliqué
+   directement dans `benchmarks/compare_libs.py`, l'outil et le job sont
+   supprimés, les permissions CI repassent à `contents: read`.
+3. **Race `_in_callback` dans `compat.paho`** : le booléen était aussi armé
+   depuis le thread appelant (chemin `on_publish` QoS 0), ce qui pouvait
+   masquer la détection de callback sur le thread loop et router un appel
+   bloquant vers le chemin « sur la loop » depuis un mauvais thread.
+   Prédicat `_on_loop_in_callback()` (thread courant = thread loop) partout ;
+   test rouge/vert ajouté.
+4. **Tests TLS ajoutés** (P1.10) : handshake TLS réel sur socket local
+   auto-signé (acceptation + rejet d'un certificat non approuvé).
+5. Imports inline remontés en tête de `transport/tcp.py`.
+
+Statuts P1/PERF après ce passage :
+
+- P1.1 à P1.9 : corrigés et vérifiés (dont P1.7 au point 1 ci-dessus).
+- P1.10 : corrigé — Ruff, mypy, couverture ≥ 80 %, tests TLS/WebSocket/
+  reconnect/reprise SQLite/annulation présents et verts.
+- PERF.1 à PERF.3 : corrigés (contrats de benchmark, fenêtre inflight commune).
+- PERF.4 à PERF.8 : reportés — le plan lui-même ordonne la réécriture des
+  benchmarks après stabilisation fonctionnelle.
+
 ## Règles du chantier
 
 - Aucun changement de performance ne doit réduire la correction protocolaire.
@@ -48,7 +85,7 @@ Le projet reste toutefois un prototype avancé. Les risques principaux sont :
 ## P0.1 — Receipt QoS 1/2 terminé avant ACK dans `compat.paho`
 
 **Sévérité : critique**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Dans le chemin `Client.publish()` appelé depuis un callback, le receipt QoS 1/2
 est construit avec `_event=None`. `wait()` et `is_done()` le considèrent alors
@@ -71,7 +108,7 @@ compris depuis un callback. Conserver `_event=None` uniquement pour QoS 0.
 ## P0.2 — Lifecycle de connexion non sérialisé
 
 **Sévérité : critique**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Deux `connect()` simultanés peuvent ouvrir deux transports avant que le moteur ne
 passe en `CONNECTING`, écraser `_transport`, `_outbound` et `_connack_fut`.
@@ -95,7 +132,7 @@ créées par cette tentative avant de relancer l'exception.
 ## P0.3 — Effets moteur extraits puis perdus sous annulation/backpressure
 
 **Sévérité : critique**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 `take_effects()` vide la liste avant les `await` de `_flush_effects()`. Une
 annulation ou `FlowControlError` peut perdre des effets `SEND` alors que le MID,
@@ -123,7 +160,7 @@ transférés ou ne les retirer du moteur qu'après transfert réussi.
 ## P0.4 — Absence de rollback après acquisition MID/flow
 
 **Sévérité : haute**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Si `_launch_outbound()` échoue pendant l'encodage, la validation ou le store, le
 MID et le slot de flux peuvent rester réservés. `_drain_queue()` retire également
@@ -149,7 +186,7 @@ MIDs et queue identiques à l'état attendu après l'erreur.
 ## P0.5 — Reprise QoS 2 corrompant le contrôle de flux
 
 **Sévérité : critique**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Pendant `_replay_session()`, les `WAIT_PUBCOMP` sont envoyés même si
 `flow.try_acquire()` échoue. Les PUBCOMP peuvent ensuite libérer des slots qui ne
@@ -177,7 +214,7 @@ l'invariant après chaque PUBCOMP et absence de dépassement de fenêtre.
 ## P0.6 — Paquets acceptés dans un état de connexion invalide
 
 **Sévérité : critique**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Le moteur peut dispatcher PUBLISH/PUBACK/SUBACK avant CONNACK ou après fermeture.
 
@@ -196,7 +233,7 @@ Tests PUBLISH, PUBACK, SUBACK avant CONNACK et après DISCONNECT.
 ## P0.7 — Double livraison callback + iterator pouvant bloquer le reader
 
 **Sévérité : haute**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Chaque message est toujours ajouté à `_messages`, même si l'application utilise
 seulement `on_message`. La queue finit par se remplir et bloque le reader.
@@ -217,7 +254,7 @@ croissance de la queue iterator.
 ## P0.8 — Tâches callbacks non suivies et illimitées
 
 **Sévérité : haute**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Les callbacks sont lancés avec `create_task()` sans conservation ni collecte des
 exceptions.
@@ -239,7 +276,7 @@ pool sophistiqué avant mesure.
 ## P0.9 — Décodeurs permissifs
 
 **Sévérité : haute**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Plusieurs décodeurs ignorent des octets résiduels, acceptent des MID nuls ou des
 Reason Codes impossibles.
@@ -264,7 +301,7 @@ tous rejetés avec `MalformedPacketError`.
 ## P0.10 — VBI non canonique accepté
 
 **Sévérité : moyenne/haute**  
-**Statut : premier correctif du chantier**
+**Statut : corrigé — vérifié au second passage**
 
 Le decoder accepte une valeur encodée sur plus d'octets que nécessaire.
 
@@ -283,7 +320,7 @@ canoniques inchangées.
 ## P0.11 — WebSocket trop permissif
 
 **Sévérité : haute**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 Frames serveur masquées, frames texte, bits RSV et opcodes inconnus sont acceptés
 ou ignorés ; un nouveau message peut remplacer une fragmentation en cours ; PONG
@@ -306,7 +343,7 @@ Aucune dépendance WebSocket supplémentaire n'est requise.
 ## P0.12 — Fuzzers masquant des bugs de parser
 
 **Sévérité : haute pour la confiance**  
-**Statut : à corriger**
+**Statut : corrigé — vérifié au second passage**
 
 `IndexError` et `struct.error` sont considérés comme acceptables.
 

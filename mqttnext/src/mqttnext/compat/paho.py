@@ -201,7 +201,7 @@ class Client:
         *,
         wait: bool = True,
     ) -> Any:
-        if wait and self._in_callback:
+        if wait and self._on_loop_in_callback():
             raise RuntimeError(
                 "Do not call blocking Client methods from a callback on the "
                 "network thread (would deadlock). Schedule work on another thread "
@@ -254,7 +254,7 @@ class Client:
             self.loop_start()
         assert self._loop is not None
 
-        if self._in_callback:
+        if self._on_loop_in_callback():
             result = command()
             self._async._spawn_callback(self._async._flush_effects)
             return result
@@ -324,7 +324,7 @@ class Client:
             self.loop_start()
         assert self._loop is not None
 
-        if self._in_callback:
+        if self._on_loop_in_callback():
             # Already on the loop thread: queue directly, no handoff needed.
             handle = self._async._engine.queue_publish(topic, data, qos=qos, retain=retain)
             receipt = PublishReceipt(
@@ -408,15 +408,25 @@ class Client:
         )
         return (0, mid)
 
+    def _on_loop_in_callback(self) -> bool:
+        """True only on the network loop thread, inside a user callback."""
+        return self._in_callback and threading.current_thread() is self._thread
+
     def _safe_callback(self, cb: Callable[..., Any], *args: Any) -> None:
-        self._in_callback = True
+        # Only the loop thread may flip _in_callback: an off-loop invocation
+        # (e.g. the QoS 0 on_publish fast path) must not clobber the flag the
+        # loop thread relies on to detect re-entrant blocking calls.
+        on_loop = threading.current_thread() is self._thread
+        if on_loop:
+            self._in_callback = True
         try:
             cb(*args)
         except Exception:
             # A user callback must never kill the network loop.
             pass
         finally:
-            self._in_callback = False
+            if on_loop:
+                self._in_callback = False
 
     def _dispatch_connect(self, connack: ConnAckPacket) -> None:
         cb = self.on_connect
