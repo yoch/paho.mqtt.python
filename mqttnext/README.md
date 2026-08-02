@@ -41,6 +41,7 @@ Reste principal : spin-out dépôt dédié (+ plugins AUTH concrets / jalon E fu
 - [`docs/AUDIT-FINAL.md`](docs/AUDIT-FINAL.md) — audit complet (stabilité/bugs/perf/sécurité)
 - [`docs/PERF-SPRINT.md`](docs/PERF-SPRINT.md) — mesures perf isolées
 - [`docs/FUZZING.md`](docs/FUZZING.md) — fuzzer (jalon E)
+- [`docs/LOGGING.md`](docs/LOGGING.md) — pourquoi pas de logging + observabilité
 
 ## Quick start (dev)
 
