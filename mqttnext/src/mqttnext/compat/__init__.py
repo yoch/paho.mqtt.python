@@ -1,8 +1,12 @@
-"""Compatibilité Paho — phase 3 (VERSION2)."""
+"""Compatibilité Paho — phase 3 (VERSION2).
+
+Politique détaillée : ``docs/COMPAT.md``.
+"""
 
 from mqttnext.compat.paho import (
     CallbackAPIVersion,
     Client,
+    DisconnectFlags,
     MQTTMessage,
     MQTTMessageInfo,
 )
@@ -10,6 +14,7 @@ from mqttnext.compat.paho import (
 __all__ = [
     "CallbackAPIVersion",
     "Client",
+    "DisconnectFlags",
     "MQTTMessage",
     "MQTTMessageInfo",
 ]

@@ -23,6 +23,7 @@ from mqttnext.enums import ConnectionState, MQTTProtocolVersion, QoS
 from mqttnext.errors import MQTTError, MQTTTimeoutError, ProtocolError
 from mqttnext.packets import ConnAckPacket, SubscribeOptions
 from mqttnext.protocol.engine import (
+    DisconnectInfo,
     EffectKind,
     EngineConfig,
     ProtocolEngine,
@@ -121,6 +122,7 @@ class AsyncClient:
         self._ack_timeout = ack_timeout
         self._intentional_disconnect = False
         self._transport_factory: Callable[..., Awaitable[AsyncTransport]] = TcpTransport.connect
+        self._last_disconnect: DisconnectInfo | None = None
 
         self.on_message: OnMessage | None = None
         self.on_connect: OnConnect | None = None
@@ -385,10 +387,13 @@ class AsyncClient:
                 )
 
     def _will_reconnect(self) -> bool:
+        reason = None
+        if self._last_disconnect is not None and self._last_disconnect.from_broker:
+            reason = self._last_disconnect.reason_code
         return (
             not self._intentional_disconnect
             and self._reconnect.enabled
-            and self._reconnect.should_retry(None, self._engine.config.protocol)
+            and self._reconnect.should_retry(reason, self._engine.config.protocol)
         )
 
     async def _write_loop(self) -> None:
@@ -409,9 +414,10 @@ class AsyncClient:
                                 await self._transport.write(part)
                         else:
                             await self._transport.write(data)
-                    # One drain per burst — keeps QoS pipelining intact.
-                    if hasattr(self._transport, "drain"):
-                        await self._transport.drain()  # type: ignore[attr-defined]
+                    # Do NOT await drain() here: it can deadlock against the
+                    # reader when the socket send buffer is full and the reader
+                    # needs to enqueue PUBREL/PUBACK into this same queue.
+                    # TcpTransport.write() drains only above 64 KiB.
                     self._last_outbound = time.monotonic()
                 finally:
                     released = 0
@@ -446,6 +452,10 @@ class AsyncClient:
                     and not (self._outbound_bytes == 0 and self._outbound.empty())
                 )
                 if not messages_full and not bytes_blocked:
+                    break
+                # Escape hatch: if the writer is idle but space accounting is
+                # wedged, do not block protocol forever.
+                if self._outbound.empty() and self._outbound_bytes == 0:
                     break
                 await self._outbound_space.wait()
             self._outbound.put_nowait(item)
@@ -484,8 +494,9 @@ class AsyncClient:
         try:
             while self._reconnect.enabled and not self._intentional_disconnect:
                 reason = None
-                if isinstance(self._disconnect_exc, ProtocolError):
-                    # Best-effort extract reason from message.
+                if self._last_disconnect is not None and self._last_disconnect.from_broker:
+                    reason = self._last_disconnect.reason_code
+                elif isinstance(self._disconnect_exc, ProtocolError):
                     msg = str(self._disconnect_exc)
                     if "reason_code=" in msg:
                         try:
@@ -493,6 +504,9 @@ class AsyncClient:
                         except ValueError:
                             reason = None
                 if not self._reconnect.should_retry(reason, self._engine.config.protocol):
+                    self._fail_pending(
+                        self._disconnect_exc or MQTTError("Reconnect exhausted")
+                    )
                     return
                 delay = self._reconnect.next_delay()
                 await asyncio.sleep(delay)
@@ -570,6 +584,9 @@ class AsyncClient:
             elif kind is EffectKind.PINGRESP:
                 self._ping_pending = False
             elif kind is EffectKind.DISCONNECTED:
+                info = effect.data
+                if isinstance(info, DisconnectInfo):
+                    self._last_disconnect = info
                 continue
             elif kind is EffectKind.PROTOCOL_ERROR:
                 raise ProtocolError(str(effect.data))

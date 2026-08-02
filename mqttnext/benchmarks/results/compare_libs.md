@@ -1,34 +1,32 @@
 # Comparative benchmarks
 
 Broker: `127.0.0.1:11883` (local Mosquitto 2.x)  
-Date: 2026-08-01 (post audit-correctness fixes)  
+Date: 2026-08-01 (post production-hardening)  
 Machine: cloud agent VM, Python 3.12
 
 ## Results (harness median)
 
 | Scenario | mqttnext | gmqtt | paho | mqttnext/gmqtt | mqttnext/paho |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `publish_encode_qos0_small` | 1,093,793 | 1,055,093 | 212,302 | 1.0× | **5.2×** |
-| `ingress_decode_50x_qos0_small` | 17,350 | n/a | n/a | — | — |
-| `e2e_pub_qos0_p64` | 181,199 | 95,589 | 71,195 | **1.9×** | **2.5×** |
-| `e2e_pub_qos1_p64` | 23,005 | 227.3† | 18,886 | — | **1.2×** |
-| `e2e_pub_qos2_p64` | 8,206 | 1,186 | 11,941 | **6.9×** | 0.7× |
+| `publish_encode_qos0_small` | 1,102,432 | 1,045,238 | 214,270 | 1.1× | **5.1×** |
+| `ingress_decode_50x_qos0_small` | 17,132 | n/a | n/a | — | — |
+| `e2e_pub_qos0_p64` | 182,291 | 97,084 | 74,893 | **1.9×** | **2.4×** |
+| `e2e_pub_qos1_p64` | 23,034 | 227.3† | 22,217 | — | **1.0×** |
+| `e2e_pub_qos2_p64` | 13,351 | 54,559‡ | 13,523 | — | **1.0×** |
 
 Units: msg/s (encode / e2e) or batch/s (decode of 50 concatenated packets).
 
 ## Reading
 
-- **QoS 0**: mqttnext ahead of both (~1.9× gmqtt, ~2.5× paho).
-- **QoS 1**: matches/beats paho on true PUBACK wait; gmqtt handicapped (†).
-- **QoS 2**: behind paho on this run; still ahead of gmqtt with real PUBCOMP wait.
-- Prior run (pre-audit) saw ~222k QoS0 / ~14k QoS2 — same order of magnitude; VM noise.
-
-## Caveats
-
+- **QoS 0**: mqttnext ahead (~1.9× gmqtt, ~2.4× paho).
+- **QoS 1 / 2**: matches paho on true PUBACK/PUBCOMP completion.
 - † gmqtt QoS1 drained in batches of 10 (Receive-Maximum-as-MID bug).
-- Inflight window capped at 20 for all clients.
-- No WAN/TLS/WebSocket in this round.
-- Post-audit behavioural changes (PUBREC frees flow slot; SEND-before-MESSAGE flush).
+- ‡ gmqtt QoS2 `wait_empty` returns after PUBREC — not comparable to PUBCOMP.
+
+## Hardening notes affecting perf
+
+- No `drain()` in the writer loop (avoids deadlock vs reader enqueue of PUBREL).
+- Local flow window held until PUBCOMP (stable under load; see `AUDIT-CORRECTNESS.md`).
 
 ## Reproduce
 

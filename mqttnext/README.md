@@ -19,26 +19,24 @@ des bugs protocolaires gmqtt.
 
 ## État
 
-**Phase 3 — compat & spin-out** (en cours, voir `docs/ROADMAP.md`) :
+**Hardening production + compat Paho** (voir `docs/ROADMAP.md`) :
 
-- Client async + phase 2 (backpressure, WS, Unix, manual_ack, benches)
-- Façade `mqttnext.compat.paho` (VERSION2)
-- Helpers `mqttnext.helpers.publish` / `subscribe`
-- Persistence SQLite optionnelle
-- Doc migration + CI + licence Apache-2.0
-- **85 tests** ; benches dans `benchmarks/results/compare_libs.md`
-- Audit correctness : `docs/AUDIT-CORRECTNESS.md`
+- Engine / AsyncClient durcis (flags, MID, DISCONNECT, Clean Start resume, inbound RM, offline limits, receipts/reconnect)
+- Façade `compat.paho` VERSION2 + politique documentée dans `docs/COMPAT.md`
+- Helpers, SQLite best-effort, CI Mosquitto, licence Apache-2.0
+- **87+ tests** ; benches `benchmarks/results/compare_libs.md`
 
-Reste : extraction vers un dépôt dédié.
+Reste principal : spin-out dépôt dédié.
 
 ## Documentation
 
 - [`docs/ANALYSIS.md`](docs/ANALYSIS.md) — audit comparatif Paho vs gmqtt
 - [`docs/DESIGN.md`](docs/DESIGN.md) — architecture et contrats
 - [`docs/IMPLEMENTATION-GUIDE.md`](docs/IMPLEMENTATION-GUIDE.md) — contrats détaillés
+- [`docs/COMPAT.md`](docs/COMPAT.md) — compat Paho : supporté / écarts / rejets
 - [`docs/MIGRATION.md`](docs/MIGRATION.md) — migration Paho / gmqtt
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phases
-- [`docs/AUDIT.md`](docs/AUDIT.md) — auto-audit
+- [`docs/AUDIT-CORRECTNESS.md`](docs/AUDIT-CORRECTNESS.md) — audit correctness + benches
 
 ## Quick start (dev)
 

@@ -7,28 +7,28 @@
     {
       "name": "publish_encode_qos0_small",
       "library": "mqttnext",
-      "ops_per_s": 1093792.7861177677,
+      "ops_per_s": 1102432.335054717,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "publish_encode_qos0_small",
       "library": "gmqtt",
-      "ops_per_s": 1055093.2781227774,
+      "ops_per_s": 1045238.0600226434,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "publish_encode_qos0_small",
       "library": "paho",
-      "ops_per_s": 212301.99177389004,
+      "ops_per_s": 214689.75119371468,
       "unit": "msg/s",
       "notes": "publish()+_packet_write to null sock (includes queue)"
     },
     {
       "name": "ingress_decode_50x_qos0_small",
       "library": "mqttnext",
-      "ops_per_s": 17349.713915326578,
+      "ops_per_s": 17131.63993232492,
       "unit": "batch/s",
       "notes": ""
     },
@@ -49,66 +49,66 @@
     {
       "name": "e2e_pub_qos0_p64",
       "library": "mqttnext",
-      "ops_per_s": 181198.53225621712,
+      "ops_per_s": 182290.9218363723,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos0_p64",
       "library": "gmqtt",
-      "ops_per_s": 95589.33871899884,
+      "ops_per_s": 97084.28042659418,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos0_p64",
       "library": "paho",
-      "ops_per_s": 71194.63653172493,
+      "ops_per_s": 74893.03664136429,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos1_p64",
       "library": "mqttnext",
-      "ops_per_s": 23004.89607458291,
+      "ops_per_s": 23033.523047239512,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos1_p64",
       "library": "gmqtt",
-      "ops_per_s": 227.29847510157543,
+      "ops_per_s": 227.29305677700236,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos1_p64",
       "library": "paho",
-      "ops_per_s": 18885.648174703183,
+      "ops_per_s": 22217.353166112465,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos2_p64",
       "library": "mqttnext",
-      "ops_per_s": 8205.637947814352,
+      "ops_per_s": 13351.033599480646,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos2_p64",
       "library": "gmqtt",
-      "ops_per_s": 1186.3163693026836,
+      "ops_per_s": 54559.42473363714,
       "unit": "msg/s",
       "notes": ""
     },
     {
       "name": "e2e_pub_qos2_p64",
       "library": "paho",
-      "ops_per_s": 11940.732080710728,
+      "ops_per_s": 13523.03098589639,
       "unit": "msg/s",
       "notes": ""
     }
   ],
-  "table_md": "| Scenario | mqttnext | gmqtt | paho | mqttnext/gmqtt | mqttnext/paho |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| `publish_encode_qos0_small` | 1,093,793 | 1,055,093 | 212,302 | 1.0\u00d7 | 5.2\u00d7 |\n| `ingress_decode_50x_qos0_small` | 17,350 | n/a | n/a | n/a\u00d7 | n/a\u00d7 |\n| `e2e_pub_qos0_p64` | 181,199 | 95,589 | 71,195 | 1.9\u00d7 | 2.5\u00d7 |\n| `e2e_pub_qos1_p64` | 23,005 | 227.3 | 18,886 | 101.2\u00d7 | 1.2\u00d7 |\n| `e2e_pub_qos2_p64` | 8,206 | 1,186 | 11,941 | 6.9\u00d7 | 0.7\u00d7 |"
+  "table_md": "| Scenario | mqttnext | gmqtt | paho | mqttnext/gmqtt | mqttnext/paho |\n| --- | ---: | ---: | ---: | ---: | ---: |\n| `publish_encode_qos0_small` | 1,102,432 | 1,045,238 | 214,690 | 1.1\u00d7 | 5.1\u00d7 |\n| `ingress_decode_50x_qos0_small` | 17,132 | n/a | n/a | n/a\u00d7 | n/a\u00d7 |\n| `e2e_pub_qos0_p64` | 182,291 | 97,084 | 74,893 | 1.9\u00d7 | 2.4\u00d7 |\n| `e2e_pub_qos1_p64` | 23,034 | 227.3 | 22,217 | 101.3\u00d7 | 1.0\u00d7 |\n| `e2e_pub_qos2_p64` | 13,351 | 54,559 | 13,523 | 0.2\u00d7 | 1.0\u00d7 |"
 }

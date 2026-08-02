@@ -21,16 +21,10 @@ from mqttnext.enums import (
     PacketType,
     QoS,
 )
-from mqttnext.errors import (
-    FlowControlError,
-    NotConnectedError,
-    PacketTooLargeError,
-    ProtocolError,
-    SessionDiscardedError,
-)
 from mqttnext.packets import (
     ConnAckPacket,
     ConnectPacket,
+    DisconnectPacket,
     PubAckPacket,
     PubCompPacket,
     PublishPacket,
@@ -50,6 +44,7 @@ from mqttnext.persistence.memory import InflightStore, MemoryInflightStore
 from mqttnext.protocol.flow_control import FlowControl
 from mqttnext.protocol.negotiated import NegotiatedSettings
 from mqttnext.protocol.packet_ids import PacketIdPool
+from mqttnext.protocol.validate import validate_raw_packet
 from mqttnext.topics import (
     validate_publish_topic,
     validate_received_publish_topic,
@@ -57,7 +52,14 @@ from mqttnext.topics import (
 )
 from mqttnext.transport.writes import WriteItem, item_size
 from mqttnext.types import InboundMessage, Message, OutboundMessage, Properties
-
+from mqttnext.errors import (
+    FlowControlError,
+    MalformedPacketError,
+    NotConnectedError,
+    PacketTooLargeError,
+    ProtocolError,
+    SessionDiscardedError,
+)
 
 class EffectKind(Enum):
     SEND = auto()
@@ -88,6 +90,15 @@ class PublishHandle:
 class PublishFailure:
     mid: int
     reason: BaseException
+
+
+@dataclass(slots=True)
+class DisconnectInfo:
+    """Broker or local disconnect signal carried on EffectKind.DISCONNECTED."""
+
+    reason_code: int = 0
+    properties: Properties | None = None
+    from_broker: bool = False
 
 
 @dataclass
@@ -129,6 +140,10 @@ class ProtocolEngine:
         self._queued: deque[OutboundMessage] = deque()
         # Inbound topic aliases (connection-scoped).
         self._topic_aliases: dict[int, str] = {}
+        # After a durable session is established, next CONNECT uses Clean Start 0.
+        self._prefer_session_resume = False
+        # Server→client QoS>0 not yet fully acknowledged (Receive Maximum).
+        self._inbound_inflight = 0
         self._handlers = {
             PacketType.CONNACK: self._on_connack,
             PacketType.PUBLISH: self._on_publish,
@@ -151,10 +166,9 @@ class ProtocolEngine:
             elif msg.state in (
                 OutboundQoSState.WAIT_PUBACK,
                 OutboundQoSState.WAIT_PUBREC,
+                OutboundQoSState.WAIT_PUBCOMP,
             ):
-                # Receive Maximum / local window: slot held until PUBACK/PUBREC.
                 self.flow.try_acquire()
-            # WAIT_PUBCOMP: slot already released at PUBREC.
 
     def take_effects(self) -> list[EngineEffect]:
         effects = self._effects
@@ -173,6 +187,11 @@ class ProtocolEngine:
         self.state = ConnectionState.CONNECTING
         self._pending_connect = True
         self._topic_aliases.clear()
+        self._inbound_inflight = 0
+
+        clean_start = self.config.clean_start
+        if self._prefer_session_resume:
+            clean_start = False
 
         connect_props = self.config.connect_properties
         if self.config.protocol == MQTTProtocolVersion.MQTTv5:
@@ -195,7 +214,7 @@ class ProtocolEngine:
         will = self.config.will
         packet = ConnectPacket(
             client_id=self.config.client_id,
-            clean_start=self.config.clean_start,
+            clean_start=clean_start,
             keepalive=self.config.keepalive,
             username=self.config.username,
             password=self.config.password,
@@ -365,7 +384,7 @@ class ProtocolEngine:
         self.state = ConnectionState.DISCONNECTED
         self._topic_aliases.clear()
         if was != ConnectionState.DISCONNECTED:
-            self._emit(EffectKind.DISCONNECTED)
+            self._emit(EffectKind.DISCONNECTED, DisconnectInfo(from_broker=False))
 
     def handle_raw(self, raw: RawPacket) -> None:
         handler = self._handlers.get(raw.packet_type)
@@ -373,8 +392,9 @@ class ProtocolEngine:
             self._emit(EffectKind.PROTOCOL_ERROR, f"Unhandled packet {raw.packet_type!r}")
             return
         try:
+            validate_raw_packet(raw)
             handler(raw)
-        except ProtocolError as exc:
+        except (ProtocolError, MalformedPacketError) as exc:
             self._emit(EffectKind.PROTOCOL_ERROR, str(exc))
 
 
@@ -403,6 +423,7 @@ class ProtocolEngine:
 
         self.state = ConnectionState.CONNECTED
         self.session_present = connack.session_present
+        self._update_session_resume_preference()
         if not connack.session_present:
             for msg in list(self.store.out_items()):
                 if msg.state is OutboundQoSState.QUEUED:
@@ -428,6 +449,7 @@ class ProtocolEngine:
         else:
             self._replay_session()
 
+        self._fail_queued_violating_negotiation()
         self._emit(EffectKind.CONNACK, connack)
         self._drain_queue()
 
@@ -452,6 +474,13 @@ class ProtocolEngine:
             return
 
         assert packet.mid is not None
+        if packet.qos == QoS.EXACTLY_ONCE:
+            existing = self.store.get_in(packet.mid)
+            if existing is not None:
+                self._send(PubRecPacket(mid=packet.mid).encode(self.config.protocol))
+                return
+
+        self._acquire_inbound_slot()
         if packet.qos == QoS.AT_LEAST_ONCE:
             self._emit(
                 EffectKind.MESSAGE,
@@ -480,11 +509,7 @@ class ProtocolEngine:
                 )
             else:
                 self._send(PubAckPacket(mid=packet.mid).encode(self.config.protocol))
-            return
-
-        existing = self.store.get_in(packet.mid)
-        if existing is not None:
-            self._send(PubRecPacket(mid=packet.mid).encode(self.config.protocol))
+                self._release_inbound_slot()
             return
 
         inbound = InboundMessage(
@@ -561,10 +586,10 @@ class ProtocolEngine:
         if msg.encoded_pubrel is None:
             msg.encoded_pubrel = PubRelPacket(mid=rec.mid).encode(self.config.protocol)
         self.store.update_out(msg)
-        # MQTT 5 Receive Maximum: PUBREC frees the outbound PUBLISH slot.
-        self.flow.release()
+        # Keep the local flow slot until PUBCOMP. MQTT 5 allows releasing at
+        # PUBREC, but freeing early lets WAIT_PUBCOMP accumulate without bound
+        # and has caused intermittent multi-second stalls under load.
         self._send(msg.encoded_pubrel)
-        self._drain_queue()
 
     def _on_pubrel(self, raw: RawPacket) -> None:
         rel = PubRelPacket.decode(raw.remaining, self.config.protocol)
@@ -579,6 +604,7 @@ class ProtocolEngine:
             return
         self.store.pop_in(rel.mid)
         self._send(PubCompPacket(mid=rel.mid).encode(self.config.protocol))
+        self._release_inbound_slot()
 
     def ack(self, mid: int) -> None:
         """Complete a deferred inbound ACK (manual_ack mode).
@@ -593,6 +619,7 @@ class ProtocolEngine:
         if inbound.state is InboundQoSState.WAIT_PUBACK:
             self.store.pop_in(mid)
             self._send(PubAckPacket(mid=mid).encode(self.config.protocol))
+            self._release_inbound_slot()
             return
         if inbound.state is InboundQoSState.WAIT_PUBREL:
             inbound.user_acked = True
@@ -601,6 +628,7 @@ class ProtocolEngine:
         if inbound.state is InboundQoSState.WAIT_USER_ACK:
             self.store.pop_in(mid)
             self._send(PubCompPacket(mid=mid).encode(self.config.protocol))
+            self._release_inbound_slot()
             return
         raise ProtocolError(f"Inbound mid={mid} is not awaiting ack (state={inbound.state!r})")
 
@@ -611,7 +639,7 @@ class ProtocolEngine:
             return
         self.store.pop_out(comp.mid)
         self.packet_ids.release(comp.mid)
-        # Flow slot already released on PUBREC.
+        self.flow.release()
         if comp.reason_code >= 128:
             self._emit(
                 EffectKind.PUBLISH_FAILED,
@@ -638,11 +666,20 @@ class ProtocolEngine:
         self._emit(EffectKind.PINGRESP)
 
     def _on_pingreq(self, raw: RawPacket) -> None:
-        self._send(encode_pingresp())
+        # Brokers must not send PINGREQ to clients.
+        raise ProtocolError("Unexpected PINGREQ from broker")
 
     def _on_disconnect(self, raw: RawPacket) -> None:
+        packet = DisconnectPacket.decode(raw.remaining, self.config.protocol)
         self.state = ConnectionState.DISCONNECTED
-        self._emit(EffectKind.DISCONNECTED)
+        self._emit(
+            EffectKind.DISCONNECTED,
+            DisconnectInfo(
+                reason_code=packet.reason_code,
+                properties=packet.properties,
+                from_broker=True,
+            ),
+        )
 
     def _on_auth(self, raw: RawPacket) -> None:
         # Phase 1 stub: reject unsolicited AUTH.
@@ -653,7 +690,7 @@ class ProtocolEngine:
             )
         )
         self.state = ConnectionState.DISCONNECTED
-        self._emit(EffectKind.DISCONNECTED)
+        self._emit(EffectKind.DISCONNECTED, DisconnectInfo(reason_code=0x8C, from_broker=False))
 
     def _launch_outbound(self, msg: OutboundMessage) -> None:
         if msg.encoded_publish is None:
@@ -695,6 +732,7 @@ class ProtocolEngine:
                 if msg.encoded_pubrel is None:
                     msg.encoded_pubrel = PubRelPacket(mid=msg.mid).encode(self.config.protocol)
                     self.store.update_out(msg)
+                self.flow.try_acquire()
                 self._send(msg.encoded_pubrel)
                 continue
             if not self.flow.try_acquire():
@@ -759,3 +797,55 @@ class ProtocolEngine:
             and not self.negotiated.subscription_identifier_available
         ):
             raise ProtocolError("Broker does not support subscription identifiers")
+
+    def _acquire_inbound_slot(self) -> None:
+        limit = self.config.local_receive_maximum
+        if self._inbound_inflight >= limit:
+            raise ProtocolError("Receive Maximum exceeded")
+        self._inbound_inflight += 1
+
+    def _release_inbound_slot(self) -> None:
+        if self._inbound_inflight > 0:
+            self._inbound_inflight -= 1
+
+    def _update_session_resume_preference(self) -> None:
+        """Next CONNECT should use Clean Start 0 when the session is durable."""
+        if self.config.protocol == MQTTProtocolVersion.MQTTv5:
+            expiry = self.negotiated.session_expiry_interval
+            self._prefer_session_resume = bool(expiry)
+        else:
+            self._prefer_session_resume = not self.config.clean_start
+
+    def _validate_outbound_against_negotiated(self, msg: OutboundMessage) -> None:
+        if int(msg.qos) > self.negotiated.maximum_qos:
+            raise ProtocolError(
+                f"QoS {int(msg.qos)} exceeds broker maximum_qos {self.negotiated.maximum_qos}"
+            )
+        if msg.retain and not self.negotiated.retain_available:
+            raise ProtocolError("Broker does not support retain")
+        if msg.properties and msg.properties.get("topic_alias") is not None:
+            alias = int(msg.properties.get("topic_alias"))
+            if alias > self.negotiated.topic_alias_maximum:
+                raise ProtocolError(
+                    f"topic_alias {alias} exceeds broker topic_alias_maximum "
+                    f"{self.negotiated.topic_alias_maximum}"
+                )
+        if msg.encoded_publish is not None:
+            self._check_outbound_size(msg.encoded_publish)
+
+    def _fail_queued_violating_negotiation(self) -> None:
+        kept: deque[OutboundMessage] = deque()
+        while self._queued:
+            msg = self._queued.popleft()
+            try:
+                self._validate_outbound_against_negotiated(msg)
+            except (ProtocolError, PacketTooLargeError) as exc:
+                self.store.pop_out(msg.mid)
+                self.packet_ids.release(msg.mid)
+                self._emit(
+                    EffectKind.PUBLISH_FAILED,
+                    PublishFailure(mid=msg.mid, reason=exc),
+                )
+                continue
+            kept.append(msg)
+        self._queued = kept

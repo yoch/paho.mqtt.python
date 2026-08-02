@@ -1,6 +1,7 @@
 """Protocol engine package."""
 
 from mqttnext.protocol.engine import (
+    DisconnectInfo,
     EffectKind,
     EngineConfig,
     EngineEffect,
@@ -14,6 +15,7 @@ from mqttnext.protocol.packet_ids import PacketIdPool
 from mqttnext.protocol.reconnect import ReconnectPolicy
 
 __all__ = [
+    "DisconnectInfo",
     "EffectKind",
     "EngineConfig",
     "EngineEffect",

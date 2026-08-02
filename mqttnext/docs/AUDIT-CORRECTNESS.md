@@ -45,16 +45,26 @@ MQTT 5 restent ouverts (voir « Dette restante »).
 
 Principe retenu : **corriger le moteur**, ne pas ajouter de couches.
 
-## Dette restante (non corrigée volontairement)
+## Dette restante (mise à jour post-hardening)
 
-1. Validation flags fixed-header / MID=0 / longueurs exactes (fuzz plus strict)
-2. Receive Maximum **inbound** avec `manual_ack`
-3. Offline publish vs limites CONNACK négociées après coup
-4. Clean Start MQTT 5 sur reconnect de session
-5. Parsing reason code DISCONNECT broker → politique reconnect
-6. Façade Paho : topic `str`, `on_disconnect` 5 args, pas d’appel sync depuis callback
-7. CI : intégrer Mosquitto + `tests/integration`
-8. Spin-out dépôt dédié
+Corrigé depuis : flags fixed-header, MID=0, DISCONNECT reasons, Clean Start
+resume, inbound Receive Maximum, offline vs negociation, receipts/reconnect,
+façade Paho VERSION2, CI Mosquitto, deadlock writer `drain()`.
+
+Encore ouvert :
+
+1. AUTH handler complet / enhanced auth
+2. WebSocket branché sur `AsyncClient` + frames de contrôle
+3. SQLite : sérialisation props binaires, identité d’objets long-terme
+4. Sous-ensemble `tests/lib` Paho (jalon D)
+5. Spin-out dépôt dédié
+
+### Choix perf QoS 2
+
+La fenêtre locale (`FlowControl`) est conservée jusqu’au **PUBCOMP** (pas
+libérée au PUBREC). MQTT 5 autorise la libération au PUBREC, mais la libération
+anticipée provoquait des stalls intermittents (file outbound / accumulation
+`WAIT_PUBCOMP`). Correct et stable ; documenté ici plutôt que « smart ».
 
 ## Benchmarks (après correctifs)
 

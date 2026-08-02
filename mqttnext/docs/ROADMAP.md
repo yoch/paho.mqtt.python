@@ -50,9 +50,11 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 
 - [x] `compat.paho.Client` (VERSION2) — loop_start/connect/publish/subscribe + userdata / topic callbacks / will / auth
 - [x] Helpers publish/subscribe (`mqttnext.helpers`)
-- [x] Persistence SQLite optionnelle (`SqliteInflightStore`) — *correctness de base ; pas un store production-hardened*
+- [x] Persistence SQLite optionnelle (`SqliteInflightStore`) — *best effort*
 - [x] Docs utilisateur + migration (`docs/MIGRATION.md`) + licence Apache-2.0
-- [x] Packaging + workflow CI dédié (`.github/workflows/mqttnext.yml`)
+- [x] Packaging + workflow CI dédié (`.github/workflows/mqttnext.yml` + Mosquitto IT)
+- [x] Politique compat Paho documentée (`docs/COMPAT.md`) + façade VERSION2 durcie
+- [x] Hardening production : flags/MID, DISCONNECT reasons, Clean Start resume, inbound RM, offline limits, receipts/reconnect
 - [ ] Nouveau dépôt open-source (extraction) — en attente spin-out
 - [x] Audit de correctness post-phase 3 (`docs/AUDIT-CORRECTNESS.md`)
 

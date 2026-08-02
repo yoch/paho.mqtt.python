@@ -139,6 +139,8 @@ class PublishPacket:
         mid: int | None = None
         if qos:
             mid, pos = unpack_u16(remaining, pos)
+            if mid == 0:
+                raise MalformedPacketError("PUBLISH packet identifier must not be 0")
         properties: Properties | None = None
         if protocol == MQTTProtocolVersion.MQTTv5:
             properties, pos = decode_properties(remaining, pos, PUBLISH)
@@ -332,7 +334,11 @@ def _decode_ack_with_reason(
     protocol: MQTTProtocolVersion,
     packet_name: str,
 ) -> tuple[int, int, Properties | None]:
+    if len(remaining) < 2:
+        raise MalformedPacketError(f"{packet_name} too short")
     mid, pos = unpack_u16(remaining, 0)
+    if mid == 0:
+        raise MalformedPacketError(f"{packet_name} packet identifier must not be 0")
     reason = 0
     properties: Properties | None = None
     if protocol == MQTTProtocolVersion.MQTTv5 and pos < len(remaining):
@@ -444,6 +450,26 @@ class PubCompPacket:
     ) -> PubCompPacket:
         mid, reason, props = _decode_ack_with_reason(remaining, protocol, PUBCOMP)
         return cls(mid=mid, reason_code=reason, properties=props)
+
+
+@dataclass(slots=True, frozen=True)
+class DisconnectPacket:
+    reason_code: int = 0
+    properties: Properties | None = None
+
+    @classmethod
+    def decode(
+        cls,
+        remaining: bytes,
+        protocol: MQTTProtocolVersion = MQTTProtocolVersion.MQTTv311,
+    ) -> DisconnectPacket:
+        if protocol != MQTTProtocolVersion.MQTTv5 or not remaining:
+            return cls(reason_code=0, properties=None)
+        reason = remaining[0]
+        properties: Properties | None = None
+        if len(remaining) > 1:
+            properties, _ = decode_properties(remaining, 1, DISCONNECT)
+        return cls(reason_code=reason, properties=properties)
 
 
 def encode_pingreq() -> bytes:

@@ -1,7 +1,7 @@
-"""Minimal Paho-compatible sync façade over AsyncClient (phase 3).
+"""Paho-compatible sync façade over AsyncClient.
 
-Only CallbackAPIVersion.VERSION2 is supported. A dedicated thread runs an
-asyncio loop that owns one AsyncClient.
+Only ``CallbackAPIVersion.VERSION2`` is supported. See ``docs/COMPAT.md`` for
+the supported surface, intentional divergences, and rejected features.
 """
 
 from __future__ import annotations
@@ -18,11 +18,18 @@ from mqttnext.api.models import PublishReceipt
 from mqttnext.dispatch.matcher import TopicMatcher
 from mqttnext.enums import MQTTProtocolVersion, QoS
 from mqttnext.packets import ConnAckPacket
-from mqttnext.types import Message
+from mqttnext.types import Message, Properties
 
 
 class CallbackAPIVersion(enum.Enum):
     VERSION2 = 2
+
+
+@dataclass(frozen=True, slots=True)
+class DisconnectFlags:
+    """VERSION2 disconnect flags (Paho-compatible subset)."""
+
+    is_disconnect_packet_from_server: bool = False
 
 
 @dataclass
@@ -34,33 +41,38 @@ class MQTTMessageInfo:
     _loop: asyncio.AbstractEventLoop | None = field(default=None, repr=False)
     rc: int = 0
 
-    def wait_for_publish(self, timeout: float | None = None) -> bool:
+    def wait_for_publish(self, timeout: float | None = None) -> None:
+        """Block until the publish completes; raise on protocol/transport error."""
         if self._receipt is None or self._receipt.is_done():
-            return True
+            if self._receipt is not None and self._receipt._error is not None:
+                raise self._receipt._error
+            return
         if self._loop is None:
-            return False
+            raise RuntimeError("No event loop for wait_for_publish")
         fut = asyncio.run_coroutine_threadsafe(self._receipt.wait(), self._loop)
-        try:
-            fut.result(timeout)
-            return True
-        except Exception:
-            return False
+        fut.result(timeout)
 
     def is_published(self) -> bool:
         return self._receipt is None or self._receipt.is_done()
 
 
 class MQTTMessage:
-    """Paho-like inbound message."""
+    """Paho-like inbound message (``topic`` is a ``str``, like Paho)."""
 
-    __slots__ = ("topic", "payload", "qos", "retain", "mid")
+    __slots__ = ("_topic", "payload", "qos", "retain", "mid", "dup", "properties")
 
     def __init__(self, msg: Message) -> None:
-        self.topic = msg.topic.encode("utf-8")
+        self._topic = msg.topic.encode("utf-8")
         self.payload = msg.payload
         self.qos = int(msg.qos)
         self.retain = msg.retain
         self.mid = msg.mid or 0
+        self.dup = msg.dup
+        self.properties = msg.properties
+
+    @property
+    def topic(self) -> str:
+        return self._topic.decode("utf-8")
 
 
 class Client:
@@ -90,6 +102,7 @@ class Client:
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
         self._topic_callbacks = TopicMatcher()
+        self._in_callback = False
 
         self.on_connect: Callable[..., Any] | None = None
         self.on_disconnect: Callable[..., Any] | None = None
@@ -172,6 +185,12 @@ class Client:
             loop.close()
 
     def _submit(self, coro: Any, timeout: float | None = 30.0) -> Any:
+        if self._in_callback:
+            raise RuntimeError(
+                "Do not call blocking Client methods from a callback on the "
+                "network thread (would deadlock). Schedule work on another thread "
+                "or use mqttnext.api.AsyncClient."
+            )
         if self._loop is None:
             self.loop_start()
         assert self._loop is not None
@@ -204,12 +223,18 @@ class Client:
         qos: int = 0,
         retain: bool = False,
     ) -> MQTTMessageInfo:
+        if self._in_callback:
+            raise RuntimeError(
+                "Do not call blocking Client methods from a callback on the "
+                "network thread (would deadlock). Schedule work on another thread "
+                "or use mqttnext.api.AsyncClient."
+            )
         receipt: PublishReceipt = self._submit(
             self._async.publish(topic, payload, qos=qos, retain=retain)
         )
         info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
         if self.on_publish is not None and receipt.qos == QoS.AT_MOST_ONCE:
-            self.on_publish(self, self._userdata, receipt.mid, 0, None)
+            self._safe_callback(self.on_publish, self, self._userdata, receipt.mid, 0, None)
         elif receipt.qos != QoS.AT_MOST_ONCE and self._loop is not None:
             asyncio.run_coroutine_threadsafe(self._watch_publish(receipt), self._loop)
         return info
@@ -218,10 +243,14 @@ class Client:
         try:
             await receipt.wait()
             if self.on_publish is not None:
-                self.on_publish(self, self._userdata, receipt.mid, 0, None)
+                self._safe_callback(
+                    self.on_publish, self, self._userdata, receipt.mid, 0, None
+                )
         except Exception:
             if self.on_publish is not None:
-                self.on_publish(self, self._userdata, receipt.mid, 1, None)
+                self._safe_callback(
+                    self.on_publish, self, self._userdata, receipt.mid, 1, None
+                )
 
     def subscribe(self, topic: str, qos: int = 0) -> tuple[int, int]:
         result = self._submit(self._async.subscribe(topic, qos=qos))
@@ -231,23 +260,38 @@ class Client:
         result = self._submit(self._async.unsubscribe(topic))
         return (0, result.mid)
 
+    def _safe_callback(self, cb: Callable[..., Any], *args: Any) -> None:
+        self._in_callback = True
+        try:
+            cb(*args)
+        finally:
+            self._in_callback = False
+
     def _dispatch_connect(self, connack: ConnAckPacket) -> None:
         cb = self.on_connect
         if cb is None:
             return
         flags = {"session present": bool(connack.session_present)}
-        cb(self, self._userdata, flags, connack.reason_code, connack.properties)
+        props = connack.properties or Properties()
+        self._safe_callback(cb, self, self._userdata, flags, connack.reason_code, props)
 
     def _dispatch_disconnect(self, exc: BaseException | None) -> None:
         cb = self.on_disconnect
         if cb is None:
             return
-        rc = 0 if exc is None else 1
-        cb(self, self._userdata, rc, None)
+        info = self._async._last_disconnect
+        from_broker = bool(info and info.from_broker)
+        reason = info.reason_code if info is not None else (0 if exc is None else 1)
+        props = info.properties if info is not None else None
+        flags = DisconnectFlags(is_disconnect_packet_from_server=from_broker)
+        self._safe_callback(cb, self, self._userdata, flags, reason, props)
 
     def _dispatch_message(self, msg: Message) -> None:
         wrapped = MQTTMessage(msg)
+        matched = False
         for cb in self._topic_callbacks.iter_match(msg.topic):
-            cb(self, self._userdata, wrapped)
-        if self.on_message is not None:
-            self.on_message(self, self._userdata, wrapped)
+            matched = True
+            self._safe_callback(cb, self, self._userdata, wrapped)
+        # Paho: default on_message only if no filtered callback matched.
+        if not matched and self.on_message is not None:
+            self._safe_callback(self.on_message, self, self._userdata, wrapped)
