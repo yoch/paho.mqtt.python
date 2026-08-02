@@ -63,6 +63,30 @@ from mqttnext.errors import (
     SessionDiscardedError,
 )
 
+
+_ALLOWED_PACKETS_BY_STATE: dict[ConnectionState, frozenset[PacketType]] = {
+    ConnectionState.CONNECTING: frozenset(
+        {
+            PacketType.CONNACK,
+            PacketType.AUTH,
+        }
+    ),
+    ConnectionState.CONNECTED: frozenset(
+        {
+            PacketType.PUBLISH,
+            PacketType.PUBACK,
+            PacketType.PUBREC,
+            PacketType.PUBREL,
+            PacketType.PUBCOMP,
+            PacketType.SUBACK,
+            PacketType.UNSUBACK,
+            PacketType.PINGRESP,
+            PacketType.DISCONNECT,
+            PacketType.AUTH,
+        }
+    ),
+}
+
 class EffectKind(Enum):
     SEND = auto()
     MESSAGE = auto()
@@ -308,14 +332,25 @@ class ProtocolEngine:
             self.packet_ids.release(mid)
             raise
 
-        if self.state == ConnectionState.CONNECTED and self.flow.try_acquire():
-            self._launch_outbound(msg)
-        else:
-            if self.config.max_queued and len(self._queued) >= self.config.max_queued:
+        if self.state == ConnectionState.CONNECTED:
+            try:
+                launched = self._try_launch_outbound(msg)
+            except Exception:
                 self.packet_ids.release(mid)
-                raise FlowControlError("Outbound queue full")
-            self._queued.append(msg)
+                self._discard_outbound_store_record(mid)
+                raise
+            if launched:
+                return PublishHandle(mid=mid, qos=qos)
+
+        if self.config.max_queued and len(self._queued) >= self.config.max_queued:
+            self.packet_ids.release(mid)
+            raise FlowControlError("Outbound queue full")
+        try:
             self.store.put_out(msg)
+        except Exception:
+            self.packet_ids.release(mid)
+            raise
+        self._queued.append(msg)
         return PublishHandle(mid=mid, qos=qos)
 
     def queue_subscribe(
@@ -374,6 +409,8 @@ class ProtocolEngine:
             topic_list = tuple(topics)
         if not topic_list:
             raise ProtocolError("unsubscribe requires at least one topic")
+        for topic in topic_list:
+            validate_subscribe_filter(topic)
         mid = self.packet_ids.allocate()
         try:
             packet = UnsubscribePacket(mid=mid, topics=topic_list)
@@ -387,6 +424,8 @@ class ProtocolEngine:
         return mid
 
     def queue_ping(self) -> None:
+        if self.state != ConnectionState.CONNECTED:
+            raise NotConnectedError("PINGREQ requires an active connection")
         self._send(encode_pingreq())
 
     def begin_disconnect(
@@ -394,6 +433,8 @@ class ProtocolEngine:
         reason_code: int = 0,
         properties: Properties | None = None,
     ) -> bytes:
+        if self.state != ConnectionState.CONNECTED:
+            raise NotConnectedError("disconnect requires an active connection")
         self.state = ConnectionState.DISCONNECTING
         return encode_disconnect(reason_code, self.config.protocol, properties)
 
@@ -410,12 +451,16 @@ class ProtocolEngine:
             self._emit(EffectKind.DISCONNECTED, DisconnectInfo(from_broker=False))
 
     def handle_raw(self, raw: RawPacket) -> None:
-        handler = self._handlers.get(raw.packet_type)
-        if handler is None:
-            self._emit(EffectKind.PROTOCOL_ERROR, f"Unhandled packet {raw.packet_type!r}")
-            return
         try:
             validate_raw_packet(raw)
+            allowed = _ALLOWED_PACKETS_BY_STATE.get(self.state, frozenset())
+            if raw.packet_type not in allowed:
+                raise ProtocolError(
+                    f"Unexpected {raw.packet_type.name} while state={self.state.name}"
+                )
+            handler = self._handlers.get(raw.packet_type)
+            if handler is None:
+                raise ProtocolError(f"Unhandled packet {raw.packet_type!r}")
             handler(raw)
         except (ProtocolError, MalformedPacketError) as exc:
             self._emit(EffectKind.PROTOCOL_ERROR, str(exc))
@@ -433,7 +478,14 @@ class ProtocolEngine:
         if connack.reason_code != 0:
             self.state = ConnectionState.DISCONNECTED
             self._emit(EffectKind.CONNACK, connack)
-            self._emit(EffectKind.DISCONNECTED)
+            self._emit(
+                EffectKind.DISCONNECTED,
+                DisconnectInfo(
+                    reason_code=connack.reason_code,
+                    properties=connack.properties,
+                    from_broker=True,
+                ),
+            )
             return
 
         requested_expiry = None
@@ -785,12 +837,65 @@ class ProtocolEngine:
         self.store.put_out(msg)
         self._send(msg.encoded_publish)
 
+    def _try_launch_outbound(self, msg: OutboundMessage) -> bool:
+        if not self.flow.try_acquire():
+            return False
+        try:
+            self._launch_outbound(msg)
+        except Exception:
+            self.flow.release()
+            raise
+        return True
+
+    def _retransmit_outbound(self, msg: OutboundMessage) -> None:
+        if msg.state in (
+            OutboundQoSState.WAIT_PUBACK,
+            OutboundQoSState.WAIT_PUBREC,
+        ):
+            msg.dup = True
+            msg.encoded_publish = PublishPacket(
+                topic=msg.topic,
+                payload=msg.payload,
+                qos=msg.qos,
+                retain=msg.retain,
+                dup=True,
+                mid=msg.mid,
+                properties=msg.properties,
+            ).encode_write_item(self.config.protocol)
+            self._check_outbound_size(msg.encoded_publish)
+            self.store.update_out(msg)
+            self._send(msg.encoded_publish)
+            return
+        if msg.state is OutboundQoSState.WAIT_PUBCOMP:
+            if msg.encoded_pubrel is None:
+                msg.encoded_pubrel = PubRelPacket(mid=msg.mid).encode(self.config.protocol)
+                self.store.update_out(msg)
+            self._check_outbound_size(msg.encoded_pubrel)
+            self._send(msg.encoded_pubrel)
+            return
+        raise ProtocolError(f"Cannot retransmit outbound state {msg.state!r}")
+
     def _drain_queue(self) -> None:
         while self._queued and self.flow.available > 0:
             if not self.flow.try_acquire():
                 break
-            msg = self._queued.popleft()
-            self._launch_outbound(msg)
+            msg = self._queued[0]
+            try:
+                if msg.state is OutboundQoSState.QUEUED:
+                    self._launch_outbound(msg)
+                else:
+                    self._retransmit_outbound(msg)
+            except Exception as exc:
+                self.flow.release()
+                self._queued.popleft()
+                self._discard_outbound_store_record(msg.mid)
+                self.packet_ids.release(msg.mid)
+                self._emit(
+                    EffectKind.PUBLISH_FAILED,
+                    PublishFailure(mid=msg.mid, reason=exc),
+                )
+                continue
+            self._queued.popleft()
 
     def _replay_session(self) -> None:
         self.flow.reset()
@@ -801,39 +906,42 @@ class ProtocolEngine:
         )
         self._queued.clear()
         for msg in list(self.store.out_items()):
-            if msg.state == OutboundQoSState.QUEUED:
-                self._queued.append(msg)
+            try:
+                self._validate_outbound_against_negotiated(msg)
+            except (ProtocolError, PacketTooLargeError) as exc:
+                self._discard_outbound_store_record(msg.mid)
+                self.packet_ids.release(msg.mid)
+                self._emit(
+                    EffectKind.PUBLISH_FAILED,
+                    PublishFailure(mid=msg.mid, reason=exc),
+                )
                 continue
-            if msg.state == OutboundQoSState.WAIT_PUBCOMP:
-                if msg.encoded_pubrel is None:
-                    msg.encoded_pubrel = PubRelPacket(mid=msg.mid).encode(self.config.protocol)
-                    self.store.update_out(msg)
-                self.flow.try_acquire()
-                self._send(msg.encoded_pubrel)
+            if msg.state is OutboundQoSState.QUEUED:
+                self._queued.append(msg)
                 continue
             if not self.flow.try_acquire():
-                # Deferred retransmission must still carry DUP=1: drop the
-                # stale encoded frame so _launch_outbound re-encodes.
-                msg.state = OutboundQoSState.QUEUED
-                msg.dup = True
-                msg.encoded_publish = None
-                self.store.update_out(msg)
                 self._queued.append(msg)
                 continue
-            packet = PublishPacket(
-                topic=msg.topic,
-                payload=msg.payload,
-                qos=msg.qos,
-                retain=msg.retain,
-                dup=True,
-                mid=msg.mid,
-                properties=msg.properties,
-            )
-            msg.dup = True
-            msg.encoded_publish = packet.encode_write_item(self.config.protocol)
-            self.store.update_out(msg)
-            self._send(msg.encoded_publish)
+            try:
+                self._retransmit_outbound(msg)
+            except Exception as exc:
+                self.flow.release()
+                self._discard_outbound_store_record(msg.mid)
+                self.packet_ids.release(msg.mid)
+                self._emit(
+                    EffectKind.PUBLISH_FAILED,
+                    PublishFailure(mid=msg.mid, reason=exc),
+                )
         self._drain_queue()
+
+    def _discard_outbound_store_record(self, mid: int) -> None:
+        try:
+            self.store.pop_out(mid)
+        except Exception:
+            # Preserve the original launch/validation failure. A broken store is
+            # surfaced separately by the read/client boundary and must not leak
+            # flow slots or packet identifiers in memory.
+            pass
 
     def _resolve_inbound_topic(self, packet: PublishPacket) -> str:
         if self.config.protocol != MQTTProtocolVersion.MQTTv5:
@@ -946,6 +1054,12 @@ class ProtocolEngine:
             self._prefer_session_resume = not self.config.clean_start
 
     def _validate_outbound_against_negotiated(self, msg: OutboundMessage) -> None:
+        if msg.state is OutboundQoSState.WAIT_PUBCOMP:
+            pubrel = msg.encoded_pubrel
+            if pubrel is None:
+                pubrel = PubRelPacket(mid=msg.mid).encode(self.config.protocol)
+            self._check_outbound_size(pubrel)
+            return
         if int(msg.qos) > self.negotiated.maximum_qos:
             raise ProtocolError(
                 f"QoS {int(msg.qos)} exceeds broker maximum_qos {self.negotiated.maximum_qos}"
@@ -973,7 +1087,7 @@ class ProtocolEngine:
             try:
                 self._validate_outbound_against_negotiated(msg)
             except (ProtocolError, PacketTooLargeError) as exc:
-                self.store.pop_out(msg.mid)
+                self._discard_outbound_store_record(msg.mid)
                 self.packet_ids.release(msg.mid)
                 self._emit(
                     EffectKind.PUBLISH_FAILED,
