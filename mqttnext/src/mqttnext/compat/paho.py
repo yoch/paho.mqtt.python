@@ -231,6 +231,23 @@ class Client:
         qos: int = 0,
         retain: bool = False,
     ) -> MQTTMessageInfo:
+        if self._in_callback:
+            # In a callback (loop thread): never block. Queue synchronously and
+            # flush fire-and-forget — returns immediately with a live receipt.
+            data = payload.encode("utf-8") if isinstance(payload, str) else payload
+            handle = self._async._engine.queue_publish(
+                topic, data, qos=qos, retain=retain
+            )
+            receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=None)
+
+            async def _register_and_flush() -> None:
+                if handle.mid is not None:
+                    self._async._receipts[handle.mid] = receipt
+                await self._async._flush_effects()
+
+            self._submit(_register_and_flush(), wait=False)
+            return MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
+
         receipt: PublishReceipt = self._submit(
             self._async.publish(topic, payload, qos=qos, retain=retain)
         )
@@ -281,6 +298,9 @@ class Client:
         self._in_callback = True
         try:
             cb(*args)
+        except Exception:
+            # A user callback must never kill the network loop.
+            pass
         finally:
             self._in_callback = False
 
