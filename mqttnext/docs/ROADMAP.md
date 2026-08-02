@@ -70,4 +70,4 @@ Contrats détaillés : voir `IMPLEMENTATION-GUIDE.md` (sections indiquées).
 | B | Ping Mosquitto local : pub/sub QoS 0/1/2 |
 | C | Microbench ingress ≥ baseline gmqtt sur même machine |
 | D | Façade Paho : sous-ensemble comportemental `tests/lib` (`test_compat_lib_subset.py`) |
-| E | Audit externe / fuzz 24h sans crash |
+| E | Fuzzer seedé + invariants (`tests/fuzz/fuzz.py`, CI job `fuzz`) ; run 24h optionnel |

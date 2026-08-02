@@ -64,7 +64,8 @@ des **gardes d’état** manquantes (CONNACK dupliqué, SUBACK orphelins, MID po
    reste disponible. Latence de retour ~100 µs (coût inter-thread).
 2. **Store SQLite** : `commit()` par opération (durabilité > débit QoS>0) ;
    erreurs isolées en `PROTOCOL_ERROR` (pas de crash de connexion).
-3. **Fuzz** : étendre au-delà du framing (engine, properties, WS) — jalon E.
+3. **Fuzz** : harness en place (`tests/fuzz/fuzz.py`, jalon E) — smoke dans la
+   suite, run long à brancher sur CI dédiée si souhaité.
 4. **DISCONNECT normatif** : 0x93/0x94 (engine) **et** 0x95/0x81/0x82 (fatal,
    côté reader) émis avant fermeture — voir ci-dessous.
 

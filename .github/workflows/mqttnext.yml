@@ -41,3 +41,21 @@ jobs:
           exit 1
       - name: Integration tests
         run: python -m pytest -q tests/integration
+
+  fuzz:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mqttnext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: pip install -e .
+      - name: Fuzz (seeded, bounded)
+        run: |
+          for seed in 1 2 3; do
+            PYTHONPATH=src python3 tests/fuzz/fuzz.py --seed $seed --iterations 20000
+          done
