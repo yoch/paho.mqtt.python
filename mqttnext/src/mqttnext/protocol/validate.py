@@ -1,6 +1,8 @@
-"""Fixed-header flag and packet-id validation (MQTT 3.1.1 / 5.0)."""
+"""Fixed-header and typed-packet validation helpers."""
 
 from __future__ import annotations
+
+from collections.abc import Collection
 
 from mqttnext.codec.buffer import RawPacket
 from mqttnext.enums import PacketType
@@ -44,3 +46,19 @@ def validate_raw_packet(raw: RawPacket) -> None:
 def require_nonzero_mid(mid: int, what: str) -> None:
     if mid == 0:
         raise MalformedPacketError(f"{what} packet identifier must not be 0")
+
+
+def require_end(pos: int, length: int, what: str) -> None:
+    """Require a typed decoder to consume the complete MQTT packet body."""
+    if pos != length:
+        raise MalformedPacketError(
+            f"{what} has {length - pos} unexpected trailing byte(s)"
+        )
+
+
+def require_reason_code(reason: int, allowed: Collection[int], what: str) -> None:
+    """Reject reason codes that are not defined for the packet type."""
+    if reason not in allowed:
+        raise MalformedPacketError(
+            f"{what} contains invalid reason code 0x{reason:02x}"
+        )
