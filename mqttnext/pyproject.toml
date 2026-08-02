@@ -33,6 +33,7 @@ dev = [
 ]
 fuzz = [
     "hypothesis>=6.100",
+    "pytest>=8",
 ]
 
 [tool.hatch.version]
