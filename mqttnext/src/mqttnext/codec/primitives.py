@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 from typing import Final
 
-from mqttnext.errors import MalformedPacketError
+from mqttnext.errors import MalformedPacketError, ProtocolError
 
 _U16: Final = struct.Struct("!H")
 _U32: Final = struct.Struct("!I")
@@ -35,18 +35,28 @@ def unpack_u32(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tuple
     return _U32.unpack_from(buffer, offset)[0], offset + 4
 
 
-def pack_utf8(value: str | bytes) -> bytes:
-    data = value.encode("utf-8") if isinstance(value, str) else value
+def encode_utf8(value: str) -> bytes:
+    """Validate and encode one MQTT UTF-8 string without its length prefix."""
+    if not isinstance(value, str):
+        raise ProtocolError(f"MQTT UTF-8 value must be str, got {type(value).__name__}")
+    try:
+        data = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ProtocolError("Invalid MQTT UTF-8 string") from exc
+    _validate_mqtt_utf8(value, error_type=ProtocolError)
     if len(data) > 65535:
-        raise ValueError("UTF-8 string too long for MQTT")
+        raise ProtocolError("UTF-8 string too long for MQTT")
+    return data
+
+
+def pack_utf8(value: str) -> bytes:
+    data = encode_utf8(value)
     return _U16.pack(len(data)) + data
 
 
-def append_utf8(buf: bytearray, value: str | bytes) -> None:
+def append_utf8(buf: bytearray, value: str) -> None:
     """Append MQTT UTF-8 string encoding into *buf* without intermediate concat."""
-    data = value.encode("utf-8") if isinstance(value, str) else value
-    if len(data) > 65535:
-        raise ValueError("UTF-8 string too long for MQTT")
+    data = encode_utf8(value)
     buf += _U16.pack(len(data))
     buf += data
 
@@ -83,17 +93,21 @@ def unpack_binary(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tu
     return bytes(buffer[pos:end]), end
 
 
-def _validate_mqtt_utf8(text: str) -> None:
+def _validate_mqtt_utf8(
+    text: str,
+    *,
+    error_type: type[MalformedPacketError] | type[ProtocolError] = MalformedPacketError,
+) -> None:
     # Fast path: pure ASCII cannot contain surrogates or U+FEFF.
     if text.isascii():
         if "\x00" in text:
-            raise MalformedPacketError("[MQTT-1.5.4-2] Null in UTF-8 data")
+            raise error_type("[MQTT-1.5.4-2] Null in UTF-8 data")
         return
     for ch in text:
         code = ord(ch)
         if code == 0x00:
-            raise MalformedPacketError("[MQTT-1.5.4-2] Null in UTF-8 data")
+            raise error_type("[MQTT-1.5.4-2] Null in UTF-8 data")
         if 0xD800 <= code <= 0xDFFF:
-            raise MalformedPacketError("[MQTT-1.5.4-1] Surrogate in UTF-8 data")
+            raise error_type("[MQTT-1.5.4-1] Surrogate in UTF-8 data")
         if code == 0xFEFF:
-            raise MalformedPacketError("[MQTT-1.5.4-3] U+FEFF in UTF-8 data")
+            raise error_type("[MQTT-1.5.4-3] U+FEFF in UTF-8 data")

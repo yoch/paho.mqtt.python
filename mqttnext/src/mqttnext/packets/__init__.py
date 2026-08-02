@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mqttnext.codec.primitives import pack_utf8, pack_u16, unpack_utf8, unpack_u16
+from mqttnext.codec.primitives import encode_utf8, pack_utf8, pack_u16, unpack_utf8, unpack_u16
 from mqttnext.codec.properties import (
     AUTH,
     CONNACK,
@@ -212,10 +212,8 @@ class PublishPacket:
         if self.dup:
             flags |= 0x08
 
-        topic_bytes = self.topic.encode("utf-8")
+        topic_bytes = encode_utf8(self.topic)
         topic_len = len(topic_bytes)
-        if topic_len > 65535:
-            raise ValueError("UTF-8 string too long for MQTT")
 
         props = _props_or_empty(self.properties, PUBLISH, protocol)
         payload = self.payload

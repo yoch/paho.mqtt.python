@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mqttnext.codec.primitives import encode_utf8
 from mqttnext.errors import MalformedPacketError, ProtocolError
 
 
@@ -68,22 +69,7 @@ def _validate_filter_levels(topic_filter: str) -> None:
 
 
 def _check_utf8_mqtt_topic(topic: str) -> None:
-    # Fast path: pure ASCII cannot contain surrogates or U+FEFF, and
-    # len(utf-8) == len(str).
-    if topic.isascii():
-        if "\x00" in topic:
-            raise ProtocolError("Topic must not contain null character")
-        if len(topic) > 65535:
-            raise ProtocolError("Topic exceeds 65535 UTF-8 bytes")
-        return
-    encoded = topic.encode("utf-8")
-    if len(encoded) > 65535:
-        raise ProtocolError("Topic exceeds 65535 UTF-8 bytes")
-    if "\x00" in topic:
-        raise ProtocolError("Topic must not contain null character")
-    for ch in topic:
-        code = ord(ch)
-        if 0xD800 <= code <= 0xDFFF:
-            raise ProtocolError("Topic must not contain UTF-16 surrogates")
-        if code == 0xFEFF:
-            raise ProtocolError("Topic must not contain U+FEFF")
+    try:
+        encode_utf8(topic)
+    except ProtocolError as exc:
+        raise ProtocolError(f"Invalid MQTT topic: {exc}") from exc
