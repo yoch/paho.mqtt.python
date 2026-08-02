@@ -53,9 +53,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install package
-        run: pip install -e .
+        run: pip install -e ".[fuzz]"
       - name: Fuzz (seeded, bounded)
         run: |
           for seed in 1 2 3; do
             PYTHONPATH=src python3 tests/fuzz/fuzz.py --seed $seed --iterations 20000
           done
+      - name: Fuzz (hypothesis, guided + shrinking)
+        run: PYTHONPATH=src python3 -m pytest tests/fuzz/test_hypothesis_fuzz.py -q
