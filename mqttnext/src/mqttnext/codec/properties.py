@@ -292,6 +292,9 @@ def decode_properties(
     """
     if offset >= len(buf):
         raise MalformedPacketError("Missing properties length")
+    # Fast path: empty property length (single 0x00) — common for PUBLISH/ACK.
+    if buf[offset] == 0:
+        return Properties(), offset + 1
     props_len, pos = decode_vbi(buf, offset)
     end = pos + props_len
     if end > len(buf):

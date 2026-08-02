@@ -25,6 +25,17 @@ class UnixSocketTransport:
         if transport is not None and transport.get_write_buffer_size() > 64 * 1024:
             await self._writer.drain()
 
+    async def write_many(self, parts: list[bytes]) -> None:
+        if not parts:
+            return
+        if len(parts) == 1:
+            await self.write(parts[0])
+            return
+        self._writer.writelines(parts)
+        transport = self._writer.transport
+        if transport is not None and transport.get_write_buffer_size() > 64 * 1024:
+            await self._writer.drain()
+
     async def drain(self) -> None:
         await self._writer.drain()
 

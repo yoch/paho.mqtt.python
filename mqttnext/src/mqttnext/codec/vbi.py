@@ -6,9 +6,16 @@ from mqttnext.errors import MalformedPacketError
 
 _MAX_VBI = 268_435_455
 
+# Precomputed single-byte VBIs (remaining length / prop length < 128).
+_VBI_ONE = tuple(bytes((i,)) for i in range(128))
+
 
 def encode_vbi(value: int) -> bytes:
-    if not 0 <= value <= _MAX_VBI:
+    if value < 128:
+        if value < 0:
+            raise ValueError(f"VBI out of range: {value}")
+        return _VBI_ONE[value]
+    if value > _MAX_VBI:
         raise ValueError(f"VBI out of range: {value}")
     out = bytearray()
     while True:
@@ -22,16 +29,36 @@ def encode_vbi(value: int) -> bytes:
     return bytes(out)
 
 
+def append_vbi(buf: bytearray, value: int) -> None:
+    """Encode a VBI directly into *buf* (avoids intermediate bytes)."""
+    if not 0 <= value <= _MAX_VBI:
+        raise ValueError(f"VBI out of range: {value}")
+    while True:
+        digit = value % 128
+        value //= 128
+        if value > 0:
+            digit |= 0x80
+        buf.append(digit)
+        if value == 0:
+            break
+
+
 def decode_vbi(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tuple[int, int]:
     """Decode a VBI starting at *offset*.
 
     Returns ``(value, new_offset)``.
     """
-    multiplier = 1
-    value = 0
-    encoded_bytes = 0
     length = len(buffer)
-    pos = offset
+    if offset >= length:
+        raise MalformedPacketError("Incomplete Variable Byte Integer")
+    first = buffer[offset]
+    if first < 128:
+        return first, offset + 1
+
+    multiplier = 128
+    value = first & 0x7F
+    pos = offset + 1
+    encoded_bytes = 1
     while True:
         if pos >= length:
             raise MalformedPacketError("Incomplete Variable Byte Integer")

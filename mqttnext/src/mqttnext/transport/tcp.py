@@ -49,6 +49,19 @@ class TcpTransport:
         if transport is not None and transport.get_write_buffer_size() > 64 * 1024:
             await self._writer.drain()  # type: ignore[attr-defined]
 
+    async def write_many(self, parts: list[bytes]) -> None:
+        """Coalesce multiple small frames into one writelines + single buffer check."""
+        if not parts:
+            return
+        if len(parts) == 1:
+            await self.write(parts[0])
+            return
+        writer = self._writer
+        writer.writelines(parts)  # type: ignore[attr-defined]
+        transport = writer.transport  # type: ignore[attr-defined]
+        if transport is not None and transport.get_write_buffer_size() > 64 * 1024:
+            await writer.drain()  # type: ignore[attr-defined]
+
     async def drain(self) -> None:
         await self._writer.drain()  # type: ignore[attr-defined]
 

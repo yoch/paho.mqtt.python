@@ -207,11 +207,13 @@ def micro_decode() -> list[Sample]:
 
 async def e2e_mqttnext(qos: int, count: int, payload: bytes) -> float:
     from mqttnext.api import AsyncClient
+    from mqttnext.protocol.reconnect import ReconnectPolicy
 
     client = AsyncClient(
         client_id=f"mn-qos{qos}-{int(time.time()*1000)%100000}",
         keepalive=60,
-        local_receive_maximum=20,
+        local_receive_maximum=100,
+        reconnect=ReconnectPolicy(enabled=False),
     )
     await client.connect(*BROKER, timeout=5)
     t0 = time.perf_counter()
@@ -298,9 +300,9 @@ async def run_e2e() -> list[Sample]:
     payload = b"x" * 64
     # Counts tuned for ~1–3s runs
     plans = [
-        (0, 10_000),
-        (1, 2_000),
-        (2, 1_000),
+        (0, 80_000),
+        (1, 8_000),
+        (2, 4_000),
     ]
     for qos, count in plans:
         name = f"e2e_pub_qos{qos}_p64"

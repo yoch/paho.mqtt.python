@@ -1,0 +1,61 @@
+{
+  "tag": "baseline",
+  "samples": [
+    {
+      "track": "A",
+      "name": "encode_qos0_mqtt311",
+      "ops_per_s": 1023909.8304046845,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "encode_qos1_mqtt311",
+      "ops_per_s": 960286.2574763189,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "encode_qos0_mqtt5_empty_props",
+      "ops_per_s": 1012176.9953313243,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "decode_qos0_mqtt311",
+      "ops_per_s": 369745.89352207165,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "A",
+      "name": "decode_qos0_mqtt5_empty_props",
+      "ops_per_s": 317425.15380963415,
+      "unit": "msg/s",
+      "notes": ""
+    },
+    {
+      "track": "B",
+      "name": "ingress_decode_50x",
+      "ops_per_s": 16698.87333144465,
+      "unit": "batch/s",
+      "notes": ""
+    },
+    {
+      "track": "B",
+      "name": "ingress_decode_500x",
+      "ops_per_s": 1702.9237909405595,
+      "unit": "batch/s",
+      "notes": ""
+    },
+    {
+      "track": "B",
+      "name": "ingress_engine_50x_qos0",
+      "ops_per_s": 3466.3189907104656,
+      "unit": "batch/s",
+      "notes": ""
+    }
+  ]
+}

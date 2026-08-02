@@ -16,18 +16,24 @@ class PublishReceipt:
 
     mid: int | None
     qos: QoS
-    _event: asyncio.Event
+    _event: asyncio.Event | None = None
     _error: BaseException | None = None
 
     async def wait(self) -> None:
-        if self.qos == QoS.AT_MOST_ONCE:
+        if self.qos == QoS.AT_MOST_ONCE or self._event is None:
+            if self._error is not None:
+                raise self._error
             return
         await self._event.wait()
         if self._error is not None:
             raise self._error
 
     def is_done(self) -> bool:
-        return self.qos == QoS.AT_MOST_ONCE or self._event.is_set()
+        return (
+            self.qos == QoS.AT_MOST_ONCE
+            or self._event is None
+            or self._event.is_set()
+        )
 
 
 @dataclass(slots=True)

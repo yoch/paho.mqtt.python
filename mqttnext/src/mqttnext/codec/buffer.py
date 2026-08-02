@@ -9,6 +9,7 @@ Design constraints (from Paho perf audit + gmqtt critique):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from mqttnext.codec.vbi import decode_vbi
@@ -101,7 +102,8 @@ class IncrementalDecoder:
         body = bytes(buf[body_start:body_end])
         self._start = body_end
         if self._start == len(self._buf):
-            self._buf = bytearray()
+            # Reuse the buffer object (avoid allocating a fresh bytearray).
+            self._buf.clear()
             self._start = 0
         return RawPacket(packet_type=packet_type, flags=flags, remaining=body)
 
@@ -113,6 +115,17 @@ class IncrementalDecoder:
                 break
             packets.append(packet)
         return packets
+
+    def process_packets(self, callback: Callable[[RawPacket], None], limit: int = 100) -> int:
+        """Decode up to *limit* packets, invoking *callback* without a list alloc."""
+        n = 0
+        for _ in range(limit):
+            packet = self.next_packet()
+            if packet is None:
+                break
+            callback(packet)
+            n += 1
+        return n
 
     def _compact(self) -> None:
         if self._start <= 0:

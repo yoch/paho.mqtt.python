@@ -13,6 +13,7 @@ from enum import Enum, auto
 from typing import Any
 
 from mqttnext.codec.buffer import RawPacket
+from mqttnext.codec.properties import PUBLISH, encode_properties
 from mqttnext.enums import (
     ConnectionState,
     InboundQoSState,
@@ -288,19 +289,10 @@ class ProtocolEngine:
             state=OutboundQoSState.QUEUED,
             properties=properties,
         )
-        packet = PublishPacket(
-            topic=topic,
-            payload=payload,
-            qos=qos,
-            retain=retain,
-            dup=False,
-            mid=mid,
-            properties=properties,
-        )
-        msg.encoded_publish = packet.encode_write_item(self.config.protocol)
-        self._check_outbound_size(msg.encoded_publish)
-        if qos == QoS.EXACTLY_ONCE:
-            msg.encoded_pubrel = PubRelPacket(mid=mid).encode(self.config.protocol)
+        # Defer wire encode until launch: avoids double work when messages sit
+        # in the Receive Maximum queue. Still enforce maximum_packet_size via
+        # a cheap upper-bound estimate when the broker advertised a limit.
+        self._check_outbound_publish_budget(topic, payload, qos, properties)
 
         if self.state == ConnectionState.CONNECTED and self.flow.try_acquire():
             self._launch_outbound(msg)
@@ -703,6 +695,7 @@ class ProtocolEngine:
                 mid=msg.mid,
                 properties=msg.properties,
             ).encode_write_item(self.config.protocol)
+        self._check_outbound_size(msg.encoded_publish)
         if msg.qos == QoS.AT_LEAST_ONCE:
             msg.state = OutboundQoSState.WAIT_PUBACK
         else:
@@ -782,6 +775,38 @@ class ProtocolEngine:
                 f"Encoded packet size {size} exceeds broker maximum_packet_size {limit}"
             )
 
+    def _check_outbound_publish_budget(
+        self,
+        topic: str,
+        payload: bytes,
+        qos: QoS,
+        properties: Properties | None,
+    ) -> None:
+        """Cheap upper bound vs negotiated maximum_packet_size (before full encode)."""
+        limit = self.negotiated.maximum_packet_size
+        if limit is None:
+            return
+        topic_len = len(topic.encode("utf-8"))
+        props_len = 0
+        if self.config.protocol == MQTTProtocolVersion.MQTTv5:
+            # Worst case: encode_properties; empty → 1 byte.
+            props_len = len(encode_properties(properties, PUBLISH))
+        mid_len = 2 if qos else 0
+        # Fixed header worst case: 1 type + 4 VBI bytes.
+        estimate = 1 + 4 + 2 + topic_len + mid_len + props_len + len(payload)
+        if estimate > limit:
+            # Exact check — estimate is pessimistic on VBI length.
+            wire = PublishPacket(
+                topic=topic,
+                payload=payload,
+                qos=qos,
+                retain=False,
+                dup=False,
+                mid=1 if qos else None,
+                properties=properties,
+            ).encode_write_item(self.config.protocol)
+            self._check_outbound_size(wire)
+
     def _check_subscribe_capabilities(
         self,
         topic: str,
@@ -832,6 +857,10 @@ class ProtocolEngine:
                 )
         if msg.encoded_publish is not None:
             self._check_outbound_size(msg.encoded_publish)
+        else:
+            self._check_outbound_publish_budget(
+                msg.topic, msg.payload, msg.qos, msg.properties
+            )
 
     def _fail_queued_violating_negotiation(self) -> None:
         kept: deque[OutboundMessage] = deque()

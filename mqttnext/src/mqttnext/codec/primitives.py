@@ -15,6 +15,10 @@ def pack_u16(value: int) -> bytes:
     return _U16.pack(value)
 
 
+def append_u16(buf: bytearray, value: int) -> None:
+    buf += _U16.pack(value)
+
+
 def unpack_u16(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tuple[int, int]:
     if offset + 2 > len(buffer):
         raise MalformedPacketError("Incomplete uint16")
@@ -38,14 +42,27 @@ def pack_utf8(value: str | bytes) -> bytes:
     return _U16.pack(len(data)) + data
 
 
+def append_utf8(buf: bytearray, value: str | bytes) -> None:
+    """Append MQTT UTF-8 string encoding into *buf* without intermediate concat."""
+    data = value.encode("utf-8") if isinstance(value, str) else value
+    if len(data) > 65535:
+        raise ValueError("UTF-8 string too long for MQTT")
+    buf += _U16.pack(len(data))
+    buf += data
+
+
 def unpack_utf8(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tuple[str, int]:
     length, pos = unpack_u16(buffer, offset)
     end = pos + length
     if end > len(buffer):
         raise MalformedPacketError("Incomplete UTF-8 string")
-    raw = bytes(buffer[pos:end])
     try:
-        text = raw.decode("utf-8")
+        # bytes/bytearray: decode the slice directly (one owned copy for bytes).
+        # memoryview: tobytes() then decode.
+        if isinstance(buffer, (bytes, bytearray)):
+            text = buffer[pos:end].decode("utf-8")
+        else:
+            text = memoryview(buffer)[pos:end].tobytes().decode("utf-8")
     except UnicodeDecodeError as exc:
         raise MalformedPacketError("Invalid UTF-8 data") from exc
     _validate_mqtt_utf8(text)
@@ -67,6 +84,11 @@ def unpack_binary(buffer: bytes | bytearray | memoryview, offset: int = 0) -> tu
 
 
 def _validate_mqtt_utf8(text: str) -> None:
+    # Fast path: pure ASCII cannot contain surrogates or U+FEFF.
+    if text.isascii():
+        if "\x00" in text:
+            raise MalformedPacketError("[MQTT-1.5.4-2] Null in UTF-8 data")
+        return
     for ch in text:
         code = ord(ch)
         if code == 0x00:

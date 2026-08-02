@@ -54,7 +54,7 @@ class AsyncClient:
         keepalive: int = 60,
         username: str | None = None,
         password: bytes | str | None = None,
-        local_receive_maximum: int = 20,
+        local_receive_maximum: int = 100,
         connect_properties: Properties | None = None,
         will: Message | None = None,
         will_properties: Properties | None = None,
@@ -100,6 +100,7 @@ class AsyncClient:
         self._max_outbound_bytes = max_outbound_bytes
         self._max_outbound_messages = max_outbound_messages
         self._outbound_space = asyncio.Condition()
+        self._outbound_waiters = 0
         self._connack_fut: asyncio.Future[ConnAckPacket] | None = None
         self._receipts: dict[int, PublishReceipt] = {}
         self._sub_futs: dict[int, asyncio.Future[SubscribeResult]] = {}
@@ -263,12 +264,12 @@ class AsyncClient:
             retain=retain,
             properties=properties,
         )
-        event = asyncio.Event()
         if handle.qos == QoS.AT_MOST_ONCE:
-            event.set()
-            receipt = PublishReceipt(mid=None, qos=handle.qos, _event=event)
+            # QoS 0 completes at queue time — skip Event allocation.
+            receipt = PublishReceipt(mid=None, qos=handle.qos, _event=None)
         else:
             assert handle.mid is not None
+            event = asyncio.Event()
             receipt = PublishReceipt(mid=handle.mid, qos=handle.qos, _event=event)
             self._receipts[handle.mid] = receipt
         await self._flush_effects()
@@ -343,12 +344,17 @@ class AsyncClient:
                 self._decoder.feed(data)
                 # Drain the whole buffer before waiting on the socket again —
                 # a fixed packet cap would strand frames when the peer pauses.
+                # One flush per read keeps SEND-before-MESSAGE ordering while
+                # avoiding N await points for N/100 batches.
+                handled = 0
                 while True:
-                    batch = self._decoder.drain_packets(limit=100)
-                    if not batch:
+                    n = self._decoder.process_packets(
+                        self._engine.handle_raw, limit=256
+                    )
+                    if n == 0:
                         break
-                    for raw in batch:
-                        self._engine.handle_raw(raw)
+                    handled += n
+                if handled:
                     await self._flush_effects()
         except asyncio.CancelledError:
             raise
@@ -402,22 +408,36 @@ class AsyncClient:
             while True:
                 first = await self._outbound.get()
                 batch: list[WriteItem] = [first]
-                while len(batch) < 64:
+                while len(batch) < 256:
                     try:
                         batch.append(self._outbound.get_nowait())
                     except asyncio.QueueEmpty:
                         break
                 try:
+                    # Coalesce contiguous small frames into one writelines call.
+                    # Never await drain() after the batch (deadlocks vs reader ACK).
+                    contiguous: list[bytes] = []
+                    transport = self._transport
+
+                    async def _flush_contiguous() -> None:
+                        if not contiguous:
+                            return
+                        write_many = getattr(transport, "write_many", None)
+                        if write_many is not None:
+                            await write_many(contiguous)
+                        else:
+                            for part in contiguous:
+                                await transport.write(part)
+                        contiguous.clear()
+
                     for data in batch:
                         if isinstance(data, tuple):
+                            await _flush_contiguous()
                             for part in data:
-                                await self._transport.write(part)
+                                await transport.write(part)
                         else:
-                            await self._transport.write(data)
-                    # Do NOT await drain() here: it can deadlock against the
-                    # reader when the socket send buffer is full and the reader
-                    # needs to enqueue PUBREL/PUBACK into this same queue.
-                    # TcpTransport.write() drains only above 64 KiB.
+                            contiguous.append(data)
+                    await _flush_contiguous()
                     self._last_outbound = time.monotonic()
                 finally:
                     released = 0
@@ -426,7 +446,8 @@ class AsyncClient:
                         self._outbound.task_done()
                     async with self._outbound_space:
                         self._outbound_bytes = max(0, self._outbound_bytes - released)
-                        self._outbound_space.notify_all()
+                        if self._outbound_waiters:
+                            self._outbound_space.notify_all()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -442,6 +463,18 @@ class AsyncClient:
 
     async def _enqueue_outbound(self, item: WriteItem) -> None:
         size = item_size(item)
+        # Fast path (no Condition): safe under asyncio's cooperative scheduling
+        # as long as we do not await between the capacity check and the update.
+        messages_full = self._outbound.qsize() >= self._max_outbound_messages
+        bytes_blocked = (
+            self._outbound_bytes + size > self._max_outbound_bytes
+            and not (self._outbound_bytes == 0 and self._outbound.empty())
+        )
+        if not messages_full and not bytes_blocked:
+            self._outbound.put_nowait(item)
+            self._outbound_bytes += size
+            return
+
         async with self._outbound_space:
             while True:
                 messages_full = self._outbound.qsize() >= self._max_outbound_messages
@@ -457,7 +490,11 @@ class AsyncClient:
                 # wedged, do not block protocol forever.
                 if self._outbound.empty() and self._outbound_bytes == 0:
                     break
-                await self._outbound_space.wait()
+                self._outbound_waiters += 1
+                try:
+                    await self._outbound_space.wait()
+                finally:
+                    self._outbound_waiters -= 1
             self._outbound.put_nowait(item)
             self._outbound_bytes += size
 
@@ -563,14 +600,15 @@ class AsyncClient:
             elif kind is EffectKind.PUBLISH_COMPLETE:
                 mid: int = effect.data
                 receipt = self._receipts.pop(mid, None)
-                if receipt is not None:
+                if receipt is not None and receipt._event is not None:
                     receipt._event.set()
             elif kind is EffectKind.PUBLISH_FAILED:
                 failure: PublishFailure = effect.data
                 receipt = self._receipts.pop(failure.mid, None)
                 if receipt is not None:
                     receipt._error = failure.reason
-                    receipt._event.set()
+                    if receipt._event is not None:
+                        receipt._event.set()
             elif kind is EffectKind.SUBACK:
                 result = SubscribeResult.from_packet(effect.data)
                 fut = self._sub_futs.pop(result.mid, None)
@@ -597,7 +635,8 @@ class AsyncClient:
     def _fail_pending(self, exc: BaseException) -> None:
         for receipt in self._receipts.values():
             receipt._error = exc
-            receipt._event.set()
+            if receipt._event is not None:
+                receipt._event.set()
         self._receipts.clear()
         for fut in self._sub_futs.values():
             if not fut.done():
