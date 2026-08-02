@@ -6,7 +6,8 @@ import base64
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 from mqttnext.enums import InboundQoSState, OutboundQoSState, QoS
 from mqttnext.types import InboundMessage, OutboundMessage, Properties

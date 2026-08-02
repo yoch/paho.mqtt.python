@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from mqttnext.codec.buffer import IncrementalDecoder
 from mqttnext.codec.properties import encode_properties
-from mqttnext.enums import MQTTProtocolVersion, OutboundQoSState
+from mqttnext.enums import MQTTProtocolVersion
 from mqttnext.errors import PacketTooLargeError, ProtocolError
-from mqttnext.packets import PubRecPacket, encode_frame
+from mqttnext.packets import encode_frame
 from mqttnext.enums import PacketType
 from mqttnext.protocol.engine import EffectKind, EngineConfig, ProtocolEngine
 from mqttnext.protocol.negotiated import NegotiatedSettings

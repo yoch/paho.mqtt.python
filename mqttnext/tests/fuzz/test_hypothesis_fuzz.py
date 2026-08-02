@@ -35,15 +35,12 @@ settings.register_profile(
 )
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "ci"))
 
-from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder, RawPacket
+from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder
 from mqttnext.codec.properties import PUBLISH, decode_properties
 from mqttnext.enums import MQTTProtocolVersion, OutboundQoSState, PacketType, QoS
 from mqttnext.errors import MQTTError
 from mqttnext.packets import (
-    ConnAckPacket,
     PublishPacket,
-    PubRelPacket,
-    SubAckPacket,
     encode_frame,
 )
 from mqttnext.protocol.engine import EngineConfig, ProtocolEngine

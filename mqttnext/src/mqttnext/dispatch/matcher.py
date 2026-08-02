@@ -5,7 +5,8 @@ Kept as a small standalone module so dispatch stays outside the protocol engine.
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 
 class TopicMatcher:

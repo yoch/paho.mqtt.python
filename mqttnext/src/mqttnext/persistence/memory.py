@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Iterator, Protocol
+from typing import Protocol
+from collections.abc import Iterator
 
 from mqttnext.types import InboundMessage, OutboundMessage
 

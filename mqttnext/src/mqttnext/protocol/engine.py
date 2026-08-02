@@ -40,7 +40,6 @@ from mqttnext.packets import (
     UnsubscribePacket,
     encode_disconnect,
     encode_pingreq,
-    encode_pingresp,
 )
 from mqttnext.persistence.memory import InflightStore, MemoryInflightStore
 from mqttnext.protocol.flow_control import FlowControl

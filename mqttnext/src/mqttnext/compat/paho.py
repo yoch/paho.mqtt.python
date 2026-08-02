@@ -256,7 +256,7 @@ class Client:
 
         if self._in_callback:
             result = command()
-            asyncio.create_task(self._async._flush_effects())
+            self._async._spawn_callback(self._async._flush_effects)
             return result
 
         handoff: dict[str, Any] = {}
@@ -335,10 +335,10 @@ class Client:
             if handle.mid is not None:
                 self._async._receipts[handle.mid] = receipt
 
-            asyncio.create_task(self._async._flush_effects())
+            self._async._spawn_callback(self._async._flush_effects)
             info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
             if self.on_publish is not None and receipt.qos != QoS.AT_MOST_ONCE:
-                asyncio.create_task(self._watch_publish(receipt))
+                self._async._spawn_callback(self._watch_publish, receipt)
             return info
 
         # Off-loop thread: bounded handoff to allocate mid + receipt on the loop.

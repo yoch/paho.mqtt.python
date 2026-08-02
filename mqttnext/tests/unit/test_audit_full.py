@@ -10,11 +10,7 @@ from mqttnext.api.async_client import AsyncClient
 from mqttnext.codec.buffer import IncrementalDecoder, RawPacket
 from mqttnext.enums import ConnectionState, MQTTProtocolVersion, PacketType, QoS
 from mqttnext.packets import (
-    AuthPacket,
     PublishPacket,
-    PubRecPacket,
-    SubscribePacket,
-    Subscription,
     encode_frame,
 )
 from mqttnext.codec.primitives import pack_u16
@@ -104,8 +100,8 @@ def test_replay_deferred_reencodes_dup() -> None:
     # CONNACK session_present=0, then publish 2 QoS1 (second queued).
     engine.handle_raw(RawPacket(PacketType.CONNACK, 0, b"\x00\x00"))
     engine.take_effects()
-    h1 = engine.queue_publish("t", b"1", qos=QoS.AT_LEAST_ONCE)
-    h2 = engine.queue_publish("t", b"2", qos=QoS.AT_LEAST_ONCE)
+    engine.queue_publish("t", b"1", qos=QoS.AT_LEAST_ONCE)
+    engine.queue_publish("t", b"2", qos=QoS.AT_LEAST_ONCE)
     engine.take_effects()
     # Simulate disconnect + reconnect with session_present=1, RM=1.
     engine.notify_transport_closed()

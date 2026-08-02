@@ -594,6 +594,19 @@ class AsyncClient:
             and self._reconnect.should_retry(reason, self._engine.config.protocol)
         )
 
+    async def _write_contiguous(
+        self, transport: AsyncTransport, parts: list[bytes]
+    ) -> None:
+        if not parts:
+            return
+        write_many = getattr(transport, "write_many", None)
+        if write_many is not None:
+            await write_many(parts)
+        else:
+            for part in parts:
+                await transport.write(part)
+        parts.clear()
+
     async def _write_loop(self) -> None:
         assert self._transport is not None
         try:
@@ -610,26 +623,17 @@ class AsyncClient:
                     # Never await drain() after the batch (deadlocks vs reader ACK).
                     contiguous: list[bytes] = []
                     transport = self._transport
-
-                    async def _flush_contiguous() -> None:
-                        if not contiguous:
-                            return
-                        write_many = getattr(transport, "write_many", None)
-                        if write_many is not None:
-                            await write_many(contiguous)
-                        else:
-                            for part in contiguous:
-                                await transport.write(part)
-                        contiguous.clear()
+                    if transport is None:
+                        raise ConnectionError("Transport closed while writer was active")
 
                     for data in batch:
                         if isinstance(data, tuple):
-                            await _flush_contiguous()
+                            await self._write_contiguous(transport, contiguous)
                             for part in data:
                                 await transport.write(part)
                         else:
                             contiguous.append(data)
-                    await _flush_contiguous()
+                    await self._write_contiguous(transport, contiguous)
                     self._last_outbound = time.monotonic()
                 finally:
                     released = 0

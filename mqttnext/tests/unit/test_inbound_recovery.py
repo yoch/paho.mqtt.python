@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 
 from mqttnext.api.async_client import AsyncClient
 from mqttnext.enums import (

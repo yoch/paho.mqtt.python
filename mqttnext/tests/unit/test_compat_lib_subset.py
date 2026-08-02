@@ -49,7 +49,6 @@ class FakeBrokerTransport:
                     self._rx.put_nowait(PubRecPacket(mid=pub.mid).encode())
             elif raw.packet_type is PacketType.PUBREL:
                 from mqttnext.packets import PubCompPacket
-                from mqttnext.codec.vbi import decode_vbi
 
                 mid = int.from_bytes(raw.remaining[:2], "big")
                 self._rx.put_nowait(PubCompPacket(mid=mid).encode())

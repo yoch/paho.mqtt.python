@@ -41,7 +41,7 @@ from mqttnext.packets import (
     UnsubAckPacket,
     encode_frame,
 )
-from mqttnext.protocol.engine import EffectKind, EngineConfig, ProtocolEngine
+from mqttnext.protocol.engine import EngineConfig, ProtocolEngine
 from mqttnext.types import Properties
 
 # Exceptions a robust client may raise on hostile input. Anything else = bug.

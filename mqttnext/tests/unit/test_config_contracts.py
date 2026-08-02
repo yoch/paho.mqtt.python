@@ -5,15 +5,12 @@ from __future__ import annotations
 import pytest
 
 from mqttnext.api.async_client import AsyncClient
-from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder
-from mqttnext.codec.properties import CONNECT
+from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE
 from mqttnext.codec.vbi import decode_vbi
 from mqttnext.enums import MQTTProtocolVersion
-from mqttnext.packets import ConnectPacket
 from mqttnext.protocol.engine import EngineConfig, ProtocolEngine
 from mqttnext.protocol.negotiated import NegotiatedSettings
 from mqttnext.protocol.reconnect import ReconnectPolicy
-from mqttnext.types import Properties
 
 
 @pytest.mark.parametrize(
