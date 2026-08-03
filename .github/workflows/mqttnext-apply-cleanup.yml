@@ -25,10 +25,28 @@ jobs:
       - name: Restore reviewed cleanup tree
         shell: bash
         run: |
-          wc -c mqttnext/tools/cleanup-focus.*
-          sha256sum mqttnext/tools/cleanup-focus.*
-          grep -H -n 'ELLIPSIZATION' mqttnext/tools/cleanup-focus.* || true
-          cat mqttnext/tools/cleanup-focus.* | base64 -d > /tmp/mqttnext-cleanup.tgz
+          echo "1f61221484a33a618d69fb2bd6b33210eb789603e52e44d8fefff74cb8ba3193  mqttnext/tools/cleanup-focus.00" | sha256sum -c -
+          echo "4e36c35e3b1f9f7c7b0af3a11086a3865eacc94af14f9b50af8f032668554ced  mqttnext/tools/cleanup-focus.01a" | sha256sum -c -
+          echo "51c78b7a6e94dae30220fbf460876216d4b9c3472f40e7564dd705a10437b612  mqttnext/tools/cleanup-focus.01b" | sha256sum -c -
+          echo "4a18991549fe2c899131b4eb5718ae42b504f74f9fe05b721eb9ea36719db4e0  mqttnext/tools/cleanup-focus.02" | sha256sum -c -
+          echo "3fb441dac0d62a29bfb42087817d60e05da5ecd7f0fc7e1121a8095b2c395530  mqttnext/tools/cleanup-focus.03a" | sha256sum -c -
+          echo "71bc1dc2100d95d7c9ba305087cfc27741e44ddada7737582fe8c6b7f49cbb49  mqttnext/tools/cleanup-focus.03b" | sha256sum -c -
+          echo "03a0ef7e17e800845775b2b1b44c99b1fa38f2d73e2e20223f3f8d6f83edb603  mqttnext/tools/cleanup-focus.04" | sha256sum -c -
+          echo "505da567d0c35a7014928a0a2b8c3c0dc686e2bd9d38fa051c7e820d4181b054  mqttnext/tools/cleanup-focus.05" | sha256sum -c -
+          echo "5517de0fa81db6ebe05c1636ca67c123d76fb1eb919bdfcfe6d5b3e8c627e6eb  mqttnext/tools/cleanup-focus.06" | sha256sum -c -
+          echo "1ecfbac1c6c6ad08058fda10c9610398b9acc13744ea28116525e501f997d890  mqttnext/tools/cleanup-focus.07" | sha256sum -c -
+          cat \
+            mqttnext/tools/cleanup-focus.00 \
+            mqttnext/tools/cleanup-focus.01a \
+            mqttnext/tools/cleanup-focus.01b \
+            mqttnext/tools/cleanup-focus.02 \
+            mqttnext/tools/cleanup-focus.03a \
+            mqttnext/tools/cleanup-focus.03b \
+            mqttnext/tools/cleanup-focus.04 \
+            mqttnext/tools/cleanup-focus.05 \
+            mqttnext/tools/cleanup-focus.06 \
+            mqttnext/tools/cleanup-focus.07 \
+            | base64 -d > /tmp/mqttnext-cleanup.tgz
           echo "2761e90c20eed8b70219cd029486814055de7895772d716ad990697a61cc4f0c  /tmp/mqttnext-cleanup.tgz" | sha256sum -c -
           tar -xzf /tmp/mqttnext-cleanup.tgz -C mqttnext
           rm -rf mqttnext/benchmarks/results
@@ -83,6 +101,6 @@ jobs:
           git config user.name "mqttnext cleanup agent"
           git config user.email "actions@users.noreply.github.com"
           git add MQTTNEXT.md mqttnext
-          git reset -- mqttnext/tools/cleanup-focus.* mqttnext/tools/cleanup_audit.py
+          git reset -- mqttnext/tools/cleanup-focus.* mqttnext/tools/cleanup_audit.py mqttnext/tools/cleanup-core.part*
           git commit -m "simplify transports, helpers, persistence, tests, and docs"
           git push origin HEAD:${{ github.head_ref }}
