@@ -1,0 +1,110 @@
+name: mqttnext real broker subscriber profiling
+
+on:
+  pull_request:
+    paths:
+      - "mqttnext/tools/profile_subscriber.py"
+      - ".github/workflows/mqttnext-subscriber-profiler.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  subscriber:
+    if: github.head_ref == 'agent/mqttnext-profiler-audit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package and broker
+        working-directory: mqttnext
+        run: |
+          pip install -e ".[dev]" py-spy==0.4.1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients
+      - name: Start broker
+        run: |
+          mkdir -p /tmp/mqttnext-subscriber
+          cat > /tmp/mqttnext-subscriber/mosquitto.conf <<'EOF'
+          persistence false
+          allow_anonymous true
+          max_inflight_messages 2000
+          max_queued_messages 200000
+          max_queued_bytes 0
+          connection_messages false
+          log_type error
+          listener 11883 127.0.0.1
+          EOF
+          mosquitto -c /tmp/mqttnext-subscriber/mosquitto.conf > /tmp/mqttnext-subscriber/mosquitto.log 2>&1 &
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          exit 1
+      - name: Unprofiled subscriber baselines
+        working-directory: mqttnext
+        run: |
+          for run in 1 2 3; do
+            python tools/profile_subscriber.py --delivery callback --qos 0 --count 100000 --payload-size 64 \
+              >> /tmp/mqttnext-subscriber/callback-qos0.ndjson
+            python tools/profile_subscriber.py --delivery iterator --qos 0 --count 100000 --payload-size 64 \
+              >> /tmp/mqttnext-subscriber/iterator-qos0.ndjson
+            python tools/profile_subscriber.py --delivery callback --qos 1 --count 50000 --payload-size 64 \
+              >> /tmp/mqttnext-subscriber/callback-qos1.ndjson
+            python tools/profile_subscriber.py --delivery callback --qos 0 --count 20000 --payload-size 4096 \
+              >> /tmp/mqttnext-subscriber/callback-qos0-4k.ndjson
+          done
+      - name: Subscriber CPU profiles
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile() {
+            local name="$1"; shift
+            local output="/tmp/mqttnext-subscriber/${name}.speedscope.json"
+            py-spy record --gil --rate 500 --format speedscope -o "$output" -- "$@" || test -s "$output"
+          }
+          profile callback-qos0-cpu python tools/profile_subscriber.py \
+            --delivery callback --qos 0 --count 100000 --payload-size 64
+          profile iterator-qos0-cpu python tools/profile_subscriber.py \
+            --delivery iterator --qos 0 --count 100000 --payload-size 64
+          profile callback-qos1-cpu python tools/profile_subscriber.py \
+            --delivery callback --qos 1 --count 50000 --payload-size 64
+          profile callback-qos0-4k-cpu python tools/profile_subscriber.py \
+            --delivery callback --qos 0 --count 20000 --payload-size 4096
+          output=/tmp/mqttnext-subscriber/callback-qos0.svg
+          py-spy record --gil --rate 500 --format flamegraph -o "$output" -- \
+            python tools/profile_subscriber.py --delivery callback --qos 0 --count 100000 --payload-size 64 \
+            || test -s "$output"
+      - name: Summarize
+        working-directory: mqttnext
+        run: |
+          python - <<'PY' > /tmp/mqttnext-subscriber/summary.json
+          import glob
+          import json
+          import os
+          import statistics
+
+          summary = {}
+          for path in glob.glob('/tmp/mqttnext-subscriber/*.ndjson'):
+              rows = [json.loads(line) for line in open(path) if line.strip()]
+              summary[os.path.basename(path, '.ndjson')] = {
+                  'runs': len(rows),
+                  'median_delivered_msg_s': statistics.median(r['delivered_msg_s'] for r in rows),
+                  'median_cpu_us_per_message': statistics.median(r['cpu_us_per_message'] for r in rows),
+                  'median_rss_mib': statistics.median(r['max_rss_mib'] for r in rows),
+              }
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+          cat /tmp/mqttnext-subscriber/summary.json
+      - name: Upload subscriber profiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqttnext-subscriber-${{ github.run_id }}
+          path: /tmp/mqttnext-subscriber
+          if-no-files-found: error
+          retention-days: 14
