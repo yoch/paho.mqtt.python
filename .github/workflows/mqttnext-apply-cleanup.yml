@@ -25,6 +25,9 @@ jobs:
       - name: Restore reviewed cleanup tree
         shell: bash
         run: |
+          wc -c mqttnext/tools/cleanup-focus.*
+          sha256sum mqttnext/tools/cleanup-focus.*
+          grep -H -n 'ELLIPSIZATION' mqttnext/tools/cleanup-focus.* || true
           cat mqttnext/tools/cleanup-focus.* | base64 -d > /tmp/mqttnext-cleanup.tgz
           echo "2761e90c20eed8b70219cd029486814055de7895772d716ad990697a61cc4f0c  /tmp/mqttnext-cleanup.tgz" | sha256sum -c -
           tar -xzf /tmp/mqttnext-cleanup.tgz -C mqttnext
@@ -80,6 +83,6 @@ jobs:
           git config user.name "mqttnext cleanup agent"
           git config user.email "actions@users.noreply.github.com"
           git add MQTTNEXT.md mqttnext
-          git reset 'mqttnext/tools/cleanup-focus.*' mqttnext/tools/cleanup_audit.py
+          git reset -- mqttnext/tools/cleanup-focus.* mqttnext/tools/cleanup_audit.py
           git commit -m "simplify transports, helpers, persistence, tests, and docs"
           git push origin HEAD:${{ github.head_ref }}
