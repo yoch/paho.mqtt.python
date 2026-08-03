@@ -1,0 +1,111 @@
+name: mqttnext benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mqttnext-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: mqttnext
+        run: |
+          pip install -e ".[dev]" paho-mqtt==2.1.0 gmqtt==0.7.0
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients openssl iproute2
+      - name: Start isolated TCP and TLS broker
+        run: |
+          mkdir -p /tmp/mqttnext-bench
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /tmp/mqttnext-bench/key.pem \
+            -out /tmp/mqttnext-bench/cert.pem \
+            -days 1 -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          chmod 0644 /tmp/mqttnext-bench/key.pem /tmp/mqttnext-bench/cert.pem
+          cat > /tmp/mqttnext-bench/mosquitto.conf <<'EOF'
+          user root
+          persistence false
+          allow_anonymous true
+          listener 11883 127.0.0.1
+          listener 18884 127.0.0.1
+          cafile /tmp/mqttnext-bench/cert.pem
+          certfile /tmp/mqttnext-bench/cert.pem
+          keyfile /tmp/mqttnext-bench/key.pem
+          require_certificate false
+          EOF
+          mosquitto -c /tmp/mqttnext-bench/mosquitto.conf -v \
+            > /tmp/mqttnext-bench/mosquitto.log 2>&1 &
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && \
+            (echo > /dev/tcp/127.0.0.1/18884) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          cat /tmp/mqttnext-bench/mosquitto.log
+          exit 1
+      - name: Comparable publisher benchmark
+        working-directory: mqttnext
+        run: |
+          python benchmarks/compare_libs.py \
+            --output /tmp/mqttnext-bench/compare.json
+      - name: Confirmed local TCP delivery
+        working-directory: mqttnext
+        run: |
+          python benchmarks/realworld.py \
+            --port 11883 \
+            --profile local \
+            --output /tmp/mqttnext-bench/realworld-tcp.json
+      - name: Confirmed TLS delivery
+        working-directory: mqttnext
+        run: |
+          python benchmarks/realworld.py \
+            --host localhost \
+            --port 18884 \
+            --cafile /tmp/mqttnext-bench/cert.pem \
+            --profile local-tls \
+            --count 1500 \
+            --output /tmp/mqttnext-bench/realworld-tls.json
+      - name: Confirmed WAN-profile delivery
+        working-directory: mqttnext
+        run: |
+          sudo tc qdisc replace dev lo root netem \
+            delay 20ms 5ms distribution normal loss 0.1%
+          trap 'sudo tc qdisc del dev lo root || true' EXIT
+          python benchmarks/realworld.py \
+            --port 11883 \
+            --profile wan-20ms-jitter5ms-loss0.1pct \
+            --count 1500 \
+            --output /tmp/mqttnext-bench/realworld-wan.json
+          sudo tc qdisc del dev lo root
+          trap - EXIT
+      - name: Application delivery and persistence stress
+        working-directory: mqttnext
+        run: |
+          python benchmarks/application_stress.py \
+            --output /tmp/mqttnext-bench/application-stress.json
+      - name: Upload measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqttnext-benchmarks-${{ github.run_id }}
+          path: |
+            /tmp/mqttnext-bench/*.json
+            /tmp/mqttnext-bench/mosquitto.log
+          if-no-files-found: warn
+          retention-days: 30
