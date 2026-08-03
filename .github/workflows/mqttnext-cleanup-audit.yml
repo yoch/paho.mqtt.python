@@ -53,6 +53,13 @@ jobs:
           python -X dev -m pytest -q tests/unit \
             --strict-config --strict-markers --durations=25 \
             | tee /tmp/mqttnext-cleanup/strict-tests.txt
+      - name: Archive reviewed tree
+        run: |
+          tar --exclude='mqttnext/benchmarks/results' \
+            --exclude='mqttnext/.pytest_cache' \
+            --exclude='mqttnext/.mypy_cache' \
+            --exclude='mqttnext/.ruff_cache' \
+            -czf /tmp/mqttnext-cleanup/mqttnext-source.tgz mqttnext
       - name: Upload audit reports
         if: always()
         uses: actions/upload-artifact@v4
