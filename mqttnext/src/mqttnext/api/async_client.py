@@ -797,11 +797,12 @@ class AsyncClient:
         return self._engine.config.keepalive
 
     def _collect_effects_locked(self) -> None:
-        effects = self._engine.take_effects()
-        self._pending_effects.extend(effect for effect in effects if effect.kind is EffectKind.SEND)
-        self._pending_effects.extend(
-            effect for effect in effects if effect.kind is not EffectKind.SEND
-        )
+        sends: list[EngineEffect] = []
+        events: list[EngineEffect] = []
+        for effect in self._engine.take_effects():
+            (sends if effect.kind is EffectKind.SEND else events).append(effect)
+        self._pending_effects.extend(sends)
+        self._pending_effects.extend(events)
 
     def _schedule_effect_flush(self) -> None:
         # A producer may request another flush while the current task is
@@ -964,11 +965,17 @@ class AsyncClient:
 
     async def _put_message(self, message: Message) -> None:
         try:
-            await asyncio.wait_for(self._messages.put(message), timeout=self._delivery_timeout)
-        except TimeoutError as exc:
-            raise MessageDeliveryError(
-                f"Iterator delivery queue remained full for {self._delivery_timeout:.3f}s"
-            ) from exc
+            self._messages.put_nowait(message)
+        except asyncio.QueueFull:
+            try:
+                await asyncio.wait_for(
+                    self._messages.put(message),
+                    timeout=self._delivery_timeout,
+                )
+            except TimeoutError as exc:
+                raise MessageDeliveryError(
+                    f"Iterator delivery queue remained full for {self._delivery_timeout:.3f}s"
+                ) from exc
         self._message_ready.set()
 
     def _ensure_callback_worker(self) -> None:
@@ -987,15 +994,19 @@ class AsyncClient:
 
     async def _enqueue_callback(self, callback: Callable[..., Any], *args: Any) -> None:
         self._ensure_callback_worker()
+        job = (callback, args)
         try:
-            await asyncio.wait_for(
-                self._callback_queue.put((callback, args)),
-                timeout=self._delivery_timeout,
-            )
-        except TimeoutError as exc:
-            raise MessageDeliveryError(
-                f"Callback delivery queue remained full for {self._delivery_timeout:.3f}s"
-            ) from exc
+            self._callback_queue.put_nowait(job)
+        except asyncio.QueueFull:
+            try:
+                await asyncio.wait_for(
+                    self._callback_queue.put(job),
+                    timeout=self._delivery_timeout,
+                )
+            except TimeoutError as exc:
+                raise MessageDeliveryError(
+                    f"Callback delivery queue remained full for {self._delivery_timeout:.3f}s"
+                ) from exc
 
     async def _callback_worker(self) -> None:
         try:

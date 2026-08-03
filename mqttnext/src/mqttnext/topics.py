@@ -20,14 +20,24 @@ def validate_publish_topic(topic: str, *, allow_empty: bool = False) -> None:
         raise ProtocolError("PUBLISH topic must not contain wildcards")
 
 
-def validate_received_publish_topic(topic: str) -> None:
-    """Inbound PUBLISH topic: wildcards are a protocol error."""
+def validate_received_publish_topic(
+    topic: str,
+    *,
+    utf8_validated: bool = False,
+) -> None:
+    """Validate an inbound PUBLISH topic.
+
+    Packet decoding already performs the complete MQTT UTF-8 validation. The
+    internal ``utf8_validated`` fast path avoids encoding and validating the
+    same topic a second time while preserving the public standalone contract.
+    """
     if not topic:
         return  # empty topic may be alias-resolved later
-    try:
-        _check_utf8_mqtt_topic(topic)
-    except ProtocolError as exc:
-        raise MalformedPacketError(str(exc)) from exc
+    if not utf8_validated:
+        try:
+            _check_utf8_mqtt_topic(topic)
+        except ProtocolError as exc:
+            raise MalformedPacketError(str(exc)) from exc
     if "+" in topic or "#" in topic:
         raise MalformedPacketError("PUBLISH topic must not contain wildcards")
 

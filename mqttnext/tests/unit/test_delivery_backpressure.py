@@ -82,3 +82,27 @@ async def test_force_close_discards_all_old_connection_effects() -> None:
     )
     await client._force_close()
     assert not client._pending_effects
+
+
+async def test_delivery_queue_fast_paths_avoid_timeout_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AsyncClient(message_delivery="iterator")
+
+    async def unexpected_wait_for(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("wait_for must only be used after queue saturation")
+
+    monkeypatch.setattr(asyncio, "wait_for", unexpected_wait_for)
+    message = Message(topic="fast", payload=b"x")
+    await client._put_message(message)
+    assert client._messages.get_nowait() is message
+
+    called = asyncio.Event()
+
+    def callback(_message: Message) -> None:
+        called.set()
+
+    await client._enqueue_callback(callback, message)
+    await asyncio.sleep(0)
+    assert called.is_set()
+    await client._shutdown_callback_worker(drain=False)

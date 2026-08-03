@@ -150,3 +150,20 @@ def test_sqlite_context_manager_and_idempotent_close(tmp_path: Path) -> None:
         store.put_out(outbound())
         assert store.get_out(7) is not None
     store.close()
+
+
+def test_delete_out_uses_single_delete_without_select(tmp_path: Path) -> None:
+    store = SqliteInflightStore(tmp_path / "delete.db")
+    store.put_out(outbound())
+    trace: list[str] = []
+    store._conn.set_trace_callback(trace.append)
+
+    assert store.delete_out(7) is True
+    assert store.delete_out(7) is False
+
+    statements = [statement for statement in trace if statement.startswith(("SELECT", "DELETE"))]
+    assert statements == [
+        "DELETE FROM outbound WHERE mid=7",
+        "DELETE FROM outbound WHERE mid=7",
+    ]
+    store.close()

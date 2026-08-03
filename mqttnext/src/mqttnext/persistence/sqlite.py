@@ -232,6 +232,13 @@ class SqliteInflightStore:
             self._commit_if_needed()
         return _row_to_out(row)
 
+    def delete_out(self, mid: int) -> bool:
+        """Delete an outbound record without reading or reconstructing it."""
+        with self._lock:
+            cursor = self._conn.execute("DELETE FROM outbound WHERE mid=?", (mid,))
+            self._commit_if_needed()
+            return cursor.rowcount > 0
+
     def update_out(self, msg: OutboundMessage) -> None:
         with self._lock:
             cur = self._conn.execute(
