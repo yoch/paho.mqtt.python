@@ -51,7 +51,9 @@ documentation set.
 returns one `PublishBatchReceipt`. QoS 0 publications are queued in bounded
 chunks with one engine lock/effect flush per chunk. QoS 1/2 share one aggregate
 completion tracker; the negotiated inflight window is continuously refilled
-without spawning a task or event for each packet identifier.
+without spawning a task or event for each packet identifier. Successful batches
+retain only one inflight window plus one bounded submission chunk, regardless of
+the total iterable size. Failures are reported by zero-based input index.
 
 ```python
 from mqttnext.api import PublishMessage

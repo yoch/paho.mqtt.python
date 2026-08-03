@@ -28,7 +28,6 @@ class PublishBatchReceipt:
     """Aggregate completion handle without one task/event per publication."""
 
     __slots__ = (
-        "_mids",
         "_pending",
         "_failures",
         "_done",
@@ -40,7 +39,9 @@ class PublishBatchReceipt:
     )
 
     def __init__(self) -> None:
-        self._mids: list[int | None] = []
+        # At most the client's bounded pending window is retained. MQTT
+        # packet identifiers may be reused during a long batch, so failures are
+        # keyed by the stable zero-based input index stored as the value.
         self._pending: dict[int, int] = {}
         self._failures: dict[int, BaseException] = {}
         self._done = asyncio.Event()
@@ -49,10 +50,6 @@ class PublishBatchReceipt:
         self._submitted = 0
         self._completed = 0
         self._fatal: BaseException | None = None
-
-    @property
-    def mids(self) -> tuple[int | None, ...]:
-        return tuple(self._mids)
 
     @property
     def submitted(self) -> int:
@@ -86,7 +83,6 @@ class PublishBatchReceipt:
 
     def _register(self, mid: int | None) -> None:
         index = self._submitted
-        self._mids.append(mid)
         self._submitted += 1
         if mid is None:
             self._completed += 1

@@ -120,7 +120,6 @@ async def run_publisher(args: argparse.Namespace, topic: str) -> tuple[float, fl
         receipt = await client.publish_many(
             messages,
             chunk_size=CHUNK,
-            max_pending=WINDOW + CHUNK,
         )
         await receipt.wait()
 
@@ -249,8 +248,7 @@ def summarize(samples: list[dict[str, float | int | str]]) -> dict[str, object]:
             for index in range(len(batch))
         ]
         cpu_ratios = [
-            float(batch[index]["cpu_us_per_message"])
-            / float(baseline[index]["cpu_us_per_message"])
+            float(batch[index]["cpu_us_per_message"]) / float(baseline[index]["cpu_us_per_message"])
             for index in range(len(batch))
         ]
         rss_ratios = [
@@ -331,7 +329,13 @@ def run_parent(args: argparse.Namespace) -> None:
                 )
 
     summary = summarize(samples)
-    output = {"window": WINDOW, "chunk": CHUNK, "repeats": args.repeats, "samples": samples, **summary}
+    output = {
+        "window": WINDOW,
+        "chunk": CHUNK,
+        "repeats": args.repeats,
+        "samples": samples,
+        **summary,
+    }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2))
     print(json.dumps(summary["decisions"], indent=2))

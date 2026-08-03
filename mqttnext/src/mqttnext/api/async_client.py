@@ -435,7 +435,6 @@ class AsyncClient:
         messages: Iterable[PublishMessage],
         *,
         chunk_size: int = 256,
-        max_pending: int | None = None,
         nowait: bool = False,
     ) -> PublishBatchReceipt:
         """Publish a batch with bounded memory and aggregate completion.
@@ -446,16 +445,13 @@ class AsyncClient:
         """
         if chunk_size <= 0:
             raise ValueError("chunk_size must be greater than 0")
-        if max_pending is not None and max_pending <= 0:
-            raise ValueError("max_pending must be greater than 0")
-
         receipt = PublishBatchReceipt()
         iterator = iter(messages)
         flow_limit = self._engine.flow.limit
-        pending_limit = max(
-            flow_limit + chunk_size if max_pending is None else max_pending,
-            flow_limit + chunk_size,
-        )
+        # Bound retained QoS state to one active protocol window plus one
+        # submission chunk. This keeps memory independent of total iterable size
+        # while allowing the next chunk to refill the window continuously.
+        pending_limit = flow_limit + chunk_size
 
         try:
             while True:

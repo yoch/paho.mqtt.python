@@ -178,3 +178,18 @@ def test_batch_receipt_failure_indexes_survive_mid_reuse() -> None:
 
     assert receipt.completed == 2
     assert receipt.failures == {1: failure}
+
+
+def test_batch_receipt_does_not_retain_completed_mid_history() -> None:
+    receipt = PublishBatchReceipt()
+    for index in range(10_000):
+        mid = index % 65_535 + 1
+        receipt._register(mid)
+        receipt._complete(mid)
+    receipt._seal()
+
+    assert receipt.submitted == 10_000
+    assert receipt.completed == 10_000
+    assert receipt.pending_count == 0
+    assert not hasattr(receipt, "mids")
+    assert not hasattr(receipt, "_mids")
