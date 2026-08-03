@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
 import os
+import platform
 import resource
 import statistics
 import subprocess
@@ -33,6 +35,7 @@ WINDOW = 100
 class Result:
     library: str
     transport: str
+    profile: str
     payload_bytes: int
     count: int
     publisher_ack_msg_s: float
@@ -44,13 +47,46 @@ class Result:
     max_rss_mib: float
 
 
+def package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def environment(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "python": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "cpu_count": os.cpu_count(),
+        "host": args.host,
+        "port": args.port,
+        "transport": "tls" if args.cafile else "tcp",
+        "profile": args.profile,
+        "window": WINDOW,
+        "versions": {
+            "mqttnext": package_version("mqttnext"),
+            "paho-mqtt": package_version("paho-mqtt"),
+        },
+    }
+
+
 def percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))
     return ordered[index]
 
 
-def start_subscriber(host: str, port: int, topic: str, count: int, cafile: str | None):
+def start_subscriber(
+    host: str,
+    port: int,
+    topic: str,
+    count: int,
+    cafile: str | None,
+):
     command = [
         "mosquitto_sub",
         "-h",
@@ -91,7 +127,12 @@ def make_payload(sequence: int, size: int) -> bytes:
 
 
 async def publish_mqttnext(
-    host: str, port: int, topic: str, count: int, size: int, context
+    host: str,
+    port: int,
+    topic: str,
+    count: int,
+    size: int,
+    context,
 ) -> float:
     client = AsyncClient(
         client_id=f"real-mn-{os.getpid()}",
@@ -112,7 +153,12 @@ async def publish_mqttnext(
 
 
 def publish_paho(
-    host: str, port: int, topic: str, count: int, size: int, cafile: str | None
+    host: str,
+    port: int,
+    topic: str,
+    count: int,
+    size: int,
+    cafile: str | None,
 ) -> float:
     connected = threading.Event()
     client = mqtt.Client(
@@ -132,12 +178,14 @@ def publish_paho(
     client.connect(host, port, keepalive=60)
     client.loop_start()
     if not connected.wait(10.0):
+        client.loop_stop()
         raise TimeoutError("Paho did not connect")
     pending = []
     started = time.perf_counter()
     for sequence in range(count):
         info = client.publish(topic, make_payload(sequence, size), qos=1)
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            client.loop_stop()
             raise RuntimeError(f"Paho publish failed rc={info.rc}")
         pending.append(info)
         if len(pending) >= WINDOW:
@@ -155,18 +203,34 @@ def child(args: argparse.Namespace) -> None:
 
     topic = f"bench/real/{args.library}/{os.getpid()}/{time.time_ns()}"
     process, arrivals, thread = start_subscriber(
-        args.host, args.port, topic, args.count, args.cafile
+        args.host,
+        args.port,
+        topic,
+        args.count,
+        args.cafile,
     )
     delivery_started = time.perf_counter()
     cpu_started = time.process_time()
     if args.library == "mqttnext":
         context = ssl.create_default_context(cafile=args.cafile) if args.cafile else None
         ack_seconds = asyncio.run(
-            publish_mqttnext(args.host, args.port, topic, args.count, args.payload_bytes, context)
+            publish_mqttnext(
+                args.host,
+                args.port,
+                topic,
+                args.count,
+                args.payload_bytes,
+                context,
+            )
         )
     else:
         ack_seconds = publish_paho(
-            args.host, args.port, topic, args.count, args.payload_bytes, args.cafile
+            args.host,
+            args.port,
+            topic,
+            args.count,
+            args.payload_bytes,
+            args.cafile,
         )
     try:
         process.wait(timeout=120)
@@ -197,6 +261,7 @@ def child(args: argparse.Namespace) -> None:
     result = Result(
         library=args.library,
         transport="tls" if args.cafile else "tcp",
+        profile=args.profile,
         payload_bytes=args.payload_bytes,
         count=args.count,
         publisher_ack_msg_s=args.count / ack_seconds,
@@ -229,6 +294,8 @@ def parent(args: argparse.Namespace) -> None:
                 str(payload_bytes),
                 "--count",
                 str(count),
+                "--profile",
+                args.profile,
             ]
             if args.cafile:
                 command.extend(["--cafile", args.cafile])
@@ -247,8 +314,9 @@ def parent(args: argparse.Namespace) -> None:
                 f"delivered={result['delivered_msg_s']:9.1f} msg/s "
                 f"p95={result['latency_p95_ms']:8.2f} ms"
             )
+    payload = {"metadata": environment(args), "results": results}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(results, indent=2))
+    args.output.write_text(json.dumps(payload, indent=2))
 
 
 def parse() -> argparse.Namespace:
@@ -258,6 +326,7 @@ def parse() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=11883)
     parser.add_argument("--cafile")
+    parser.add_argument("--profile", default="local")
     parser.add_argument("--payload-bytes", type=int, default=64)
     parser.add_argument("--count", type=int, default=3_000)
     parser.add_argument("--output", type=Path, default=Path("/tmp/realworld.json"))
