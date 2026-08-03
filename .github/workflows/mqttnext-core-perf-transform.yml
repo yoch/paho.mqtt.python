@@ -7,13 +7,19 @@ on:
     paths:
       - mqttnext/tools/apply_core_perf_optimizations.py
       - .github/workflows/mqttnext-core-perf-transform.yml
+  pull_request:
+    branches:
+      - agent/mqttnext-production-hardening
+    paths:
+      - mqttnext/tools/apply_core_perf_optimizations.py
+      - .github/workflows/mqttnext-core-perf-transform.yml
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && github.head_ref == 'agent/mqttnext-core-perf-optimizations'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
