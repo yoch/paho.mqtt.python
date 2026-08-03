@@ -44,6 +44,12 @@ jobs:
               '        return _row_to_out(row)\n\n    def update_out',
               1,
           )
+          text = text.replace('if count != 4:', 'if count != 5:', 1)
+          text = text.replace(
+              'expected four pop_out calls',
+              'expected five pop_out calls',
+              1,
+          )
           path.write_text(text)
           PY
           python mqttnext/tools/apply_core_perf_optimizations.py
