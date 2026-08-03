@@ -15,11 +15,18 @@ import asyncio
 import ssl
 import time
 from collections import deque
+from itertools import islice
 from contextlib import nullcontext
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any, Literal, Never
 
-from mqttnext.api.models import PublishReceipt, SubscribeResult, UnsubscribeResult
+from mqttnext.api.models import (
+    PublishBatchReceipt,
+    PublishMessage,
+    PublishReceipt,
+    SubscribeResult,
+    UnsubscribeResult,
+)
 from mqttnext.codec.buffer import DEFAULT_MAX_PACKET_SIZE, IncrementalDecoder
 from mqttnext.enums import ConnectionState, MQTTProtocolVersion, QoS
 from mqttnext.errors import (
@@ -27,6 +34,7 @@ from mqttnext.errors import (
     MQTTError,
     MQTTTimeoutError,
     MalformedPacketError,
+    PublishBatchError,
     MessageDeliveryError,
     PacketTooLargeError,
     ProtocolError,
@@ -166,6 +174,7 @@ class AsyncClient:
         self._outbound_waiters = 0
         self._connack_fut: asyncio.Future[ConnAckPacket] | None = None
         self._receipts: dict[int, PublishReceipt] = {}
+        self._batch_receipts: dict[int, PublishBatchReceipt] = {}
         self._sub_futs: dict[int, asyncio.Future[SubscribeResult]] = {}
         self._unsub_futs: dict[int, asyncio.Future[UnsubscribeResult]] = {}
         self._messages: asyncio.Queue[Message] = asyncio.Queue(maxsize=self._max_pending_messages)
@@ -419,6 +428,73 @@ class AsyncClient:
                 self._receipts[handle.mid] = receipt
             self._collect_effects_locked()
         await self._drain_effects(nowait=nowait)
+        return receipt
+
+    async def publish_many(
+        self,
+        messages: Iterable[PublishMessage],
+        *,
+        chunk_size: int = 256,
+        nowait: bool = False,
+    ) -> PublishBatchReceipt:
+        """Publish a batch with bounded memory and aggregate completion.
+
+        QoS 0 avoids one lock/effect flush per message. QoS 1/2 use one shared
+        receipt and continuously refill the negotiated inflight window without
+        creating waiter tasks for individual packet identifiers.
+        """
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than 0")
+        receipt = PublishBatchReceipt()
+        iterator = iter(messages)
+        flow_limit = self._engine.flow.limit
+        # Bound retained QoS state to one active protocol window plus one
+        # submission chunk. This keeps memory independent of total iterable size
+        # while allowing the next chunk to refill the window continuously.
+        pending_limit = flow_limit + chunk_size
+
+        try:
+            while True:
+                chunk = list(islice(iterator, chunk_size))
+                if not chunk:
+                    break
+                target = max(flow_limit, pending_limit - len(chunk))
+                await receipt._wait_pending_at_most(target)
+
+                requests: list[tuple[str, bytes, QoS | int, bool, Properties | None]] = []
+                for message in chunk:
+                    if not isinstance(message, PublishMessage):
+                        raise TypeError("publish_many entries must be PublishMessage instances")
+                    payload = (
+                        message.payload.encode("utf-8")
+                        if isinstance(message.payload, str)
+                        else message.payload
+                    )
+                    requests.append(
+                        (
+                            message.topic,
+                            payload,
+                            message.qos,
+                            message.retain,
+                            message.properties,
+                        )
+                    )
+
+                async with self._engine_lock:
+                    handles = self._engine.queue_publish_many(requests)
+                    for handle in handles:
+                        receipt._register(handle.mid)
+                        if handle.mid is not None:
+                            self._batch_receipts[handle.mid] = receipt
+                    self._collect_effects_locked()
+                await self._drain_effects(nowait=nowait)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            receipt._seal()
+            raise PublishBatchError(cause=exc, receipt=receipt) from exc
+
+        receipt._seal()
         return receipt
 
     async def auth(
@@ -919,6 +995,9 @@ class AsyncClient:
             receipt = self._receipts.pop(mid, None)
             if receipt is not None and receipt._event is not None:
                 receipt._event.set()
+            batch = self._batch_receipts.pop(mid, None)
+            if batch is not None:
+                batch._complete(mid)
             if self.on_publish is not None:
                 await self._enqueue_callback(self.on_publish, mid, None)
         elif kind is EffectKind.PUBLISH_FAILED:
@@ -928,6 +1007,9 @@ class AsyncClient:
                 receipt._error = failure.reason
                 if receipt._event is not None:
                     receipt._event.set()
+            batch = self._batch_receipts.pop(failure.mid, None)
+            if batch is not None:
+                batch._complete(failure.mid, failure.reason)
             if self.on_publish is not None:
                 await self._enqueue_callback(self.on_publish, failure.mid, failure.reason)
         elif kind is EffectKind.SUBACK:
@@ -1087,6 +1169,10 @@ class AsyncClient:
             if receipt._event is not None:
                 receipt._event.set()
         self._receipts.clear()
+        batches = set(self._batch_receipts.values())
+        self._batch_receipts.clear()
+        for batch in batches:
+            batch._fail_remaining(exc)
         self._fail_non_replayable(exc)
 
     async def _send_fatal_disconnect(self, exc: BaseException) -> None:
