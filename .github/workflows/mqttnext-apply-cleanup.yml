@@ -54,12 +54,15 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("mqttnext/src/mqttnext/transport/tcp.py")
+          path = Path("mqttnext/src/mqttnext/api/async_client.py")
           text = path.read_text()
-          old = "from mqttnext.transport._stream import StreamTransport"
-          new = "from mqttnext.transport._stream import AsyncTransport, StreamTransport"
+          old = "from mqttnext.transport.tcp import AsyncTransport, TcpTransport"
+          new = (
+              "from mqttnext.transport._stream import AsyncTransport\n"
+              "from mqttnext.transport.tcp import TcpTransport"
+          )
           if text.count(old) != 1:
-              raise RuntimeError("unexpected tcp transport import")
+              raise RuntimeError("unexpected async client transport import")
           path.write_text(text.replace(old, new))
           PY
           rm -rf mqttnext/benchmarks/results
