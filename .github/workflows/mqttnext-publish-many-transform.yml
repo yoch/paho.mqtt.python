@@ -66,6 +66,7 @@ jobs:
         working-directory: mqttnext
         run: |
           ruff format src tests
+          ruff check --fix src tests
           ruff check src tests
       - name: Type check
         working-directory: mqttnext
