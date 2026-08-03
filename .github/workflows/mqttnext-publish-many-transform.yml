@@ -33,17 +33,33 @@ jobs:
           from pathlib import Path
           path = Path('mqttnext/tools/apply_publish_many.py')
           text = path.read_text()
-          text = text.replace(
-              '        "mqttnext/README.md",\n        \'\'\'## Persistence\\n\'\'\',',
-              '        "mqttnext/README.md",\n        \'\'\'## Development\\n\'\'\',',
-              1,
+          start = text.index('    replace_once(\n        "mqttnext/README.md",')
+          end = text.index('\n\n    Path(__file__).unlink()', start)
+          replacement = '''    replace_once(
+              "mqttnext/README.md",
+              """## Development
+          """,
+              """## Batch publishing
+
+          `AsyncClient.publish_many()` accepts immutable `PublishMessage` entries and
+          returns one `PublishBatchReceipt`. QoS 0 publications are queued in bounded
+          chunks with one engine lock/effect flush per chunk. QoS 1/2 share one aggregate
+          completion tracker; the negotiated inflight window is continuously refilled
+          without spawning a task or event for each packet identifier.
+
+          ```python
+          from mqttnext.api import PublishMessage
+
+          receipt = await client.publish_many(
+              [PublishMessage("sensors/temperature", payload, qos=1) for payload in payloads]
           )
-          text = text.replace(
-              '\\n## Persistence\\n\'\'\',\n    )',
-              '\\n## Development\\n\'\'\',\n    )',
-              1,
-          )
-          path.write_text(text)
+          await receipt.wait()
+          ```
+
+          ## Development
+          """,
+          )'''
+          path.write_text(text[:start] + replacement + text[end:])
           PY
           python mqttnext/tools/apply_publish_many.py
       - name: Format and lint
