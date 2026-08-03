@@ -63,7 +63,7 @@ jobs:
         run: mypy src
       - name: Unit tests
         working-directory: mqttnext
-        run: pytest tests/unit -q
+        run: PYTHONPATH=. pytest tests/unit -q
       - name: Commit production changes
         run: |
           git config user.name 'github-actions[bot]'
