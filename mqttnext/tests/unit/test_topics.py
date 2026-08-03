@@ -51,3 +51,15 @@ def test_subscribe_filter_bad() -> None:
 def test_received_publish_wildcard_malformed() -> None:
     with pytest.raises(MalformedPacketError):
         validate_received_publish_topic("a/#")
+
+
+def test_received_publish_utf8_fast_path_keeps_structural_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_validation(_topic: str) -> None:
+        raise AssertionError("decoded topics must not be UTF-8 validated twice")
+
+    monkeypatch.setattr("mqttnext.topics._check_utf8_mqtt_topic", unexpected_validation)
+    validate_received_publish_topic("already/decoded", utf8_validated=True)
+    with pytest.raises(MalformedPacketError):
+        validate_received_publish_topic("still/#", utf8_validated=True)

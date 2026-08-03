@@ -556,7 +556,7 @@ class ProtocolEngine:
             for msg in list(self.store.out_items()):
                 if msg.state is OutboundQoSState.QUEUED:
                     continue
-                self.store.pop_out(msg.mid)
+                self.store.delete_out(msg.mid)
                 self.packet_ids.release(msg.mid)
                 self._emit(
                     EffectKind.PUBLISH_FAILED,
@@ -589,7 +589,7 @@ class ProtocolEngine:
     def _on_publish(self, raw: RawPacket) -> None:
         packet = PublishPacket.decode(raw.flags, raw.remaining, self.config.protocol)
         topic = self._resolve_inbound_topic(packet)
-        validate_received_publish_topic(topic)
+        validate_received_publish_topic(topic, utf8_validated=True)
 
         if packet.qos == QoS.AT_MOST_ONCE:
             self._emit(
@@ -723,7 +723,7 @@ class ProtocolEngine:
         msg = self.store.get_out(ack.mid)
         if msg is None or msg.state is not OutboundQoSState.WAIT_PUBACK:
             return
-        self.store.pop_out(ack.mid)
+        self.store.delete_out(ack.mid)
         self.packet_ids.release(ack.mid)
         self.flow.release()
         if ack.reason_code >= 128:
@@ -749,7 +749,7 @@ class ProtocolEngine:
         if msg.state is not OutboundQoSState.WAIT_PUBREC:
             return
         if rec.reason_code >= 128:
-            self.store.pop_out(rec.mid)
+            self.store.delete_out(rec.mid)
             self.packet_ids.release(rec.mid)
             self.flow.release()
             self._emit(
@@ -816,7 +816,7 @@ class ProtocolEngine:
         msg = self.store.get_out(comp.mid)
         if msg is None or msg.state is not OutboundQoSState.WAIT_PUBCOMP:
             return
-        self.store.pop_out(comp.mid)
+        self.store.delete_out(comp.mid)
         self.packet_ids.release(comp.mid)
         self.flow.release()
         if comp.reason_code >= 128:
@@ -1063,7 +1063,7 @@ class ProtocolEngine:
 
     def _discard_outbound_store_record(self, mid: int) -> None:
         try:
-            self.store.pop_out(mid)
+            self.store.delete_out(mid)
         except Exception:
             # Preserve the original launch/validation failure. A broken store is
             # surfaced separately by the read/client boundary and must not leak

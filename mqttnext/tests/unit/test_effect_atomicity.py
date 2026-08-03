@@ -107,3 +107,20 @@ async def test_scheduled_flush_records_wakeup_while_active() -> None:
     assert task is not None
     await task
     assert calls == 2
+
+
+def test_effect_collection_stably_prioritizes_sends() -> None:
+    client = AsyncClient(client_id="stable-effect-partition")
+    client._engine._emit(EffectKind.MESSAGE, Message(topic="first", payload=b"1"))
+    client._engine._send(b"send-1")
+    client._engine._emit(EffectKind.PINGRESP)
+    client._engine._send(b"send-2")
+
+    client._collect_effects_locked()
+
+    assert [(effect.kind, effect.data) for effect in client._pending_effects] == [
+        (EffectKind.SEND, b"send-1"),
+        (EffectKind.SEND, b"send-2"),
+        (EffectKind.MESSAGE, Message(topic="first", payload=b"1")),
+        (EffectKind.PINGRESP, None),
+    ]
