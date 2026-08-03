@@ -143,3 +143,10 @@ def test_sqlite_inbound_manual_ack_flag(tmp_path: Path) -> None:
     store.clear_in()
     assert store.get_in(3) is None
     store.close()
+
+
+def test_sqlite_context_manager_and_idempotent_close(tmp_path: Path) -> None:
+    with SqliteInflightStore(tmp_path / "context.db") as store:
+        store.put_out(outbound())
+        assert store.get_out(7) is not None
+    store.close()

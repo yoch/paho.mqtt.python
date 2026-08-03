@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable, Iterable
 from typing import Any, Never
 
-from mqttnext.api.async_client import AsyncClient
+from mqttnext.helpers._common import create_client, normalize_topics
 from mqttnext.enums import MQTTProtocolVersion
 from mqttnext.types import Message
 
@@ -31,8 +31,8 @@ async def simple(
 
     Returns a single ``Message`` when ``msg_count == 1``, else a list.
     """
-    topic_list = [topics] if isinstance(topics, str) else list(topics)
-    client = AsyncClient(
+    topic_list = normalize_topics(topics)
+    client = create_client(
         client_id=client_id,
         protocol=protocol,
         keepalive=keepalive,
@@ -78,8 +78,8 @@ async def callback(
     ssl: Any = None,
 ) -> Never:
     """Subscribe and invoke ``on_message`` for every message (runs until cancelled)."""
-    topic_list = [topics] if isinstance(topics, str) else list(topics)
-    client = AsyncClient(
+    topic_list = normalize_topics(topics)
+    client = create_client(
         client_id=client_id,
         protocol=protocol,
         keepalive=keepalive,

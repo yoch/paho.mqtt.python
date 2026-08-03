@@ -75,29 +75,26 @@ async def test_transport_loss_fails_subscriptions_but_preserves_publish_receipt(
         client._reconnect_task = None
 
 
-def test_fail_pending_still_fails_all_operation_types() -> None:
-    async def scenario() -> None:
-        client = AsyncClient(client_id="fail-all")
-        loop = asyncio.get_running_loop()
-        sub = loop.create_future()
-        unsub = loop.create_future()
-        client._sub_futs[1] = sub
-        client._unsub_futs[2] = unsub
-        event = asyncio.Event()
-        client._receipts[3] = PublishReceipt(
-            mid=3,
-            qos=QoS.AT_LEAST_ONCE,
-            _event=event,
-        )
-        error = MQTTError("terminal")
+async def test_fail_pending_still_fails_all_operation_types() -> None:
+    client = AsyncClient(client_id="fail-all")
+    loop = asyncio.get_running_loop()
+    sub = loop.create_future()
+    unsub = loop.create_future()
+    client._sub_futs[1] = sub
+    client._unsub_futs[2] = unsub
+    event = asyncio.Event()
+    client._receipts[3] = PublishReceipt(
+        mid=3,
+        qos=QoS.AT_LEAST_ONCE,
+        _event=event,
+    )
+    error = MQTTError("terminal")
 
-        client._fail_pending(error)
+    client._fail_pending(error)
 
-        with pytest.raises(MQTTError, match="terminal"):
-            await sub
-        with pytest.raises(MQTTError, match="terminal"):
-            await unsub
-        assert event.is_set()
-        assert client._receipts == {}
-
-    asyncio.run(scenario())
+    with pytest.raises(MQTTError, match="terminal"):
+        await sub
+    with pytest.raises(MQTTError, match="terminal"):
+        await unsub
+    assert event.is_set()
+    assert client._receipts == {}

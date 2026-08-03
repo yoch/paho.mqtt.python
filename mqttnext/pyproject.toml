@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mqttnext"
 dynamic = ["version"]
-description = "Async-native MQTT client reference implementation (work in progress)"
+description = "Correctness-first async-native MQTT client"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -57,6 +57,7 @@ include = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["src"]
 

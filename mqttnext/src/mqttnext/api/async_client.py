@@ -43,7 +43,8 @@ from mqttnext.protocol.engine import (
 from mqttnext.protocol.negotiated import NegotiatedSettings
 from mqttnext.protocol.reconnect import ReconnectPolicy
 from mqttnext.persistence.memory import InflightStore
-from mqttnext.transport.tcp import AsyncTransport, TcpTransport
+from mqttnext.transport._stream import AsyncTransport
+from mqttnext.transport.tcp import TcpTransport
 from mqttnext.transport.unix import UnixSocketTransport
 from mqttnext.transport.websocket import WebSocketTransport
 from mqttnext.transport.writes import WriteItem, item_size

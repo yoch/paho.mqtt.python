@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from mqttnext.api.async_client import AsyncClient
+from mqttnext.helpers._common import create_client
 from mqttnext.enums import MQTTProtocolVersion, QoS
 
 
@@ -41,7 +41,7 @@ async def multiple(
     ssl: Any = None,
 ) -> None:
     """Connect, publish several messages (await QoS completion), disconnect."""
-    client = AsyncClient(
+    client = create_client(
         client_id=client_id,
         protocol=protocol,
         keepalive=keepalive,

@@ -12,7 +12,8 @@ factice, en miroir des scénarios ``tests/lib`` suivants :
 
 from __future__ import annotations
 
-import asyncio
+
+from tests.support import QueueTransport
 
 from mqttnext.codec.buffer import IncrementalDecoder
 from mqttnext.codec.primitives import pack_u16
@@ -22,11 +23,10 @@ from mqttnext.packets import PubAckPacket, PublishPacket, encode_frame
 from mqttnext.types import Message
 
 
-class FakeBrokerTransport:
+class FakeBrokerTransport(QueueTransport):
     def __init__(self) -> None:
-        self._rx: asyncio.Queue[bytes] = asyncio.Queue()
+        super().__init__()
         self._decoder = IncrementalDecoder()
-        self._closing = False
         self.connect_seen: bytes | None = None
         self.publishes: list[PublishPacket] = []
         self.subscribes: list[bytes] = []
@@ -36,39 +36,29 @@ class FakeBrokerTransport:
         for raw in self._decoder.drain_packets():
             if raw.packet_type is PacketType.CONNECT:
                 self.connect_seen = raw.remaining
-                self._rx.put_nowait(encode_frame(PacketType.CONNACK, 0, b"\x00\x00"))
+                self.push_rx(encode_frame(PacketType.CONNACK, 0, b"\x00\x00"))
             elif raw.packet_type is PacketType.PUBLISH:
                 pub = PublishPacket.decode(raw.flags, raw.remaining)
                 self.publishes.append(pub)
                 if pub.qos == QoS.AT_LEAST_ONCE and pub.mid is not None:
-                    self._rx.put_nowait(PubAckPacket(mid=pub.mid).encode())
+                    self.push_rx(PubAckPacket(mid=pub.mid).encode())
                 elif pub.qos == QoS.EXACTLY_ONCE and pub.mid is not None:
                     # Minimal QoS2: PUBREC → expect PUBREL → PUBCOMP (engine side).
                     from mqttnext.packets import PubRecPacket
 
-                    self._rx.put_nowait(PubRecPacket(mid=pub.mid).encode())
+                    self.push_rx(PubRecPacket(mid=pub.mid).encode())
             elif raw.packet_type is PacketType.PUBREL:
                 from mqttnext.packets import PubCompPacket
 
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(PubCompPacket(mid=mid).encode())
+                self.push_rx(PubCompPacket(mid=mid).encode())
             elif raw.packet_type is PacketType.SUBSCRIBE:
                 self.subscribes.append(raw.remaining)
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0])))
+                self.push_rx(encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0])))
             elif raw.packet_type is PacketType.UNSUBSCRIBE:
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(encode_frame(PacketType.UNSUBACK, 0, pack_u16(mid)))
-
-    async def read(self, n: int = 65536) -> bytes:
-        return await self._rx.get()
-
-    async def close(self) -> None:
-        self._closing = True
-        self._rx.put_nowait(b"")
-
-    def is_closing(self) -> bool:
-        return self._closing
+                self.push_rx(encode_frame(PacketType.UNSUBACK, 0, pack_u16(mid)))
 
     def push_publish(
         self, topic: str, payload: bytes, *, qos: int = 0, retain: bool = False
@@ -82,7 +72,7 @@ class FakeBrokerTransport:
             dup=False,
             mid=mid,
         )
-        self._rx.put_nowait(pkt.encode())
+        self.push_rx(pkt.encode())
 
 
 def _client_with_fake(fake: FakeBrokerTransport, **kwargs) -> Client:

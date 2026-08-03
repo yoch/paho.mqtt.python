@@ -7,8 +7,11 @@ import base64
 import hashlib
 import os
 import struct
+from contextlib import suppress
 from typing import Any
 from urllib.parse import urlparse
+
+from mqttnext.transport._stream import write_buffer_needs_drain
 
 _MAX_HANDSHAKE_BYTES = 64 * 1024
 _MAX_CONTROL_PAYLOAD = 125
@@ -56,91 +59,30 @@ class WebSocketTransport:
         timeout: float = 30.0,
         max_frame_size: int = 16 * 1024 * 1024,
     ) -> WebSocketTransport:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("ws", "wss"):
-            raise ValueError(f"Unsupported WebSocket URL scheme: {parsed.scheme}")
-        host = parsed.hostname or "localhost"
-        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-        if parsed.scheme == "wss" and ssl is False:
-            raise ValueError("wss:// requires TLS (ssl=False would downgrade silently)")
-        use_ssl = ssl if ssl is not None else (True if parsed.scheme == "wss" else None)
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port, ssl=use_ssl), timeout=timeout
-        )
+        host, port, path, use_ssl = _parse_websocket_endpoint(url, ssl)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
-        headers = [
-            f"GET {path} HTTP/1.1",
-            f"Host: {host}:{port}",
-            "Upgrade: websocket",
-            "Connection: Upgrade",
-            f"Sec-WebSocket-Key: {key}",
-            "Sec-WebSocket-Version: 13",
-            "Sec-WebSocket-Protocol: mqtt",
-        ]
-        if extra_headers:
-            for k, v in extra_headers.items():
-                if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
-                    raise ValueError("extra_headers must not contain CR/LF")
-                headers.append(f"{k}: {v}")
-        writer.write(("\r\n".join(headers) + "\r\n\r\n").encode("ascii"))
-        await writer.drain()
-        # Read HTTP response headers (bounded).
-        header_buf = b""
-        while b"\r\n\r\n" not in header_buf:
-            chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout)
-            if not chunk:
-                raise ConnectionError("WebSocket handshake closed early")
-            header_buf += chunk
-            if len(header_buf) > _MAX_HANDSHAKE_BYTES:
-                writer.close()
-                raise ConnectionError("WebSocket handshake headers too large")
-        head, _, leftover = header_buf.partition(b"\r\n\r\n")
-        lines = head.split(b"\r\n")
-        status_line = lines[0].decode("ascii", errors="replace")
-        parts = status_line.split(" ", 2)
-        if len(parts) < 2 or parts[1] != "101":
-            writer.close()
-            raise ConnectionError(f"WebSocket handshake failed: {status_line}")
-        headers_map: dict[str, str] = {}
-        for header_line_bytes in lines[1:]:
-            if b":" in header_line_bytes:
-                raw_name, _, raw_value = header_line_bytes.partition(b":")
-                headers_map[raw_name.decode("latin1").strip().lower()] = raw_value.decode(
-                    "latin1"
-                ).strip()
-        expected = base64.b64encode(
-            hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
-        ).decode("ascii")
-        if headers_map.get("sec-websocket-accept") != expected:
-            writer.close()
-            raise ConnectionError("WebSocket accept key mismatch")
-        if headers_map.get("upgrade", "").lower() != "websocket":
-            writer.close()
-            raise ConnectionError("WebSocket handshake missing Upgrade: websocket")
-        connection_tokens = {
-            token.strip().lower()
-            for token in headers_map.get("connection", "").split(",")
-            if token.strip()
-        }
-        if "upgrade" not in connection_tokens:
-            writer.close()
-            raise ConnectionError("WebSocket handshake missing Connection: Upgrade")
-        if headers_map.get("sec-websocket-protocol", "").lower() != "mqtt":
-            writer.close()
-            raise ConnectionError("WebSocket subprotocol 'mqtt' not negotiated")
+        request = _build_handshake_request(host, port, path, key, extra_headers)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=use_ssl),
+            timeout=timeout,
+        )
+        try:
+            writer.write(request)
+            await writer.drain()
+            head, leftover = await _read_handshake_response(reader, timeout)
+            _validate_handshake_response(head, key)
+        except BaseException:
+            await _close_stream_writer(writer)
+            raise
         transport = cls(reader, writer, max_frame_size=max_frame_size)
-        if leftover:
-            transport._recv_buf.extend(leftover)
+        transport._recv_buf.extend(leftover)
         return transport
 
     async def write(self, data: bytes) -> None:
         await self._flush_control()
         frame = _mask_client_frame(0x2, data)  # binary
         self._writer.write(frame)
-        if self._writer.transport.get_write_buffer_size() > 64 * 1024:
+        if write_buffer_needs_drain(self._writer):
             await self._writer.drain()
 
     async def write_many(self, parts: list[bytes]) -> None:
@@ -150,7 +92,7 @@ class WebSocketTransport:
         # One binary frame per MQTT chunk keeps framing simple and correct.
         frames = [_mask_client_frame(0x2, p) for p in parts]
         self._writer.writelines(frames)
-        if self._writer.transport.get_write_buffer_size() > 64 * 1024:
+        if write_buffer_needs_drain(self._writer):
             await self._writer.drain()
 
     async def drain(self) -> None:
@@ -175,16 +117,10 @@ class WebSocketTransport:
 
     async def close(self) -> None:
         self._closing = True
-        try:
-            self._writer.write(_mask_client_frame(0x8, b""))  # close
+        with suppress(Exception):
+            self._writer.write(_mask_client_frame(0x8, b""))
             await self._writer.drain()
-        except Exception:
-            pass
-        self._writer.close()
-        try:
-            await self._writer.wait_closed()
-        except Exception:
-            pass
+        await _close_stream_writer(self._writer)
 
     def is_closing(self) -> bool:
         return self._closing or self._writer.is_closing()
@@ -194,7 +130,7 @@ class WebSocketTransport:
             return
         self._writer.writelines(self._pending_control)
         self._pending_control.clear()
-        if self._writer.transport.get_write_buffer_size() > 64 * 1024:
+        if write_buffer_needs_drain(self._writer):
             await self._writer.drain()
 
     def _try_extract_application_payload(self) -> bytes | None:
@@ -240,6 +176,100 @@ class WebSocketTransport:
                 continue
             # _parse_frame rejects every non-MQTT application opcode.
             raise AssertionError(f"unreachable WebSocket opcode {opcode}")
+
+
+def _parse_websocket_endpoint(url: str, ssl: Any) -> tuple[str, int, str, Any]:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("ws", "wss"):
+        raise ValueError(f"Unsupported WebSocket URL scheme: {parsed.scheme}")
+    if parsed.scheme == "wss" and ssl is False:
+        raise ValueError("wss:// requires TLS (ssl=False would downgrade silently)")
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    use_ssl = ssl if ssl is not None else (True if parsed.scheme == "wss" else None)
+    return host, port, path, use_ssl
+
+
+def _build_handshake_request(
+    host: str,
+    port: int,
+    path: str,
+    key: str,
+    extra_headers: dict[str, str] | None,
+) -> bytes:
+    headers = [
+        f"GET {path} HTTP/1.1",
+        f"Host: {host}:{port}",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        f"Sec-WebSocket-Key: {key}",
+        "Sec-WebSocket-Version: 13",
+        "Sec-WebSocket-Protocol: mqtt",
+    ]
+    for name, value in (extra_headers or {}).items():
+        if any(char in name or char in value for char in ("\r", "\n")):
+            raise ValueError("extra_headers must not contain CR/LF")
+        headers.append(f"{name}: {value}")
+    return ("\r\n".join(headers) + "\r\n\r\n").encode("ascii")
+
+
+async def _read_handshake_response(
+    reader: asyncio.StreamReader,
+    timeout: float,
+) -> tuple[bytes, bytes]:
+    buffer = bytearray()
+    delimiter = b"\r\n\r\n"
+    while delimiter not in buffer:
+        chunk = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+        if not chunk:
+            raise ConnectionError("WebSocket handshake closed early")
+        buffer.extend(chunk)
+        if len(buffer) > _MAX_HANDSHAKE_BYTES:
+            raise ConnectionError("WebSocket handshake headers too large")
+    head, _, leftover = bytes(buffer).partition(delimiter)
+    return head, leftover
+
+
+def _validate_handshake_response(head: bytes, key: str) -> None:
+    lines = head.split(b"\r\n")
+    status_line = lines[0].decode("ascii", errors="replace")
+    parts = status_line.split(" ", 2)
+    if len(parts) < 2 or parts[1] != "101":
+        raise ConnectionError(f"WebSocket handshake failed: {status_line}")
+    headers = _parse_http_headers(lines[1:])
+    expected = base64.b64encode(
+        hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
+    ).decode("ascii")
+    if headers.get("sec-websocket-accept") != expected:
+        raise ConnectionError("WebSocket accept key mismatch")
+    if headers.get("upgrade", "").lower() != "websocket":
+        raise ConnectionError("WebSocket handshake missing Upgrade: websocket")
+    connection_tokens = {
+        token.strip().lower() for token in headers.get("connection", "").split(",") if token.strip()
+    }
+    if "upgrade" not in connection_tokens:
+        raise ConnectionError("WebSocket handshake missing Connection: Upgrade")
+    if headers.get("sec-websocket-protocol", "").lower() != "mqtt":
+        raise ConnectionError("WebSocket subprotocol 'mqtt' not negotiated")
+
+
+def _parse_http_headers(lines: list[bytes]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for line in lines:
+        if b":" not in line:
+            continue
+        raw_name, _, raw_value = line.partition(b":")
+        headers[raw_name.decode("latin1").strip().lower()] = raw_value.decode("latin1").strip()
+    return headers
+
+
+async def _close_stream_writer(writer: asyncio.StreamWriter) -> None:
+    writer.close()
+    with suppress(Exception):
+        await writer.wait_closed()
 
 
 def _mask_client_frame(opcode: int, payload: bytes) -> bytes:

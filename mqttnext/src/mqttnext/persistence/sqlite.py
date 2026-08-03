@@ -110,6 +110,7 @@ class SqliteInflightStore:
         self._batch_depth = 0
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._closed = False
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(
@@ -174,10 +175,19 @@ class SqliteInflightStore:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             if self._batch_depth:
                 raise RuntimeError("Cannot close SQLite store inside batch()")
             self._conn.commit()
             self._conn.close()
+            self._closed = True
+
+    def __enter__(self) -> SqliteInflightStore:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
 
     def put_out(self, msg: OutboundMessage) -> None:
         with self._lock:

@@ -10,3 +10,4 @@ build/
 .venv/
 tests/fuzz/artifacts/
 .hypothesis/
+benchmarks/results/

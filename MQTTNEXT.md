@@ -1,11 +1,13 @@
-# MQTTNext — pointeur
+# MQTTNext
 
-Le travail de rewrite from scratch vit sous [`mqttnext/`](mqttnext/).
+The async-native MQTT rewrite lives under [`mqttnext/`](mqttnext/).
 
-- Analyse comparative Paho (branche `benchmarks`) vs gmqtt : `mqttnext/docs/ANALYSIS.md`
-- Design & roadmap : `mqttnext/docs/DESIGN.md`, `mqttnext/docs/ROADMAP.md`
-- Compat Paho / migration : `mqttnext/docs/COMPAT.md`, `mqttnext/docs/MIGRATION.md`
-- Sprint perf (mesures isolées) : `mqttnext/docs/PERF-SPRINT.md`
-- Package Python autonome (extraitable vers un nouveau dépôt) : `mqttnext/src/mqttnext`
+- architecture and constraints: `mqttnext/docs/DESIGN.md`;
+- active roadmap: `mqttnext/docs/ROADMAP.md`;
+- Paho compatibility and migration: `mqttnext/docs/COMPAT.md`, `mqttnext/docs/MIGRATION.md`;
+- benchmark contract: `mqttnext/benchmarks/README.md`;
+- standalone package: `mqttnext/src/mqttnext`.
 
-Le code historique Eclipse Paho sous `src/paho/` n’est **pas** modifié par cette initiative.
+Historical audits and generated benchmark snapshots remain available in Git history and GitHub Actions artifacts rather than in the maintained documentation tree.
+
+The historical Eclipse Paho implementation under `src/paho/` is not modified by this initiative.

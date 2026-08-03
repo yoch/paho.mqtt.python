@@ -6,6 +6,8 @@ Inbound QoS 2 identifiers live in a separate namespace and must never be freed h
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from mqttnext.errors import FlowControlError
 
 
@@ -54,10 +56,8 @@ class PacketIdPool:
             raise ValueError(f"Invalid packet id {mid}")
         self._used.add(mid)
         # Keep free-list coherent if this id was previously released.
-        try:
+        with suppress(ValueError):
             self._free.remove(mid)
-        except ValueError:
-            pass
 
     def release(self, mid: int) -> None:
         if mid in self._used:

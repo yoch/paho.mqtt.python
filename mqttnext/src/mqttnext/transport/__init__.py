@@ -1,6 +1,7 @@
 """Transport package."""
 
-from mqttnext.transport.tcp import AsyncTransport, TcpTransport
+from mqttnext.transport._stream import AsyncTransport
+from mqttnext.transport.tcp import TcpTransport
 from mqttnext.transport.unix import UnixSocketTransport
 from mqttnext.transport.websocket import WebSocketTransport
 from mqttnext.transport.writes import SEGMENT_THRESHOLD, WriteItem, item_size

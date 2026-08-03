@@ -179,3 +179,48 @@ def test_reassembles_binary_fragmentation_with_interleaved_pong() -> None:
         + _server_frame(0x0, b"part-2", fin=True)
     )
     assert transport._try_extract_application_payload() == b"part-1part-2"
+
+
+@pytest.mark.asyncio
+async def test_invalid_extra_headers_are_rejected_before_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened = False
+
+    async def open_connection(*args, **kwargs):
+        nonlocal opened
+        opened = True
+        raise AssertionError("connection should not be opened")
+
+    monkeypatch.setattr(asyncio, "open_connection", open_connection)
+    with pytest.raises(ValueError, match="CR/LF"):
+        await WebSocketTransport.connect(
+            "ws://localhost/mqtt",
+            extra_headers={"X-Test": "bad\r\nInjected: value"},
+        )
+    assert opened is False
+
+
+@pytest.mark.asyncio
+async def test_failed_handshake_closes_stream() -> None:
+    peer_closed = asyncio.Event()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+        await writer.drain()
+        assert await reader.read() == b""
+        peer_closed.set()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    assert server.sockets
+    host, port = server.sockets[0].getsockname()[:2]
+    try:
+        with pytest.raises(ConnectionError, match="403 Forbidden"):
+            await WebSocketTransport.connect(f"ws://{host}:{port}/mqtt")
+        await asyncio.wait_for(peer_closed.wait(), timeout=2.0)
+    finally:
+        server.close()
+        await server.wait_closed()

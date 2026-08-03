@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import threading
+from contextlib import suppress
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -147,10 +148,8 @@ class Client:
 
     def message_callback_remove(self, sub: str) -> None:
         def _remove() -> None:
-            try:
+            with suppress(KeyError):
                 del self._topic_callbacks[sub]
-            except KeyError:
-                pass
 
         self._run_loop_mutation(_remove)
 
