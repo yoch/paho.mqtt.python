@@ -1,0 +1,207 @@
+name: mqttnext optimization A B audit
+
+on:
+  pull_request:
+    paths:
+      - "mqttnext/tools/profile_batch_candidate.py"
+      - ".github/workflows/mqttnext-optimization-ab.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    if: github.head_ref == 'agent/mqttnext-profiler-audit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package and broker
+        working-directory: mqttnext
+        run: |
+          pip install -e ".[dev]"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients strace
+      - name: Start isolated broker
+        run: |
+          mkdir -p /tmp/mqttnext-ab
+          cat > /tmp/mqttnext-ab/mosquitto.conf <<'EOF'
+          persistence false
+          allow_anonymous true
+          max_inflight_messages 2000
+          max_queued_messages 200000
+          max_queued_bytes 0
+          connection_messages false
+          log_type error
+          listener 11883 127.0.0.1
+          EOF
+          mosquitto -c /tmp/mqttnext-ab/mosquitto.conf > /tmp/mqttnext-ab/mosquitto.log 2>&1 &
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          exit 1
+      - name: Baseline and batched publish prototype
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py broker --seconds 4 --qos 0 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/publish-qos0-individual.ndjson
+            python tools/profile_batch_candidate.py --seconds 4 --qos 0 --batch-size 256 --window 100 \
+              >> /tmp/mqttnext-ab/publish-qos0-batch256.ndjson
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/publish-qos1-individual.ndjson
+            python tools/profile_batch_candidate.py --seconds 4 --qos 1 --batch-size 1000 --window 100 \
+              >> /tmp/mqttnext-ab/publish-qos1-batch1000.ndjson
+          done
+          for run in 1 2 3; do
+            python tools/profile_batch_candidate.py --seconds 4 --qos 1 --batch-size 1 --window 100 --sqlite \
+              >> /tmp/mqttnext-ab/sqlite-qos1-individual.ndjson
+            python tools/profile_batch_candidate.py --seconds 4 --qos 1 --batch-size 1000 --window 100 --sqlite \
+              >> /tmp/mqttnext-ab/sqlite-qos1-batch1000.ndjson
+          done
+      - name: Inbound topic validation A B
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py ingress_engine --seconds 4 \
+              >> /tmp/mqttnext-ab/inbound-validation-baseline.ndjson
+          done
+          python - <<'PY'
+          from pathlib import Path
+
+          topics = Path('src/mqttnext/topics.py')
+          text = topics.read_text()
+          old = 'def validate_received_publish_topic(topic: str) -> None:\n'
+          new = 'def validate_received_publish_topic(\n    topic: str, *, utf8_already_validated: bool = False\n) -> None:\n'
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected inbound topic validator signature')
+          text = text.replace(old, new)
+          old = '''    try:\n        _check_utf8_mqtt_topic(topic)\n    except ProtocolError as exc:\n        raise MalformedPacketError(str(exc)) from exc\n'''
+          new = '''    if not utf8_already_validated:\n        try:\n            _check_utf8_mqtt_topic(topic)\n        except ProtocolError as exc:\n            raise MalformedPacketError(str(exc)) from exc\n'''
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected inbound utf8 validation block')
+          topics.write_text(text.replace(old, new))
+
+          engine = Path('src/mqttnext/protocol/engine.py')
+          text = engine.read_text()
+          old = '        validate_received_publish_topic(topic)\n'
+          new = '        validate_received_publish_topic(topic, utf8_already_validated=True)\n'
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected engine inbound validation call')
+          engine.write_text(text.replace(old, new))
+          PY
+          python -m pytest -q tests/unit
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py ingress_engine --seconds 4 \
+              >> /tmp/mqttnext-ab/inbound-validation-optimized.ndjson
+          done
+          git checkout -- src/mqttnext/topics.py src/mqttnext/protocol/engine.py
+      - name: Decoder buffer reuse A B
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/decoder-baseline.ndjson
+          done
+          strace -f -c -o /tmp/mqttnext-ab/decoder-baseline.strace \
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/mqttnext/codec/buffer.py')
+          text = path.read_text()
+          old = '''    def feed(self, data: bytes | bytearray | memoryview) -> None:\n        if not data:\n            return\n        if self._start and self._start > _COMPACT_THRESHOLD:\n            self._compact()\n        self._buf.extend(data)\n'''
+          new = '''    def feed(self, data: bytes | bytearray | memoryview) -> None:\n        if not data:\n            return\n        if self._start == len(self._buf):\n            # Replace fully consumed contents in-place so CPython can reuse the\n            # bytearray allocation across socket reads.\n            self._buf[:] = data\n            self._start = 0\n            return\n        if self._start and self._start > _COMPACT_THRESHOLD:\n            self._compact()\n        self._buf.extend(data)\n'''
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected decoder feed implementation')
+          text = text.replace(old, new)
+          old = '''        if self._start == len(self._buf):\n            # Reuse the buffer object (avoid allocating a fresh bytearray).\n            self._buf.clear()\n            self._start = 0\n'''
+          new = '''        # A fully consumed buffer is retained until the next feed(), which\n        # replaces its contents in-place and can reuse the existing capacity.\n'''
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected decoder clear implementation')
+          path.write_text(text.replace(old, new))
+          PY
+          python -m pytest -q tests/unit
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/decoder-optimized.ndjson
+          done
+          strace -f -c -o /tmp/mqttnext-ab/decoder-optimized.strace \
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64
+          git checkout -- src/mqttnext/codec/buffer.py
+      - name: Effect stable partition A B
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py broker --seconds 4 --qos 0 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/effects-baseline-qos0.ndjson
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/effects-baseline-qos1.ndjson
+          done
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/mqttnext/api/async_client.py')
+          text = path.read_text()
+          old = '''    def _collect_effects_locked(self) -> None:\n        effects = self._engine.take_effects()\n        self._pending_effects.extend(effect for effect in effects if effect.kind is EffectKind.SEND)\n        self._pending_effects.extend(\n            effect for effect in effects if effect.kind is not EffectKind.SEND\n        )\n'''
+          new = '''    def _collect_effects_locked(self) -> None:\n        effects = self._engine.take_effects()\n        if not effects:\n            return\n        sends: list[EngineEffect] = []\n        events: list[EngineEffect] = []\n        for effect in effects:\n            (sends if effect.kind is EffectKind.SEND else events).append(effect)\n        self._pending_effects.extend(sends)\n        self._pending_effects.extend(events)\n'''
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected effect collection implementation')
+          path.write_text(text.replace(old, new))
+          PY
+          python -m pytest -q tests/unit
+          for run in 1 2 3 4 5; do
+            python tools/profile_scenarios.py broker --seconds 4 --qos 0 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/effects-optimized-qos0.ndjson
+            python tools/profile_scenarios.py broker --seconds 4 --qos 1 --window 100 --payload-size 64 \
+              >> /tmp/mqttnext-ab/effects-optimized-qos1.ndjson
+          done
+          git checkout -- src/mqttnext/api/async_client.py
+      - name: Summarize medians
+        working-directory: mqttnext
+        run: |
+          python - <<'PY' > /tmp/mqttnext-ab/summary.json
+          import glob
+          import json
+          import os
+          import statistics
+
+          output = {}
+          for path in sorted(glob.glob('/tmp/mqttnext-ab/*.ndjson')):
+              rows = [json.loads(line) for line in open(path) if line.strip()]
+              values = [row['ops_per_s'] for row in rows]
+              output[os.path.basename(path, '.ndjson')] = {
+                  'runs': len(values),
+                  'median_ops_per_s': statistics.median(values),
+                  'min_ops_per_s': min(values),
+                  'max_ops_per_s': max(values),
+                  'median_cpu_utilization': statistics.median(
+                      row['cpu_utilization_one_core'] for row in rows
+                  ),
+              }
+          print(json.dumps(output, indent=2, sort_keys=True))
+          PY
+          cat /tmp/mqttnext-ab/summary.json
+      - name: Upload A B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqttnext-optimization-ab-${{ github.run_id }}
+          path: /tmp/mqttnext-ab
+          if-no-files-found: error
+          retention-days: 14
