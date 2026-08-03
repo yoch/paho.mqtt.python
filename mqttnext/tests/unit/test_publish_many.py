@@ -164,4 +164,17 @@ async def test_batch_receipt_aggregates_failures() -> None:
 
     with pytest.raises(PublishBatchError) as raised:
         await receipt.wait()
-    assert raised.value.failures == {8: failure}
+    assert raised.value.failures == {1: failure}
+
+
+def test_batch_receipt_failure_indexes_survive_mid_reuse() -> None:
+    receipt = PublishBatchReceipt()
+    receipt._register(7)
+    receipt._complete(7)
+    receipt._register(7)
+    failure = RuntimeError("second use rejected")
+    receipt._complete(7, failure)
+    receipt._seal()
+
+    assert receipt.completed == 2
+    assert receipt.failures == {1: failure}

@@ -41,7 +41,7 @@ class PublishBatchReceipt:
 
     def __init__(self) -> None:
         self._mids: list[int | None] = []
-        self._pending: set[int] = set()
+        self._pending: dict[int, int] = {}
         self._failures: dict[int, BaseException] = {}
         self._done = asyncio.Event()
         self._progress = asyncio.Event()
@@ -85,20 +85,21 @@ class PublishBatchReceipt:
             raise PublishBatchError(self._failures, receipt=self)
 
     def _register(self, mid: int | None) -> None:
+        index = self._submitted
         self._mids.append(mid)
         self._submitted += 1
         if mid is None:
             self._completed += 1
         else:
-            self._pending.add(mid)
+            self._pending[mid] = index
 
     def _complete(self, mid: int, error: BaseException | None = None) -> None:
-        if mid not in self._pending:
+        index = self._pending.pop(mid, None)
+        if index is None:
             return
-        self._pending.remove(mid)
         self._completed += 1
         if error is not None:
-            self._failures[mid] = error
+            self._failures[index] = error
         self._progress.set()
         self._finish_if_ready()
 
@@ -108,8 +109,8 @@ class PublishBatchReceipt:
 
     def _fail_remaining(self, error: BaseException) -> None:
         self._fatal = error
-        for mid in self._pending:
-            self._failures.setdefault(mid, error)
+        for index in self._pending.values():
+            self._failures.setdefault(index, error)
         self._completed += len(self._pending)
         self._pending.clear()
         self._sealed = True
