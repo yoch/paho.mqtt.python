@@ -4,13 +4,21 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * *"
+  pull_request:
+    paths:
+      - "mqttnext/benchmarks/**"
+      - "mqttnext/src/mqttnext/api/**"
+      - "mqttnext/src/mqttnext/compat/**"
+      - "mqttnext/src/mqttnext/persistence/**"
+      - "mqttnext/src/mqttnext/protocol/**"
+      - ".github/workflows/mqttnext-benchmarks.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: mqttnext-benchmarks
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   benchmark:
