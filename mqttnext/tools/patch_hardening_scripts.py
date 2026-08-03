@@ -122,9 +122,56 @@ def patch_tests() -> None:
     replace_once(path, old, new)
 
 
+def patch_bench() -> None:
+    path = ROOT / "tools/apply_hardening_bench.py"
+    replace_once(path, '        import struct\n', '')
+    replace_once(
+        path,
+        '        HEADER = struct.Struct("!QQ")\n        WINDOW = 100\n',
+        '        HEADER_HEX_BYTES = 32\n        WINDOW = 100\n',
+    )
+    replace_once(
+        path,
+        '''        def make_payload(sequence: int, size: int) -> bytes:
+            header = HEADER.pack(sequence, time.monotonic_ns())
+            return header + b"x" * max(0, size - len(header))
+''',
+        '''        def make_payload(sequence: int, size: int) -> bytes:
+            header = f"{sequence:016x}{time.monotonic_ns():016x}".encode("ascii")
+            return header + b"x" * max(0, size - len(header))
+''',
+    )
+    replace_once(
+        path,
+        '''            latencies = []
+            for raw, arrived_ns in arrivals:
+                if len(raw) < HEADER.size:
+                    raise RuntimeError(f"invalid payload length {len(raw)}")
+                _, sent_ns = HEADER.unpack(raw[: HEADER.size])
+                latencies.append((arrived_ns - sent_ns) / 1_000_000)
+''',
+        '''            latencies = []
+            sequences = []
+            for raw, arrived_ns in arrivals:
+                if len(raw) < HEADER_HEX_BYTES:
+                    raise RuntimeError(f"invalid payload length {len(raw)}")
+                try:
+                    sequence = int(raw[:16], 16)
+                    sent_ns = int(raw[16:HEADER_HEX_BYTES], 16)
+                except ValueError as exc:
+                    raise RuntimeError("invalid benchmark payload header") from exc
+                sequences.append(sequence)
+                latencies.append((arrived_ns - sent_ns) / 1_000_000)
+            if sorted(sequences) != list(range(args.count)):
+                raise RuntimeError("subscriber payload sequence mismatch")
+''',
+    )
+
+
 def main() -> None:
     patch_core()
     patch_tests()
+    patch_bench()
 
 
 if __name__ == "__main__":
