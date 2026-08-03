@@ -1,0 +1,72 @@
+name: mqttnext-realworld-reaudit
+
+on:
+  push:
+    branches:
+      - agent/mqttnext-realworld-reaudit
+
+permissions:
+  contents: read
+
+jobs:
+  realworld:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install benchmark dependencies
+        run: |
+          pip install -e ./mqttnext paho-mqtt==2.1.0
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients iproute2 openssl
+      - name: Create ephemeral TLS broker
+        run: |
+          mkdir -p /tmp/mqttnext-audit
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /tmp/mqttnext-audit/key.pem \
+            -out /tmp/mqttnext-audit/cert.pem \
+            -days 1 -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          chmod 0644 /tmp/mqttnext-audit/key.pem /tmp/mqttnext-audit/cert.pem
+          cat > /tmp/mqttnext-audit/mosquitto.conf <<'EOF'
+          user root
+          persistence false
+          allow_anonymous true
+          listener 11883 127.0.0.1
+          listener 18884 127.0.0.1
+          cafile /tmp/mqttnext-audit/cert.pem
+          certfile /tmp/mqttnext-audit/cert.pem
+          keyfile /tmp/mqttnext-audit/key.pem
+          require_certificate false
+          EOF
+          mosquitto -c /tmp/mqttnext-audit/mosquitto.conf -v > /tmp/mqttnext-audit/mosquitto.log 2>&1 &
+          echo $! > /tmp/mqttnext-audit/mosquitto.pid
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && \
+            (echo > /dev/tcp/127.0.0.1/18884) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          cat /tmp/mqttnext-audit/mosquitto.log
+          exit 1
+      - name: Validate audit harness
+        run: python -m py_compile mqttnext/tools/realworld_bench.py
+      - name: Run real-world benchmark
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python mqttnext/tools/realworld_bench.py \
+            --cafile /tmp/mqttnext-audit/cert.pem \
+            --output /tmp/mqttnext-audit/realworld.json
+      - name: Show broker tail
+        if: always()
+        run: tail -100 /tmp/mqttnext-audit/mosquitto.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mqttnext-realworld-reaudit
+          path: |
+            /tmp/mqttnext-audit/realworld.json
+            /tmp/mqttnext-audit/mosquitto.log
