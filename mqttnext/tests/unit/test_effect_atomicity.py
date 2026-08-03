@@ -1,4 +1,4 @@
-"""Atomic effect transfer and callback task lifecycle."""
+"""Atomic effect transfer and bounded callback lifecycle."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from mqttnext.protocol.engine import EffectKind
 from mqttnext.types import Message
 
 
-async def test_cancelled_backpressure_keeps_send_effect_for_retry() -> None:
+async def test_cancelled_backpressure_keeps_send_effect_for_same_connection() -> None:
     client = AsyncClient(
         client_id="effect-cancel",
         max_outbound_messages=1,
@@ -31,9 +31,7 @@ async def test_cancelled_backpressure_keeps_send_effect_for_retry() -> None:
     publishing.cancel()
     with pytest.raises(asyncio.CancelledError):
         await publishing
-    assert any(
-        effect.kind is EffectKind.SEND for effect in client._pending_effects
-    )
+    assert any(effect.kind is EffectKind.SEND for effect in client._pending_effects)
 
     blocked = client._outbound.get_nowait()
     client._outbound.task_done()
@@ -46,7 +44,7 @@ async def test_cancelled_backpressure_keeps_send_effect_for_retry() -> None:
     assert client._outbound.qsize() == 1
 
 
-async def test_callback_exception_is_collected() -> None:
+async def test_callback_exception_reaches_loop_exception_handler() -> None:
     client = AsyncClient(client_id="callback-error")
     loop = asyncio.get_running_loop()
     contexts: list[dict[str, object]] = []
@@ -57,17 +55,21 @@ async def test_callback_exception_is_collected() -> None:
         raise RuntimeError("callback failed")
 
     try:
-        client._spawn_callback(fail, Message(topic="t", payload=b"x"))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert not client._callback_tasks
-        assert contexts == []
+        await client._enqueue_callback(fail, Message(topic="t", payload=b"x"))
+        await asyncio.wait_for(client._callback_queue.join(), timeout=1.0)
+        assert len(contexts) == 1
+        assert isinstance(contexts[0].get("exception"), RuntimeError)
+        assert contexts[0].get("callback") is fail
     finally:
         loop.set_exception_handler(previous)
+        await client._shutdown_callback_worker(drain=False)
 
 
-async def test_force_close_cancels_callback_tasks() -> None:
-    client = AsyncClient(client_id="callback-close")
+async def test_force_close_stops_callback_worker() -> None:
+    client = AsyncClient(
+        client_id="callback-close",
+        callback_shutdown_timeout=0.05,
+    )
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -75,9 +77,9 @@ async def test_force_close_cancels_callback_tasks() -> None:
         started.set()
         await release.wait()
 
-    client._spawn_callback(slow, Message(topic="t", payload=b"x"))
+    await client._enqueue_callback(slow, Message(topic="t", payload=b"x"))
     await started.wait()
-    assert len(client._callback_tasks) == 1
+    assert client._callback_worker_task is not None
 
     await client._force_close()
-    assert not client._callback_tasks
+    assert client._callback_worker_task is None

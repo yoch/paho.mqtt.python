@@ -67,9 +67,7 @@ def test_negotiated_settings_applied() -> None:
 
 
 def test_maximum_packet_size_enforced() -> None:
-    engine = ProtocolEngine(
-        EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5)
-    )
+    engine = ProtocolEngine(EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5))
     engine.begin_connect()
     props = Properties()
     props.set("maximum_packet_size", 20)

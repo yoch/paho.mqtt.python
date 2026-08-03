@@ -25,6 +25,7 @@ def test_reserved_packet_type_raises_public_mqtt_error() -> None:
     with pytest.raises(MQTTError):
         PacketType.from_byte(0x0D)
 
+
 def test_low_level_parser_exceptions_are_not_allowed() -> None:
     assert fuzzmod.ALLOWED == (MQTTError, ConnectionError)
     assert IndexError not in fuzzmod.ALLOWED

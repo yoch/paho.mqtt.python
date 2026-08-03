@@ -119,9 +119,13 @@ _SPECS: tuple[PropertySpec, ...] = (
         PropType.BINARY,
         frozenset({CONNECT, CONNACK, AUTH}),
     ),
-    PropertySpec(0x17, "request_problem_information", PropType.BYTE, frozenset({CONNECT}), zero_one=True),
+    PropertySpec(
+        0x17, "request_problem_information", PropType.BYTE, frozenset({CONNECT}), zero_one=True
+    ),
     PropertySpec(0x18, "will_delay_interval", PropType.U32, frozenset({WILL})),
-    PropertySpec(0x19, "request_response_information", PropType.BYTE, frozenset({CONNECT}), zero_one=True),
+    PropertySpec(
+        0x19, "request_response_information", PropType.BYTE, frozenset({CONNECT}), zero_one=True
+    ),
     PropertySpec(0x1A, "response_information", PropType.STRING, frozenset({CONNACK})),
     PropertySpec(0x1C, "server_reference", PropType.STRING, frozenset({CONNACK, DISCONNECT})),
     PropertySpec(

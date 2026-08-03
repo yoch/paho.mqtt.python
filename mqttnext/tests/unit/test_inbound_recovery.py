@@ -34,9 +34,7 @@ def _inbound(mid: int, *, state=InboundQoSState.WAIT_PUBREL, delivered=True, use
 def _resume(engine: ProtocolEngine) -> list:
     engine.begin_connect()
     engine.take_effects()
-    body = b"\x01\x00" + (
-        b"\x00" if engine.config.protocol == MQTTProtocolVersion.MQTTv5 else b""
-    )
+    body = b"\x01\x00" + (b"\x00" if engine.config.protocol == MQTTProtocolVersion.MQTTv5 else b"")
     engine.handle_raw(RawPacket(PacketType.CONNACK, 0, body))
     return engine.take_effects()
 

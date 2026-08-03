@@ -55,9 +55,7 @@ class FakeBrokerTransport:
             elif raw.packet_type is PacketType.SUBSCRIBE:
                 self.subscribes.append(raw.remaining)
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(
-                    encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0]))
-                )
+                self._rx.put_nowait(encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0])))
             elif raw.packet_type is PacketType.UNSUBSCRIBE:
                 mid = int.from_bytes(raw.remaining[:2], "big")
                 self._rx.put_nowait(encode_frame(PacketType.UNSUBACK, 0, pack_u16(mid)))
@@ -72,7 +70,9 @@ class FakeBrokerTransport:
     def is_closing(self) -> bool:
         return self._closing
 
-    def push_publish(self, topic: str, payload: bytes, *, qos: int = 0, retain: bool = False) -> None:
+    def push_publish(
+        self, topic: str, payload: bytes, *, qos: int = 0, retain: bool = False
+    ) -> None:
         mid = 1 if qos else None
         pkt = PublishPacket(
             topic=topic,

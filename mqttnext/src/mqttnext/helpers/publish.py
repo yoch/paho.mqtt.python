@@ -53,9 +53,7 @@ async def multiple(
         receipts = []
         for raw in msgs:
             topic, payload, qos, retain = _normalize_message(raw)
-            receipts.append(
-                await client.publish(topic, payload, qos=QoS(qos), retain=retain)
-            )
+            receipts.append(await client.publish(topic, payload, qos=QoS(qos), retain=retain))
         for receipt in receipts:
             await receipt.wait()
     finally:

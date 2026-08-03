@@ -23,6 +23,10 @@ class FlowControlError(MQTTError):
     """Outbound inflight window exhausted (raise mode)."""
 
 
+class MessageDeliveryError(FlowControlError):
+    """Application delivery could not keep up within the configured deadline."""
+
+
 class NotConnectedError(MQTTError):
     """Operation requires an active connection."""
 

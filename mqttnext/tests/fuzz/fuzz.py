@@ -89,9 +89,7 @@ class FuzzLogger:
             print(msg, file=sys.stderr, flush=True)
 
     def start(self) -> None:
-        self._emit(
-            f"[START] target={self.target} seed={self.seed} iterations={self.iterations}"
-        )
+        self._emit(f"[START] target={self.target} seed={self.seed} iterations={self.iterations}")
 
     def progress(self, i: int) -> None:
         if i - self._last >= self.progress_every or i + 1 == self.iterations:
@@ -132,6 +130,7 @@ class FuzzLogger:
 # Target 1: codec / properties / packets
 # ---------------------------------------------------------------------------
 
+
 def _mutate(rng: random.Random, data: bytes) -> bytes:
     if not data:
         return bytes([rng.randrange(256)])
@@ -149,9 +148,7 @@ def _mutate(rng: random.Random, data: bytes) -> bytes:
     return bytes(buf)
 
 
-def fuzz_codec(
-    rng: random.Random, iterations: int, logger: FuzzLogger | None = None
-) -> FuzzResult:
+def fuzz_codec(rng: random.Random, iterations: int, logger: FuzzLogger | None = None) -> FuzzResult:
     result = FuzzResult("codec", iterations, 0, 0)
     base_props = Properties()
     base_props.set("payload_format_indicator", 1)
@@ -239,6 +236,7 @@ def _decode_by_type(pkt: RawPacket) -> None:
 # Target 2: engine — stateful sequences
 # ---------------------------------------------------------------------------
 
+
 def _rand_publish_frame(rng: random.Random, proto: MQTTProtocolVersion) -> bytes:
     qos = rng.choice([0, 1, 2])
     mid = rng.randrange(0, 4) if qos else None  # include invalid 0 sometimes
@@ -322,7 +320,13 @@ def fuzz_engine(
                     [PacketType.PUBACK, PacketType.PUBREC, PacketType.PUBREL, PacketType.PUBCOMP]
                 )
                 mid = rng.randrange(0, 5)
-                feed(encode_frame(ack_type, 0x2 if ack_type is PacketType.PUBREL else 0, mid.to_bytes(2, "big")))
+                feed(
+                    encode_frame(
+                        ack_type,
+                        0x2 if ack_type is PacketType.PUBREL else 0,
+                        mid.to_bytes(2, "big"),
+                    )
+                )
             elif op == 5:
                 # Outbound publish from the app side
                 engine.queue_publish(
@@ -397,8 +401,7 @@ def _check_engine_invariants(engine: ProtocolEngine) -> None:
     expected_mids = outbound_mids | set(engine._pending_sub_mids)
     actual_mids = set(engine.packet_ids._used)
     assert actual_mids == expected_mids, (
-        f"packet-id mismatch: actual={sorted(actual_mids)} "
-        f"expected={sorted(expected_mids)}"
+        f"packet-id mismatch: actual={sorted(actual_mids)} expected={sorted(expected_mids)}"
     )
 
     queued_mids = {msg.mid for msg in engine._queued}
@@ -415,6 +418,7 @@ def _check_engine_invariants(engine: ProtocolEngine) -> None:
 # ---------------------------------------------------------------------------
 # Target 3: WebSocket frame parser (bounded memory)
 # ---------------------------------------------------------------------------
+
 
 def fuzz_websocket(
     rng: random.Random, iterations: int, logger: FuzzLogger | None = None

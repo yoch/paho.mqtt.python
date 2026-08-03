@@ -23,10 +23,22 @@ def _make_certs(tmp_path: Path) -> tuple[Path, Path]:
     cert = tmp_path / "cert.pem"
     subprocess.run(
         [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", str(key), "-out", str(cert), "-days", "1",
-            "-subj", "/CN=localhost",
-            "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=DNS:localhost,IP:127.0.0.1",
         ],
         check=True,
         capture_output=True,
@@ -90,7 +102,56 @@ async def test_tls_rejects_untrusted_server(tmp_path: Path) -> None:
         # Default context trusts public CAs only: the self-signed cert fails.
         client = AsyncClient(client_id="tls-reject")
         with pytest.raises(ssl.SSLError):
+            await client.connect("127.0.0.1", port, ssl=ssl.create_default_context(), timeout=5.0)
+        assert not client.is_connected
+
+
+async def test_tls_rejects_hostname_mismatch(tmp_path: Path) -> None:
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl not available")
+    key = tmp_path / "wrong-key.pem"
+    cert = tmp_path / "wrong-cert.pem"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=wrong.example",
+            "-addext",
+            "subjectAltName=DNS:wrong.example",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(cert, key)
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0, ssl=server_ctx)
+    assert server.sockets
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client_ctx = ssl.create_default_context()
+        client_ctx.load_verify_locations(cert)
+        client = AsyncClient(client_id="tls-hostname")
+        with pytest.raises(ssl.SSLCertVerificationError):
             await client.connect(
-                "127.0.0.1", port, ssl=ssl.create_default_context(), timeout=5.0
+                "127.0.0.1",
+                port,
+                ssl=client_ctx,
+                timeout=5.0,
             )
         assert not client.is_connected

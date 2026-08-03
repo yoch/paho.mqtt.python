@@ -36,9 +36,7 @@ class FakeBrokerTransport:
                     self._rx.put_nowait(PubAckPacket(mid=pub.mid).encode())
             elif raw.packet_type is PacketType.SUBSCRIBE:
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(
-                    encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0]))
-                )
+                self._rx.put_nowait(encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0])))
 
     async def read(self, n: int = 65536) -> bytes:
         return await self._rx.get()

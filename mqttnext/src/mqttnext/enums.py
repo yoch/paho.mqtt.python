@@ -35,9 +35,7 @@ class PacketType(IntEnum):
         try:
             return cls(byte & 0xF0)
         except ValueError as exc:
-            raise MalformedPacketError(
-                f"Unknown MQTT packet type byte 0x{byte:02x}"
-            ) from exc
+            raise MalformedPacketError(f"Unknown MQTT packet type byte 0x{byte:02x}") from exc
 
 
 class QoS(IntEnum):

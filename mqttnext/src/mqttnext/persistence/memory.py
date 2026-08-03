@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Protocol
 from collections.abc import Iterator
+from contextlib import AbstractContextManager, nullcontext
+from typing import Protocol
 
 from mqttnext.types import InboundMessage, OutboundMessage
 
 
 class InflightStore(Protocol):
+    def batch(self) -> AbstractContextManager[None]: ...
     def put_out(self, msg: OutboundMessage) -> None: ...
     def get_out(self, mid: int) -> OutboundMessage | None: ...
     def pop_out(self, mid: int) -> OutboundMessage | None: ...
@@ -25,13 +27,16 @@ class InflightStore(Protocol):
 
 
 class MemoryInflightStore:
-    """Ordered dict-backed store. Insertion order is the retransmission order."""
+    """Ordered dict-backed store. Insertion order is retransmission order."""
 
     __slots__ = ("_out", "_in")
 
     def __init__(self) -> None:
         self._out: dict[int, OutboundMessage] = {}
         self._in: dict[int, InboundMessage] = {}
+
+    def batch(self) -> AbstractContextManager[None]:
+        return nullcontext()
 
     def put_out(self, msg: OutboundMessage) -> None:
         self._out[msg.mid] = msg

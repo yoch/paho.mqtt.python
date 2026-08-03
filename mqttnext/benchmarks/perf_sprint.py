@@ -136,9 +136,7 @@ def track_A_codec() -> list[Sample]:
 
 def track_B_ingress() -> list[Sample]:
     samples: list[Sample] = []
-    pkt = PublishPacket(
-        topic=TOPIC, payload=PAYLOAD, qos=QoS.AT_MOST_ONCE, retain=False, dup=False
-    )
+    pkt = PublishPacket(topic=TOPIC, payload=PAYLOAD, qos=QoS.AT_MOST_ONCE, retain=False, dup=False)
     wire = pkt.encode()
     batch50 = wire * 50
     batch500 = wire * 500
@@ -199,9 +197,7 @@ def track_B_ingress() -> list[Sample]:
     return samples
 
 
-async def _e2e_pub(
-    qos: int, count: int, payload: bytes, *, outbound_window: int = 20
-) -> float:
+async def _e2e_pub(qos: int, count: int, payload: bytes, *, outbound_window: int = 20) -> float:
     from mqttnext.protocol.reconnect import ReconnectPolicy
 
     client = AsyncClient(
@@ -294,9 +290,7 @@ def _write_results(tag: str, samples: list[Sample]) -> Path:
         "| --- | --- | ---: | --- | --- |",
     ]
     for s in samples:
-        lines.append(
-            f"| {s.track} | `{s.name}` | {s.ops_per_s:,.1f} | {s.unit} | {s.notes} |"
-        )
+        lines.append(f"| {s.track} | `{s.name}` | {s.ops_per_s:,.1f} | {s.unit} | {s.notes} |")
     md.write_text("\n".join(lines) + "\n")
     print(md.read_text())
     print(f"Wrote {out}")

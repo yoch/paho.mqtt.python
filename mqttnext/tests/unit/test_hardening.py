@@ -46,9 +46,7 @@ def test_mid_zero_rejected() -> None:
 
 
 def test_disconnect_packet_parsed() -> None:
-    engine = ProtocolEngine(
-        EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5)
-    )
+    engine = ProtocolEngine(EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5))
     engine.begin_connect()
     body = bytes((0x00, 0x00)) + encode_properties(Properties(), "CONNACK")
     _feed(engine, encode_frame(PacketType.CONNACK, 0, body))
@@ -97,29 +95,21 @@ def test_session_resume_uses_clean_start_false() -> None:
 
 
 def test_inbound_receive_maximum() -> None:
-    engine = ProtocolEngine(
-        EngineConfig(client_id="c", local_receive_maximum=1, manual_ack=True)
-    )
+    engine = ProtocolEngine(EngineConfig(client_id="c", local_receive_maximum=1, manual_ack=True))
     engine.begin_connect()
     _feed(engine, encode_frame(PacketType.CONNACK, 0, b"\x00\x00"))
     engine.take_effects()
-    pub1 = PublishPacket(
-        topic="a", payload=b"1", qos=1, retain=False, dup=False, mid=1
-    ).encode()
+    pub1 = PublishPacket(topic="a", payload=b"1", qos=1, retain=False, dup=False, mid=1).encode()
     _feed(engine, pub1)
     engine.take_effects()
-    pub2 = PublishPacket(
-        topic="b", payload=b"2", qos=1, retain=False, dup=False, mid=2
-    ).encode()
+    pub2 = PublishPacket(topic="b", payload=b"2", qos=1, retain=False, dup=False, mid=2).encode()
     _feed(engine, pub2)
     effects = engine.take_effects()
     assert any(e.kind is EffectKind.PROTOCOL_ERROR for e in effects)
 
 
 def test_offline_qos_rejected_after_max_qos_connack() -> None:
-    engine = ProtocolEngine(
-        EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5)
-    )
+    engine = ProtocolEngine(EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5))
     handle = engine.queue_publish("t", b"x", qos=2)
     assert handle.mid is not None
     engine.begin_connect()
@@ -128,6 +118,4 @@ def test_offline_qos_rejected_after_max_qos_connack() -> None:
     body = bytes((0x00, 0x00)) + encode_properties(props, "CONNACK")
     _feed(engine, encode_frame(PacketType.CONNACK, 0, body))
     effects = engine.take_effects()
-    assert any(
-        e.kind is EffectKind.PUBLISH_FAILED and e.data.mid == handle.mid for e in effects
-    )
+    assert any(e.kind is EffectKind.PUBLISH_FAILED and e.data.mid == handle.mid for e in effects)

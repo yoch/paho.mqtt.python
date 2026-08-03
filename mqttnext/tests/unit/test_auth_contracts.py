@@ -54,9 +54,7 @@ def test_inbound_auth_method_mismatch_disconnects_with_bad_method() -> None:
 
     assert engine.state is ConnectionState.DISCONNECTED
     assert any(effect.kind is EffectKind.SEND for effect in effects)
-    disconnected = next(
-        effect.data for effect in effects if effect.kind is EffectKind.DISCONNECTED
-    )
+    disconnected = next(effect.data for effect in effects if effect.kind is EffectKind.DISCONNECTED)
     assert disconnected.reason_code == 0x8C
 
 
@@ -72,11 +70,7 @@ def test_outbound_auth_injects_configured_method() -> None:
     engine.take_effects()
 
     engine.queue_auth(reason_code=0x18, properties=Properties())
-    wire = next(
-        effect.data
-        for effect in engine.take_effects()
-        if effect.kind is EffectKind.SEND
-    )
+    wire = next(effect.data for effect in engine.take_effects() if effect.kind is EffectKind.SEND)
     decoder = IncrementalDecoder()
     decoder.feed(wire)
     raw = decoder.next_packet()

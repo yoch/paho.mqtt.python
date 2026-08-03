@@ -116,6 +116,7 @@ def _build_publish(topic: str, payload: bytes, qos: int, mid: int | None, props)
 # 1. Codec: mutated PUBLISH frames never crash the decoder + typed decode
 # ---------------------------------------------------------------------------
 
+
 @given(
     topic=_topics,
     payload=_payloads,
@@ -161,6 +162,7 @@ def test_publish_frame_roundtrip_or_clean_error(topic, payload, qos, mid, mutati
 # ---------------------------------------------------------------------------
 # 2. Properties blob decode never crashes
 # ---------------------------------------------------------------------------
+
 
 @given(blob=st.binary(max_size=128))
 @settings(suppress_health_check=list(HealthCheck), deadline=None)
@@ -220,7 +222,9 @@ def _engine_invariants(engine: ProtocolEngine) -> None:
 @settings(suppress_health_check=list(HealthCheck), deadline=None)
 def test_engine_sequence_invariants(ops, proto):
     engine = ProtocolEngine(
-        EngineConfig(client_id="hyp", protocol=proto, local_receive_maximum=8, topic_alias_maximum=2)
+        EngineConfig(
+            client_id="hyp", protocol=proto, local_receive_maximum=8, topic_alias_maximum=2
+        )
     )
     dec = IncrementalDecoder(max_packet_size=DEFAULT_MAX_PACKET_SIZE)
 
@@ -248,7 +252,12 @@ def test_engine_sequence_invariants(ops, proto):
                 wire = _build_publish("a/b", extra, mid % 3, mid if mid % 3 else None, None)
                 if wire:
                     feed(wire)
-            elif ptype in (PacketType.PUBACK, PacketType.PUBREC, PacketType.PUBREL, PacketType.PUBCOMP):
+            elif ptype in (
+                PacketType.PUBACK,
+                PacketType.PUBREC,
+                PacketType.PUBREL,
+                PacketType.PUBCOMP,
+            ):
                 flags = 0x2 if ptype is PacketType.PUBREL else 0
                 feed(encode_frame(ptype, flags, (mid % 65536).to_bytes(2, "big") + extra[:2]))
             elif ptype in (PacketType.SUBACK, PacketType.UNSUBACK):
@@ -263,6 +272,7 @@ def test_engine_sequence_invariants(ops, proto):
 # ---------------------------------------------------------------------------
 # 4. WebSocket frame parser: bounded memory
 # ---------------------------------------------------------------------------
+
 
 @given(header=st.binary(min_size=2, max_size=14), tail=st.binary(max_size=64))
 @settings(suppress_health_check=list(HealthCheck), deadline=None)

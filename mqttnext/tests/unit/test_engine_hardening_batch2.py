@@ -106,11 +106,7 @@ def test_queued_launch_failure_releases_resources_and_emits_failure() -> None:
     engine.handle_raw(_raw(PubAckPacket(mid=first.mid).encode()))
     effects = engine.take_effects()
 
-    failures = [
-        effect.data
-        for effect in effects
-        if effect.kind is EffectKind.PUBLISH_FAILED
-    ]
+    failures = [effect.data for effect in effects if effect.kind is EffectKind.PUBLISH_FAILED]
     assert len(failures) == 1
     assert failures[0].mid == second.mid
     assert isinstance(failures[0].reason, RuntimeError)
@@ -174,10 +170,6 @@ def test_connack_refusal_preserves_reason_for_reconnect_policy() -> None:
         )
     )
     effects = engine.take_effects()
-    disconnected = next(
-        effect.data
-        for effect in effects
-        if effect.kind is EffectKind.DISCONNECTED
-    )
+    disconnected = next(effect.data for effect in effects if effect.kind is EffectKind.DISCONNECTED)
     assert disconnected.reason_code == 5
     assert disconnected.from_broker is True

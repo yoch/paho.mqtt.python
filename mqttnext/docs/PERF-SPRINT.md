@@ -24,17 +24,11 @@ retenus. Les pistes rejetées ou non retenues sont documentées aussi.
 | D | e2e QoS1 rm100 (nouveau défaut) | 41,214 | 47,599 | **+15%** vs base rm100 |
 | D | e2e QoS2 rm100 | 25,894 | 32,092 | **+24%** vs base rm100 |
 
-Comparatif libs (post-sprint, `compare_libs.py`, payload 64 B, rm=100) :
-
-| Scenario | mqttnext | gmqtt | paho | vs gmqtt | vs paho |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| encode QoS0 | ~1.38M | ~1.05M | ~213k | 1.3× | **6.4×** |
-| e2e QoS0 | ~226k | ~96k | ~75k | **2.3×** | **3.0×** |
-| e2e QoS1 | ~24–48k† | ~227‡ | ~22k | — | ≥1.1× |
-| e2e QoS2 | ~14–34k† | n/c‡ | ~13.5k | — | ~1.0–1.5× |
-
-† Selon harness (counts / RM) ; sprint isolé avec counts élevés + rm100 ≈ 48k / 32k.  
-‡ gmqtt : Receive-Maximum-as-MID (QoS1) ; QoS2 `wait_empty` au PUBREC.
+Comparaisons inter-bibliothèques : les anciens chiffres ont été retirés,
+car les contrats de complétion et les barrières du harness n'étaient pas
+équivalents. Le protocole actuel est décrit dans
+[`BENCHMARKING.md`](BENCHMARKING.md). Les résultats sont produits comme
+artefacts CI, sans affirmation permanente dans le dépôt.
 
 ---
 

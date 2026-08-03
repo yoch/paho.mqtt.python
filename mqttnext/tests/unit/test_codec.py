@@ -95,7 +95,9 @@ def test_decoder_enforces_max_size() -> None:
 
 
 def test_decoder_incomplete_waits() -> None:
-    packet = PublishPacket(topic="wait", payload=b"payload", qos=0, retain=False, dup=False).encode()
+    packet = PublishPacket(
+        topic="wait", payload=b"payload", qos=0, retain=False, dup=False
+    ).encode()
     dec = IncrementalDecoder()
     dec.feed(packet[:3])
     assert dec.next_packet() is None

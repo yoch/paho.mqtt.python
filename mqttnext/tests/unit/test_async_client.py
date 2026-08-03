@@ -38,9 +38,7 @@ class FakeBrokerTransport:
                     self._rx.put_nowait(PubAckPacket(mid=pub.mid).encode())
             elif raw.packet_type is PacketType.SUBSCRIBE:
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(
-                    encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([1]))
-                )
+                self._rx.put_nowait(encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([1])))
 
     async def read(self, n: int = 65536) -> bytes:
         return await self._rx.get()
@@ -87,12 +85,8 @@ async def test_many_concurrent_publishes_complete() -> None:
     client, fake = _client_with_fake()
     await client.connect("fake", 1883, timeout=2.0)
 
-    receipts = await asyncio.gather(
-        *(client.publish(f"t/{i}", str(i), qos=1) for i in range(50))
-    )
-    await asyncio.wait_for(
-        asyncio.gather(*(r.wait() for r in receipts)), timeout=5.0
-    )
+    receipts = await asyncio.gather(*(client.publish(f"t/{i}", str(i), qos=1) for i in range(50)))
+    await asyncio.wait_for(asyncio.gather(*(r.wait() for r in receipts)), timeout=5.0)
     assert all(r.is_done() for r in receipts)
     await client.disconnect()
 
@@ -108,9 +102,7 @@ async def test_qos0_receipt_immediate() -> None:
 
 async def test_full_message_queue_close_loses_nothing() -> None:
     """P1.7: the end-of-stream sentinel must never evict a queued message."""
-    client = AsyncClient(
-        client_id="test", max_pending_messages=4, message_delivery="iterator"
-    )
+    client = AsyncClient(client_id="test", max_pending_messages=4, message_delivery="iterator")
     fake = FakeBrokerTransport()
 
     async def factory(host: str, port: int, *, ssl: object = None) -> FakeBrokerTransport:

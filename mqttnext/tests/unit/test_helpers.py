@@ -32,9 +32,7 @@ class FakeBrokerTransport:
                     self._rx.put_nowait(PubAckPacket(mid=pub.mid).encode())
             elif raw.packet_type is PacketType.SUBSCRIBE:
                 mid = int.from_bytes(raw.remaining[:2], "big")
-                self._rx.put_nowait(
-                    encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0]))
-                )
+                self._rx.put_nowait(encode_frame(PacketType.SUBACK, 0, pack_u16(mid) + bytes([0])))
                 if self._push_publish is not None:
                     self._rx.put_nowait(self._push_publish)
 
@@ -71,9 +69,7 @@ async def test_publish_single_and_multiple(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.asyncio
 async def test_subscribe_simple(monkeypatch: pytest.MonkeyPatch) -> None:
-    inbound = PublishPacket(
-        topic="news/1", payload=b"hi", qos=0, retain=False, dup=False
-    ).encode()
+    inbound = PublishPacket(topic="news/1", payload=b"hi", qos=0, retain=False, dup=False).encode()
 
     async def factory(host: str, port: int, *, ssl=None):
         return FakeBrokerTransport(push_publish=inbound)
@@ -82,9 +78,7 @@ async def test_subscribe_simple(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(ac.TcpTransport, "connect", staticmethod(factory))
 
-    msg = await subscribe_helper.simple(
-        "news/#", hostname="fake", timeout=2.0, keepalive=5
-    )
+    msg = await subscribe_helper.simple("news/#", hostname="fake", timeout=2.0, keepalive=5)
     assert not isinstance(msg, list)
     assert msg.topic == "news/1"
     assert msg.payload == b"hi"

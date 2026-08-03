@@ -30,9 +30,7 @@ def _as_bytes(data: object) -> bytes:
 
 
 def _take_sends(engine: ProtocolEngine) -> list[bytes]:
-    return [
-        _as_bytes(e.data) for e in engine.take_effects() if e.kind is EffectKind.SEND
-    ]
+    return [_as_bytes(e.data) for e in engine.take_effects() if e.kind is EffectKind.SEND]
 
 
 def test_offline_queue_survives_clean_connect() -> None:

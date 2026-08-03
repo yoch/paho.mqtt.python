@@ -1,28 +1,33 @@
-"""SQLite-backed inflight persistence (optional, phase 3)."""
+"""SQLite-backed inflight persistence.
+
+The store is synchronous by design and is called from the client's event-loop
+thread. A re-entrant lock protects accidental cross-thread access, while
+``batch()`` groups protocol transitions into one durable transaction before
+generated wire effects are released.
+"""
 
 from __future__ import annotations
 
 import base64
 import json
 import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from collections.abc import Iterator
 
 from mqttnext.enums import InboundQoSState, OutboundQoSState, QoS
 from mqttnext.types import InboundMessage, OutboundMessage, Properties
 
 
-def _encode_payload(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
-
-
-def _decode_payload(data: str) -> bytes:
-    return base64.b64decode(data.encode("ascii"))
+def _decode_payload(data: bytes | str) -> bytes:
+    if isinstance(data, str):
+        return base64.b64decode(data.encode("ascii"))
+    return bytes(data)
 
 
 def _json_sanitize(value: Any) -> Any:
-    """Convert property values to JSON-safe forms (bytes / tuples)."""
     if isinstance(value, bytes):
         return {"__mqttnext_bytes__": base64.b64encode(value).decode("ascii")}
     if isinstance(value, tuple):
@@ -42,7 +47,6 @@ def _json_revive(value: Any) -> Any:
             return tuple(_json_revive(v) for v in value["__mqttnext_tuple__"])
         return {k: _json_revive(v) for k, v in value.items()}
     if isinstance(value, list):
-        # user_property pairs often round-trip as [[k,v], ...] — restore tuples.
         revived = [_json_revive(v) for v in value]
         if (
             revived
@@ -97,16 +101,13 @@ def _row_to_in(row: sqlite3.Row) -> InboundMessage:
 
 
 class SqliteInflightStore:
-    """Persist inflight / queued messages across process restarts.
-
-    Encoded wire bytes are not stored; they are rebuilt on session replay.
-    MQTT 5 property bags (including binary correlation_data and user_property
-    pairs) round-trip via a tagged JSON encoding.
-    """
+    """Durable ordered store for outbound and inbound QoS state."""
 
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._batch_depth = 0
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -116,7 +117,7 @@ class SqliteInflightStore:
             CREATE TABLE IF NOT EXISTS outbound (
                 mid INTEGER PRIMARY KEY,
                 topic TEXT NOT NULL,
-                payload TEXT NOT NULL,
+                payload BLOB NOT NULL,
                 qos INTEGER NOT NULL,
                 retain INTEGER NOT NULL,
                 state INTEGER NOT NULL,
@@ -128,7 +129,7 @@ class SqliteInflightStore:
             CREATE TABLE IF NOT EXISTS inbound (
                 mid INTEGER PRIMARY KEY,
                 topic TEXT NOT NULL,
-                payload TEXT NOT NULL,
+                payload BLOB NOT NULL,
                 qos INTEGER NOT NULL,
                 retain INTEGER NOT NULL,
                 state INTEGER NOT NULL,
@@ -145,145 +146,172 @@ class SqliteInflightStore:
 
     def _max_seq(self, table: str) -> int:
         row = self._conn.execute(f"SELECT COALESCE(MAX(seq), 0) FROM {table}").fetchone()
+        assert row is not None
         return int(row[0])
 
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        with self._lock:
+            outermost = self._batch_depth == 0
+            if outermost:
+                self._conn.execute("BEGIN IMMEDIATE")
+            self._batch_depth += 1
+            try:
+                yield
+            except BaseException:
+                self._batch_depth -= 1
+                if outermost:
+                    self._conn.rollback()
+                raise
+            else:
+                self._batch_depth -= 1
+                if outermost:
+                    self._conn.commit()
+
+    def _commit_if_needed(self) -> None:
+        if self._batch_depth == 0:
+            self._conn.commit()
+
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            if self._batch_depth:
+                raise RuntimeError("Cannot close SQLite store inside batch()")
+            self._conn.commit()
+            self._conn.close()
 
     def put_out(self, msg: OutboundMessage) -> None:
-        self._out_seq += 1
-        self._conn.execute(
-            """
-            INSERT INTO outbound(mid, topic, payload, qos, retain, state, dup, properties, extra, seq)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-            ON CONFLICT(mid) DO UPDATE SET
-                topic=excluded.topic, payload=excluded.payload, qos=excluded.qos,
-                retain=excluded.retain, state=excluded.state, dup=excluded.dup,
-                properties=excluded.properties
-            """,
-            (
-                msg.mid,
-                msg.topic,
-                _encode_payload(msg.payload),
-                int(msg.qos),
-                int(msg.retain),
-                int(msg.state),
-                int(msg.dup),
-                _props_to_json(msg.properties),
-                self._out_seq,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._out_seq += 1
+            self._conn.execute(
+                """
+                INSERT INTO outbound(
+                    mid, topic, payload, qos, retain, state, dup,
+                    properties, extra, seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                ON CONFLICT(mid) DO UPDATE SET
+                    topic=excluded.topic, payload=excluded.payload,
+                    qos=excluded.qos, retain=excluded.retain,
+                    state=excluded.state, dup=excluded.dup,
+                    properties=excluded.properties
+                """,
+                (
+                    msg.mid,
+                    msg.topic,
+                    sqlite3.Binary(msg.payload),
+                    int(msg.qos),
+                    int(msg.retain),
+                    int(msg.state),
+                    int(msg.dup),
+                    _props_to_json(msg.properties),
+                    self._out_seq,
+                ),
+            )
+            self._commit_if_needed()
 
     def get_out(self, mid: int) -> OutboundMessage | None:
-        row = self._conn.execute("SELECT * FROM outbound WHERE mid=?", (mid,)).fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM outbound WHERE mid=?", (mid,)).fetchone()
         return _row_to_out(row) if row else None
 
     def pop_out(self, mid: int) -> OutboundMessage | None:
-        row = self._conn.execute("SELECT * FROM outbound WHERE mid=?", (mid,)).fetchone()
-        if row is None:
-            return None
-        self._conn.execute("DELETE FROM outbound WHERE mid=?", (mid,))
-        self._conn.commit()
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM outbound WHERE mid=?", (mid,)).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM outbound WHERE mid=?", (mid,))
+            self._commit_if_needed()
         return _row_to_out(row)
 
     def update_out(self, msg: OutboundMessage) -> None:
-        cur = self._conn.execute(
-            """
-            UPDATE outbound SET topic=?, payload=?, qos=?, retain=?, state=?, dup=?, properties=?
-            WHERE mid=?
-            """,
-            (
-                msg.topic,
-                _encode_payload(msg.payload),
-                int(msg.qos),
-                int(msg.retain),
-                int(msg.state),
-                int(msg.dup),
-                _props_to_json(msg.properties),
-                msg.mid,
-            ),
-        )
-        if cur.rowcount == 0:
-            raise KeyError(msg.mid)
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE outbound SET state=?, dup=? WHERE mid=?",
+                (int(msg.state), int(msg.dup), msg.mid),
+            )
+            if cur.rowcount == 0:
+                raise KeyError(msg.mid)
+            self._commit_if_needed()
 
     def out_items(self) -> Iterator[OutboundMessage]:
-        rows = self._conn.execute("SELECT * FROM outbound ORDER BY seq").fetchall()
-        for row in rows:
-            yield _row_to_out(row)
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM outbound ORDER BY seq").fetchall()
+        return iter(_row_to_out(row) for row in rows)
 
     def clear_out(self) -> None:
-        self._conn.execute("DELETE FROM outbound")
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM outbound")
+            self._commit_if_needed()
 
     def put_in(self, msg: InboundMessage) -> None:
-        self._in_seq += 1
-        self._conn.execute(
-            """
-            INSERT INTO inbound(
-                mid, topic, payload, qos, retain, state, delivered, properties, user_acked, seq
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(mid) DO UPDATE SET
-                topic=excluded.topic, payload=excluded.payload, qos=excluded.qos,
-                retain=excluded.retain, state=excluded.state, delivered=excluded.delivered,
-                properties=excluded.properties, user_acked=excluded.user_acked
-            """,
-            (
-                msg.mid,
-                msg.topic,
-                _encode_payload(msg.payload),
-                int(msg.qos),
-                int(msg.retain),
-                int(msg.state),
-                int(msg.delivered),
-                _props_to_json(msg.properties),
-                int(msg.user_acked),
-                self._in_seq,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._in_seq += 1
+            self._conn.execute(
+                """
+                INSERT INTO inbound(
+                    mid, topic, payload, qos, retain, state, delivered,
+                    properties, user_acked, seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mid) DO UPDATE SET
+                    topic=excluded.topic, payload=excluded.payload,
+                    qos=excluded.qos, retain=excluded.retain,
+                    state=excluded.state, delivered=excluded.delivered,
+                    properties=excluded.properties,
+                    user_acked=excluded.user_acked
+                """,
+                (
+                    msg.mid,
+                    msg.topic,
+                    sqlite3.Binary(msg.payload),
+                    int(msg.qos),
+                    int(msg.retain),
+                    int(msg.state),
+                    int(msg.delivered),
+                    _props_to_json(msg.properties),
+                    int(msg.user_acked),
+                    self._in_seq,
+                ),
+            )
+            self._commit_if_needed()
 
     def get_in(self, mid: int) -> InboundMessage | None:
-        row = self._conn.execute("SELECT * FROM inbound WHERE mid=?", (mid,)).fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM inbound WHERE mid=?", (mid,)).fetchone()
         return _row_to_in(row) if row else None
 
     def pop_in(self, mid: int) -> InboundMessage | None:
-        row = self._conn.execute("SELECT * FROM inbound WHERE mid=?", (mid,)).fetchone()
-        if row is None:
-            return None
-        self._conn.execute("DELETE FROM inbound WHERE mid=?", (mid,))
-        self._conn.commit()
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM inbound WHERE mid=?", (mid,)).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM inbound WHERE mid=?", (mid,))
+            self._commit_if_needed()
         return _row_to_in(row)
 
     def update_in(self, msg: InboundMessage) -> None:
-        cur = self._conn.execute(
-            """
-            UPDATE inbound SET topic=?, payload=?, qos=?, retain=?, state=?,
-                delivered=?, properties=?, user_acked=?
-            WHERE mid=?
-            """,
-            (
-                msg.topic,
-                _encode_payload(msg.payload),
-                int(msg.qos),
-                int(msg.retain),
-                int(msg.state),
-                int(msg.delivered),
-                _props_to_json(msg.properties),
-                int(msg.user_acked),
-                msg.mid,
-            ),
-        )
-        if cur.rowcount == 0:
-            raise KeyError(msg.mid)
-        self._conn.commit()
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                UPDATE inbound
+                SET state=?, delivered=?, user_acked=?
+                WHERE mid=?
+                """,
+                (
+                    int(msg.state),
+                    int(msg.delivered),
+                    int(msg.user_acked),
+                    msg.mid,
+                ),
+            )
+            if cur.rowcount == 0:
+                raise KeyError(msg.mid)
+            self._commit_if_needed()
 
     def in_items(self) -> Iterator[InboundMessage]:
-        rows = self._conn.execute("SELECT * FROM inbound ORDER BY seq").fetchall()
-        for row in rows:
-            yield _row_to_in(row)
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM inbound ORDER BY seq").fetchall()
+        return iter(_row_to_in(row) for row in rows)
 
     def clear_in(self) -> None:
-        self._conn.execute("DELETE FROM inbound")
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM inbound")
+            self._commit_if_needed()

@@ -165,8 +165,7 @@ def test_rejects_non_canonical_frame_lengths() -> None:
 def test_rejects_new_data_frame_during_fragmentation() -> None:
     transport = WebSocketTransport(None, None)  # type: ignore[arg-type]
     transport._recv_buf.extend(
-        _server_frame(0x2, b"part-1", fin=False)
-        + _server_frame(0x2, b"part-2", fin=True)
+        _server_frame(0x2, b"part-1", fin=False) + _server_frame(0x2, b"part-2", fin=True)
     )
     with pytest.raises(ConnectionError, match="fragmented message"):
         transport._try_extract_application_payload()

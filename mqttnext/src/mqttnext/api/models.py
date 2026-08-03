@@ -29,11 +29,7 @@ class PublishReceipt:
             raise self._error
 
     def is_done(self) -> bool:
-        return (
-            self.qos == QoS.AT_MOST_ONCE
-            or self._event is None
-            or self._event.is_set()
-        )
+        return self.qos == QoS.AT_MOST_ONCE or self._event is None or self._event.is_set()
 
 
 @dataclass(slots=True)

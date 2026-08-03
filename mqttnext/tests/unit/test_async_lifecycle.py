@@ -28,9 +28,7 @@ class _Transport:
             if raw.packet_type is PacketType.CONNECT:
                 self.connect_written.set()
                 if self._connack:
-                    self._rx.put_nowait(
-                        encode_frame(PacketType.CONNACK, 0, b"\x00\x00")
-                    )
+                    self._rx.put_nowait(encode_frame(PacketType.CONNACK, 0, b"\x00\x00"))
 
     async def read(self, n: int = 65536) -> bytes:
         return await self._rx.get()

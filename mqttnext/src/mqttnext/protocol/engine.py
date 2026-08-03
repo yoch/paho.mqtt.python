@@ -86,6 +86,7 @@ _ALLOWED_PACKETS_BY_STATE: dict[ConnectionState, frozenset[PacketType]] = {
     ),
 }
 
+
 class EffectKind(Enum):
     SEND = auto()
     MESSAGE = auto()
@@ -195,9 +196,7 @@ class ProtocolEngine:
         # Server→client QoS>0 not yet fully acknowledged (Receive Maximum).
         self._inbound_inflight = 0
         self._auth_method: str | None = None
-        self._recovered_inbound_mids = {
-            msg.mid for msg in self.store.in_items()
-        }
+        self._recovered_inbound_mids = {msg.mid for msg in self.store.in_items()}
         self._handlers = {
             PacketType.CONNACK: self._on_connack,
             PacketType.PUBLISH: self._on_publish,
@@ -242,9 +241,7 @@ class ProtocolEngine:
             raise ProtocolError("Already connected or connecting")
         configured_auth_method = None
         if self.config.connect_properties is not None:
-            configured_auth_method = self.config.connect_properties.get(
-                "authentication_method"
-            )
+            configured_auth_method = self.config.connect_properties.get("authentication_method")
         if self.config.accept_auth:
             if self.config.protocol != MQTTProtocolVersion.MQTTv5:
                 raise ProtocolError("Enhanced authentication requires MQTT 5")
@@ -269,9 +266,7 @@ class ProtocolEngine:
 
         connect_props = self.config.connect_properties
         if self.config.protocol == MQTTProtocolVersion.MQTTv5:
-            connect_props = Properties(
-                values=dict(connect_props.values) if connect_props else {}
-            )
+            connect_props = Properties(values=dict(connect_props.values) if connect_props else {})
             if "receive_maximum" not in connect_props.values:
                 connect_props.set("receive_maximum", self.config.local_receive_maximum)
             if (
@@ -406,9 +401,7 @@ class ProtocolEngine:
         if isinstance(topics, str):
             validate_subscribe_filter(topics)
             self._check_subscribe_capabilities(topics, properties)
-            subscriptions.append(
-                Subscription(topic=topics, options=SubscribeOptions(qos=QoS(qos)))
-            )
+            subscriptions.append(Subscription(topic=topics, options=SubscribeOptions(qos=QoS(qos))))
         else:
             for item in topics:
                 if isinstance(item, str):
@@ -509,7 +502,6 @@ class ProtocolEngine:
             # than killing the read loop with an untyped exception.
             self._emit(EffectKind.PROTOCOL_ERROR, f"Internal handler error: {exc!r}")
 
-
     def _on_connack(self, raw: RawPacket) -> None:
         if not self._pending_connect or self.state != ConnectionState.CONNECTING:
             raise ProtocolError("Unexpected CONNACK (already negotiated)")
@@ -528,9 +520,7 @@ class ProtocolEngine:
                 and connack.properties.get("authentication_data") is not None
                 and self._auth_method is None
             ):
-                raise ProtocolError(
-                    "CONNACK authentication_data requires authentication_method"
-                )
+                raise ProtocolError("CONNACK authentication_data requires authentication_method")
         if connack.reason_code != 0:
             self.state = ConnectionState.DISCONNECTED
             self._emit(EffectKind.CONNACK, connack)
@@ -722,10 +712,7 @@ class ProtocolEngine:
                     InboundQoSState.WAIT_USER_ACK,
                 ):
                     should_redeliver = True
-                elif (
-                    inbound.state is InboundQoSState.WAIT_PUBREL
-                    and not inbound.user_acked
-                ):
+                elif inbound.state is InboundQoSState.WAIT_PUBREL and not inbound.user_acked:
                     should_redeliver = True
             if should_redeliver:
                 self._emit_inbound_message(inbound, dup=True)
@@ -757,9 +744,7 @@ class ProtocolEngine:
         if msg is None:
             # Orphan PUBREC: reply PUBREL with 0x92 when MQTT 5.
             reason = 0x92 if self.config.protocol == MQTTProtocolVersion.MQTTv5 else 0
-            self._send(
-                PubRelPacket(mid=rec.mid, reason_code=reason).encode(self.config.protocol)
-            )
+            self._send(PubRelPacket(mid=rec.mid, reason_code=reason).encode(self.config.protocol))
             return
         if msg.state is not OutboundQoSState.WAIT_PUBREC:
             return
@@ -1218,9 +1203,7 @@ class ProtocolEngine:
         if msg.encoded_publish is not None:
             self._check_outbound_size(msg.encoded_publish)
         else:
-            self._check_outbound_publish_budget(
-                msg.topic, msg.payload, msg.qos, msg.properties
-            )
+            self._check_outbound_publish_budget(msg.topic, msg.payload, msg.qos, msg.properties)
 
     def _fail_queued_violating_negotiation(self) -> None:
         kept: deque[OutboundMessage] = deque()

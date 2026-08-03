@@ -52,9 +52,10 @@ def test_configuration_setters_are_safe_after_loop_start() -> None:
         assert callbacks == [callback]
 
         client.message_callback_remove("sensor/+")
-        assert client._run_loop_mutation(
-            lambda: list(client._topic_callbacks.iter_match("sensor/1"))
-        ) == []
+        assert (
+            client._run_loop_mutation(lambda: list(client._topic_callbacks.iter_match("sensor/1")))
+            == []
+        )
     finally:
         client.loop_stop()
 

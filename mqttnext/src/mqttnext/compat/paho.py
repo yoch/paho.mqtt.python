@@ -112,6 +112,7 @@ class Client:
         self._async.on_connect = self._dispatch_connect
         self._async.on_disconnect = self._dispatch_disconnect
         self._async.on_message = self._dispatch_message
+        self._async.on_publish = self._dispatch_publish
 
     def user_data_set(self, userdata: Any) -> None:
         self._run_loop_mutation(lambda: setattr(self, "_userdata", userdata))
@@ -139,9 +140,7 @@ class Client:
             qos=QoS(qos),
             retain=retain,
         )
-        self._run_loop_mutation(
-            lambda: setattr(self._async._engine.config, "will", message)
-        )
+        self._run_loop_mutation(lambda: setattr(self._async._engine.config, "will", message))
 
     def message_callback_add(self, sub: str, callback: Callable[..., Any]) -> None:
         self._run_loop_mutation(lambda: self._topic_callbacks.__setitem__(sub, callback))
@@ -256,7 +255,7 @@ class Client:
 
         if self._on_loop_in_callback():
             result = command()
-            self._async._spawn_callback(self._async._flush_effects)
+            self._async._schedule_effect_flush()
             return result
 
         handoff: dict[str, Any] = {}
@@ -281,9 +280,7 @@ class Client:
         return handoff["result"]
 
     def connect(self, host: str, port: int = 1883, keepalive: int = 60) -> int:
-        self._run_loop_mutation(
-            lambda: setattr(self._async._engine.config, "keepalive", keepalive)
-        )
+        self._run_loop_mutation(lambda: setattr(self._async._engine.config, "keepalive", keepalive))
         self._submit(self._async.connect(host, port))
         return 0
 
@@ -335,10 +332,10 @@ class Client:
             if handle.mid is not None:
                 self._async._receipts[handle.mid] = receipt
 
-            self._async._spawn_callback(self._async._flush_effects)
+            self._async._schedule_effect_flush()
             info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
-            if self.on_publish is not None and receipt.qos != QoS.AT_MOST_ONCE:
-                self._async._spawn_callback(self._watch_publish, receipt)
+            if receipt.qos == QoS.AT_MOST_ONCE:
+                self._async._spawn_callback(self._dispatch_publish, receipt.mid, None)
             return info
 
         # Off-loop thread: bounded handoff to allocate mid + receipt on the loop.
@@ -347,9 +344,7 @@ class Client:
 
         async def _queue() -> None:
             try:
-                handle = self._async._engine.queue_publish(
-                    topic, data, qos=qos, retain=retain
-                )
+                handle = self._async._engine.queue_publish(topic, data, qos=qos, retain=retain)
                 receipt = PublishReceipt(
                     mid=handle.mid,
                     qos=handle.qos,
@@ -375,37 +370,35 @@ class Client:
             raise error
         receipt = handoff["receipt"]
         info = MQTTMessageInfo(mid=receipt.mid, _receipt=receipt, _loop=self._loop)
-        if self.on_publish is not None and receipt.qos == QoS.AT_MOST_ONCE:
-            self._safe_callback(self.on_publish, self, self._userdata, receipt.mid, 0, None)
-        elif receipt.qos != QoS.AT_MOST_ONCE:
-            asyncio.run_coroutine_threadsafe(self._watch_publish(receipt), self._loop)
+        if receipt.qos == QoS.AT_MOST_ONCE:
+            self._loop.call_soon_threadsafe(
+                self._async._spawn_callback,
+                self._dispatch_publish,
+                receipt.mid,
+                None,
+            )
         return info
 
-    async def _watch_publish(self, receipt: PublishReceipt) -> None:
-        try:
-            await receipt.wait()
-        except Exception:
-            if self.on_publish is not None:
-                self._safe_callback(
-                    self.on_publish, self, self._userdata, receipt.mid, 1, None
-                )
+    def _dispatch_publish(self, mid: int | None, error: BaseException | None) -> None:
+        if self.on_publish is None:
             return
-        if self.on_publish is not None:
-            self._safe_callback(
-                self.on_publish, self, self._userdata, receipt.mid, 0, None
-            )
+        reason_code = 0 if error is None else 1
+        self._safe_callback(
+            self.on_publish,
+            self,
+            self._userdata,
+            mid,
+            reason_code,
+            None,
+        )
 
     def subscribe(self, topic: str, qos: int = 0) -> tuple[int, int]:
         """Paho-style: return ``(0, mid)`` without awaiting SUBACK."""
-        mid = self._queue_loop_command(
-            lambda: self._async._engine.queue_subscribe(topic, qos=qos)
-        )
+        mid = self._queue_loop_command(lambda: self._async._engine.queue_subscribe(topic, qos=qos))
         return (0, mid)
 
     def unsubscribe(self, topic: str) -> tuple[int, int]:
-        mid = self._queue_loop_command(
-            lambda: self._async._engine.queue_unsubscribe(topic)
-        )
+        mid = self._queue_loop_command(lambda: self._async._engine.queue_unsubscribe(topic))
         return (0, mid)
 
     def _on_loop_in_callback(self) -> bool:
@@ -421,9 +414,18 @@ class Client:
             self._in_callback = True
         try:
             cb(*args)
-        except Exception:
-            # A user callback must never kill the network loop.
-            pass
+        except Exception as exc:
+            loop = self._loop
+            if loop is not None:
+                context = {
+                    "message": "mqttnext Paho-compatible callback failed",
+                    "exception": exc,
+                    "callback": cb,
+                }
+                if on_loop:
+                    loop.call_exception_handler(context)
+                else:
+                    loop.call_soon_threadsafe(loop.call_exception_handler, context)
         finally:
             if on_loop:
                 self._in_callback = False

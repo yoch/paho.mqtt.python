@@ -15,6 +15,7 @@ import asyncio
 import ssl
 import time
 from collections import deque
+from contextlib import nullcontext
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import Any, Literal, Never
 
@@ -26,6 +27,7 @@ from mqttnext.errors import (
     MQTTError,
     MQTTTimeoutError,
     MalformedPacketError,
+    MessageDeliveryError,
     PacketTooLargeError,
     ProtocolError,
 )
@@ -50,26 +52,10 @@ from mqttnext.types import Message, Properties
 OnMessage = Callable[[Message], Any]
 OnConnect = Callable[[ConnAckPacket], Any]
 OnDisconnect = Callable[[BaseException | None], Any]
+OnPublish = Callable[[int | None, BaseException | None], Any]
 OnAuth = Callable[[AuthPacket], Any]
 MessageDelivery = Literal["auto", "iterator", "callback", "both"]
-
-_MESSAGE_SENTINEL = object()
-
-
-class _MessageStream(asyncio.Queue[Message | object]):
-    """Bounded queue whose terminal sentinel never evicts a real message.
-
-    The sentinel is the only wake-up ``messages()`` gets when the stream ends
-    while the queue is full; making room by dropping a queued message would
-    silently lose user data (audit P1.7). Uses the same ``_put`` extension
-    hook ``asyncio.Queue`` exposes to its own stdlib subclasses.
-    """
-
-    def put_sentinel(self, item: object) -> None:
-        # asyncio.Queue extension hooks (stable since 3.8, used the same way by
-        # stdlib subclasses); covered by test_full_message_queue_close_loses_nothing.
-        self._put(item)
-        self._wakeup_next(self._getters)  # type: ignore[attr-defined]
+CallbackJob = tuple[Callable[..., Any], tuple[Any, ...]]
 
 
 class AsyncClient:
@@ -95,17 +81,24 @@ class AsyncClient:
         max_outbound_bytes: int = 1 * 1024 * 1024,
         max_outbound_messages: int = 10_000,
         max_pending_messages: int = 65_536,
+        max_pending_callbacks: int = 1_024,
+        delivery_timeout: float = 1.0,
+        callback_shutdown_timeout: float = 5.0,
         message_delivery: MessageDelivery = "auto",
         manual_ack: bool = False,
         store: InflightStore | None = None,
         auth_handler: OnAuth | None = None,
     ) -> None:
         if message_delivery not in ("auto", "iterator", "callback", "both"):
-            raise ValueError(
-                "message_delivery must be 'auto', 'iterator', 'callback', or 'both'"
-            )
+            raise ValueError("message_delivery must be 'auto', 'iterator', 'callback', or 'both'")
         if max_pending_messages <= 0:
             raise ValueError("max_pending_messages must be greater than 0")
+        if max_pending_callbacks <= 0:
+            raise ValueError("max_pending_callbacks must be greater than 0")
+        if delivery_timeout <= 0:
+            raise ValueError("delivery_timeout must be greater than 0")
+        if callback_shutdown_timeout <= 0:
+            raise ValueError("callback_shutdown_timeout must be greater than 0")
         if max_outbound_messages <= 0:
             raise ValueError("max_outbound_messages must be greater than 0")
         if max_outbound_bytes <= 0:
@@ -123,9 +116,7 @@ class AsyncClient:
         self._message_delivery = message_delivery
         self._max_pending_messages = max_pending_messages
         effective_max_packet_size = (
-            maximum_packet_size
-            if maximum_packet_size is not None
-            else DEFAULT_MAX_PACKET_SIZE
+            maximum_packet_size if maximum_packet_size is not None else DEFAULT_MAX_PACKET_SIZE
         )
         pwd = password.encode("utf-8") if isinstance(password, str) else password
         self._engine = ProtocolEngine(
@@ -148,9 +139,7 @@ class AsyncClient:
             ),
             store=store,
         )
-        self._decoder = IncrementalDecoder(
-            max_packet_size=effective_max_packet_size
-        )
+        self._decoder = IncrementalDecoder(max_packet_size=effective_max_packet_size)
         self._transport: AsyncTransport | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._writer_task: asyncio.Task[None] | None = None
@@ -160,7 +149,13 @@ class AsyncClient:
         self._engine_lock = asyncio.Lock()
         self._effect_flush_lock = asyncio.Lock()
         self._pending_effects: deque[EngineEffect] = deque()
-        self._callback_tasks: set[asyncio.Task[Any]] = set()
+        self._callback_queue: asyncio.Queue[CallbackJob] = asyncio.Queue(
+            maxsize=max_pending_callbacks
+        )
+        self._callback_worker_task: asyncio.Task[None] | None = None
+        self._effect_flush_task: asyncio.Task[None] | None = None
+        self._delivery_timeout = delivery_timeout
+        self._callback_shutdown_timeout = callback_shutdown_timeout
         self._outbound: asyncio.Queue[WriteItem] = asyncio.Queue()
         self._outbound_bytes = 0
         self._max_outbound_bytes = max_outbound_bytes
@@ -171,7 +166,8 @@ class AsyncClient:
         self._receipts: dict[int, PublishReceipt] = {}
         self._sub_futs: dict[int, asyncio.Future[SubscribeResult]] = {}
         self._unsub_futs: dict[int, asyncio.Future[UnsubscribeResult]] = {}
-        self._messages = _MessageStream(maxsize=self._max_pending_messages)
+        self._messages: asyncio.Queue[Message] = asyncio.Queue(maxsize=self._max_pending_messages)
+        self._message_ready = asyncio.Event()
         self._closed = asyncio.Event()
         self._disconnect_exc: BaseException | None = None
         self._last_outbound = 0.0
@@ -194,6 +190,7 @@ class AsyncClient:
         self.on_message: OnMessage | None = None
         self.on_connect: OnConnect | None = None
         self.on_disconnect: OnDisconnect | None = None
+        self.on_publish: OnPublish | None = None
         self.auth_handler: OnAuth | None = auth_handler
 
     @property
@@ -312,6 +309,10 @@ class AsyncClient:
     ) -> ConnAckPacket:
         if self._engine.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
             raise ProtocolError("Already connected or connecting")
+        # Wire effects belong to a transport epoch. QoS 1/2 replay is rebuilt
+        # from the engine/store after CONNACK; carrying old bytes into a new
+        # transport can publish a packet the engine has already failed.
+        self._discard_connection_sends()
         try:
             try:
                 transport = await asyncio.wait_for(
@@ -330,21 +331,15 @@ class AsyncClient:
             connect_packet = self._engine.begin_connect()
             loop = asyncio.get_running_loop()
             self._connack_fut = loop.create_future()
-            self._writer_task = asyncio.create_task(
-                self._write_loop(), name="mqttnext-writer"
-            )
+            self._writer_task = asyncio.create_task(self._write_loop(), name="mqttnext-writer")
             await self._enqueue_outbound(connect_packet)
-            self._reader_task = asyncio.create_task(
-                self._read_loop(), name="mqttnext-reader"
-            )
+            self._reader_task = asyncio.create_task(self._read_loop(), name="mqttnext-reader")
             try:
                 connack = await asyncio.wait_for(self._connack_fut, timeout=timeout)
             except TimeoutError as exc:
                 raise MQTTTimeoutError("CONNACK timed out") from exc
             if connack.reason_code != 0:
-                raise ProtocolError(
-                    f"Connection refused: reason_code={connack.reason_code}"
-                )
+                raise ProtocolError(f"Connection refused: reason_code={connack.reason_code}")
             self._connected_at = time.monotonic()
             self._last_outbound = time.monotonic()
             self._keepalive_task = asyncio.create_task(
@@ -490,11 +485,20 @@ class AsyncClient:
             raise MQTTTimeoutError(f"UNSUBACK timed out for mid={mid}") from exc
 
     async def messages(self) -> AsyncIterator[Message]:
+        # Fast-path get_nowait avoids allocating two tasks per delivered
+        # message. The event is only a wake-up signal; the queue remains the
+        # source of truth and is drained before the stream terminates.
         while True:
-            item = await self._messages.get()
-            if item is _MESSAGE_SENTINEL:
-                return
-            yield item  # type: ignore[misc]
+            try:
+                yield self._messages.get_nowait()
+                continue
+            except asyncio.QueueEmpty:
+                if self._closed.is_set():
+                    return
+            self._message_ready.clear()
+            if not self._messages.empty() or self._closed.is_set():
+                continue
+            await self._message_ready.wait()
 
     async def ack(self, message: Message) -> None:
         """Acknowledge an inbound QoS>0 message when ``manual_ack=True``.
@@ -522,13 +526,15 @@ class AsyncClient:
                 # avoiding N await points for N/100 batches.
                 handled = 0
                 async with self._engine_lock:
-                    while True:
-                        n = self._decoder.process_packets(
-                            self._engine.handle_raw, limit=256
-                        )
-                        if n == 0:
-                            break
-                        handled += n
+                    # Commit protocol state before any generated ACK/replay
+                    # bytes are released to the writer.
+                    store_batch = getattr(self._engine.store, "batch", None)
+                    with store_batch() if store_batch is not None else nullcontext():
+                        while True:
+                            n = self._decoder.process_packets(self._engine.handle_raw, limit=256)
+                            if n == 0:
+                                break
+                            handled += n
                     if handled:
                         self._collect_effects_locked()
                 if handled:
@@ -564,7 +570,10 @@ class AsyncClient:
                 async with self._outbound_space:
                     self._outbound_space.notify_all()
                 # Cancel writer + close transport so no task/fd leaks.
-                if self._writer_task is not None and self._writer_task is not asyncio.current_task():
+                if (
+                    self._writer_task is not None
+                    and self._writer_task is not asyncio.current_task()
+                ):
                     self._writer_task.cancel()
                     try:
                         await self._writer_task
@@ -577,16 +586,14 @@ class AsyncClient:
                     except Exception:
                         pass
             self._closed.set()
-            if not will_reconnect:
-                # Never evict a queued message to make room (audit P1.7).
-                self._messages.put_sentinel(_MESSAGE_SENTINEL)
+            self._message_ready.set()
             try:
                 await self._invoke(self.on_disconnect, self._disconnect_exc)
-            except Exception:
-                pass
-            if will_reconnect and (
-                self._reconnect_task is None or self._reconnect_task.done()
-            ):
+            except Exception as exc:
+                self._report_callback_error(self.on_disconnect, exc)
+            if not will_reconnect:
+                await self._shutdown_callback_worker(drain=True)
+            if will_reconnect and (self._reconnect_task is None or self._reconnect_task.done()):
                 self._reconnect_task = asyncio.create_task(
                     self._reconnect_loop(), name="mqttnext-reconnect"
                 )
@@ -596,14 +603,13 @@ class AsyncClient:
         if self._last_disconnect is not None and self._last_disconnect.from_broker:
             reason = self._last_disconnect.reason_code
         return (
-            not self._intentional_disconnect
+            not isinstance(self._disconnect_exc, MessageDeliveryError)
+            and not self._intentional_disconnect
             and self._reconnect.enabled
             and self._reconnect.should_retry(reason, self._engine.config.protocol)
         )
 
-    async def _write_contiguous(
-        self, transport: AsyncTransport, parts: list[bytes]
-    ) -> None:
+    async def _write_contiguous(self, transport: AsyncTransport, parts: list[bytes]) -> None:
         if not parts:
             return
         write_many = getattr(transport, "write_many", None)
@@ -671,9 +677,8 @@ class AsyncClient:
         # Fast path (no Condition): safe under asyncio's cooperative scheduling
         # as long as we do not await between the capacity check and the update.
         messages_full = self._outbound.qsize() >= self._max_outbound_messages
-        bytes_blocked = (
-            self._outbound_bytes + size > self._max_outbound_bytes
-            and not (self._outbound_bytes == 0 and self._outbound.empty())
+        bytes_blocked = self._outbound_bytes + size > self._max_outbound_bytes and not (
+            self._outbound_bytes == 0 and self._outbound.empty()
         )
         if not messages_full and not bytes_blocked:
             self._outbound.put_nowait(item)
@@ -687,9 +692,8 @@ class AsyncClient:
                 messages_full = self._outbound.qsize() >= self._max_outbound_messages
                 # Allow a single oversized item into an empty queue (segmented
                 # payloads can exceed max_outbound_bytes by the MQTT header).
-                bytes_blocked = (
-                    self._outbound_bytes + size > self._max_outbound_bytes
-                    and not (self._outbound_bytes == 0 and self._outbound.empty())
+                bytes_blocked = self._outbound_bytes + size > self._max_outbound_bytes and not (
+                    self._outbound_bytes == 0 and self._outbound.empty()
                 )
                 if not messages_full and not bytes_blocked:
                     break
@@ -754,9 +758,7 @@ class AsyncClient:
                         except ValueError:
                             reason = None
                 if not self._reconnect.should_retry(reason, self._engine.config.protocol):
-                    self._fail_pending(
-                        self._disconnect_exc or MQTTError("Reconnect exhausted")
-                    )
+                    self._fail_pending(self._disconnect_exc or MQTTError("Reconnect exhausted"))
                     return
                 delay = self._reconnect.next_delay()
                 await asyncio.sleep(delay)
@@ -794,12 +796,34 @@ class AsyncClient:
 
     def _collect_effects_locked(self) -> None:
         effects = self._engine.take_effects()
-        self._pending_effects.extend(
-            effect for effect in effects if effect.kind is EffectKind.SEND
-        )
+        self._pending_effects.extend(effect for effect in effects if effect.kind is EffectKind.SEND)
         self._pending_effects.extend(
             effect for effect in effects if effect.kind is not EffectKind.SEND
         )
+
+    def _schedule_effect_flush(self) -> None:
+        task = self._effect_flush_task
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(self._flush_effects(), name="mqttnext-effect-flush")
+        self._effect_flush_task = task
+        task.add_done_callback(self._effect_flush_done)
+
+    def _effect_flush_done(self, task: asyncio.Task[None]) -> None:
+        if self._effect_flush_task is task:
+            self._effect_flush_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            asyncio.get_running_loop().call_exception_handler(
+                {
+                    "message": "mqttnext scheduled effect flush failed",
+                    "exception": exc,
+                    "task": task,
+                }
+            )
 
     async def _flush_effects(self, *, nowait: bool = False) -> None:
         async with self._engine_lock:
@@ -836,7 +860,7 @@ class AsyncClient:
             if self._connack_fut is not None and not self._connack_fut.done():
                 self._connack_fut.set_result(connack)
             if self.on_connect is not None:
-                self._spawn_callback(self.on_connect, connack)
+                await self._enqueue_callback(self.on_connect, connack)
         elif kind is EffectKind.AUTH:
             challenge: AuthPacket = effect.data
             if self.auth_handler is None:
@@ -866,10 +890,10 @@ class AsyncClient:
                 self._message_delivery == "auto" and self.on_message is None
             )
             if iterator_delivery:
-                await self._messages.put(msg)
+                await self._put_message(msg)
             if callback_delivery:
                 assert self.on_message is not None
-                self._spawn_callback(self.on_message, msg)
+                await self._enqueue_callback(self.on_message, msg)
             if msg.mid is not None:
                 async with self._engine_lock:
                     self._engine.mark_inbound_delivered(msg.mid)
@@ -878,6 +902,8 @@ class AsyncClient:
             receipt = self._receipts.pop(mid, None)
             if receipt is not None and receipt._event is not None:
                 receipt._event.set()
+            if self.on_publish is not None:
+                await self._enqueue_callback(self.on_publish, mid, None)
         elif kind is EffectKind.PUBLISH_FAILED:
             failure: PublishFailure = effect.data
             receipt = self._receipts.pop(failure.mid, None)
@@ -885,6 +911,8 @@ class AsyncClient:
                 receipt._error = failure.reason
                 if receipt._event is not None:
                     receipt._event.set()
+            if self.on_publish is not None:
+                await self._enqueue_callback(self.on_publish, failure.mid, failure.reason)
         elif kind is EffectKind.SUBACK:
             sub_result = SubscribeResult.from_packet(effect.data)
             sub_fut = self._sub_futs.pop(sub_result.mid, None)
@@ -914,20 +942,106 @@ class AsyncClient:
 
     def _reset_message_stream(self) -> None:
         if self._closed.is_set():
-            self._messages = _MessageStream(maxsize=self._max_pending_messages)
+            self._messages = asyncio.Queue(maxsize=self._max_pending_messages)
+            self._message_ready = asyncio.Event()
             self._closed.clear()
 
-    def _spawn_callback(self, callback: Callable[..., Any], *args: Any) -> None:
-        task = asyncio.create_task(self._invoke(callback, *args))
-        self._callback_tasks.add(task)
-        task.add_done_callback(self._callback_done)
-
-    def _callback_done(self, task: asyncio.Task[Any]) -> None:
-        self._callback_tasks.discard(task)
+    async def _put_message(self, message: Message) -> None:
         try:
-            task.result()
-        except (asyncio.CancelledError, Exception):
-            pass
+            await asyncio.wait_for(self._messages.put(message), timeout=self._delivery_timeout)
+        except TimeoutError as exc:
+            raise MessageDeliveryError(
+                f"Iterator delivery queue remained full for {self._delivery_timeout:.3f}s"
+            ) from exc
+        self._message_ready.set()
+
+    def _ensure_callback_worker(self) -> None:
+        if self._callback_worker_task is None or self._callback_worker_task.done():
+            self._callback_worker_task = asyncio.create_task(
+                self._callback_worker(), name="mqttnext-callback-worker"
+            )
+
+    def _spawn_callback(self, callback: Callable[..., Any], *args: Any) -> None:
+        """Compatibility entry point for loop-thread callback producers."""
+        self._ensure_callback_worker()
+        try:
+            self._callback_queue.put_nowait((callback, args))
+        except asyncio.QueueFull as exc:
+            raise MessageDeliveryError("Callback delivery queue is full") from exc
+
+    async def _enqueue_callback(self, callback: Callable[..., Any], *args: Any) -> None:
+        self._ensure_callback_worker()
+        try:
+            await asyncio.wait_for(
+                self._callback_queue.put((callback, args)),
+                timeout=self._delivery_timeout,
+            )
+        except TimeoutError as exc:
+            raise MessageDeliveryError(
+                f"Callback delivery queue remained full for {self._delivery_timeout:.3f}s"
+            ) from exc
+
+    async def _callback_worker(self) -> None:
+        try:
+            while True:
+                callback, args = await self._callback_queue.get()
+                try:
+                    await self._invoke(callback, *args)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self._report_callback_error(callback, exc)
+                finally:
+                    self._callback_queue.task_done()
+        except asyncio.CancelledError:
+            raise
+
+    def _report_callback_error(
+        self,
+        callback: Callable[..., Any] | None,
+        exc: BaseException,
+    ) -> None:
+        asyncio.get_running_loop().call_exception_handler(
+            {
+                "message": "mqttnext user callback failed",
+                "exception": exc,
+                "callback": callback,
+            }
+        )
+
+    async def _shutdown_callback_worker(self, *, drain: bool) -> None:
+        task = self._callback_worker_task
+        if task is None:
+            return
+        if drain and not task.done():
+            try:
+                await asyncio.wait_for(
+                    self._callback_queue.join(),
+                    timeout=self._callback_shutdown_timeout,
+                )
+            except TimeoutError:
+                pass
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._callback_worker_task = None
+        while True:
+            try:
+                self._callback_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                self._callback_queue.task_done()
+
+    def _discard_connection_sends(self) -> None:
+        if not self._pending_effects:
+            return
+        self._pending_effects = deque(
+            effect for effect in self._pending_effects if effect.kind is not EffectKind.SEND
+        )
 
     def _fail_non_replayable(self, exc: BaseException) -> None:
         for sub_fut in self._sub_futs.values():
@@ -977,10 +1091,14 @@ class AsyncClient:
 
     async def _force_close(self, *, preserve_reconnect: bool = False) -> None:
         current = asyncio.current_task()
-        tasks = [self._reader_task, self._writer_task, self._keepalive_task]
+        tasks = [
+            self._reader_task,
+            self._writer_task,
+            self._keepalive_task,
+            self._effect_flush_task,
+        ]
         if not preserve_reconnect:
             tasks.append(self._reconnect_task)
-        tasks.extend(self._callback_tasks)
         for task in tasks:
             if task is not None and task is not current:
                 task.cancel()
@@ -988,23 +1106,26 @@ class AsyncClient:
                     await task
                 except (asyncio.CancelledError, Exception):
                     pass
+        self._discard_connection_sends()
+        async with self._outbound_space:
+            self._outbound_space.notify_all()
         if self._reader_task is not current:
             self._reader_task = None
         if self._writer_task is not current:
             self._writer_task = None
         if self._keepalive_task is not current:
             self._keepalive_task = None
+        if self._effect_flush_task is not current:
+            self._effect_flush_task = None
         if not preserve_reconnect and self._reconnect_task is not current:
             self._reconnect_task = None
-        self._callback_tasks = {
-            task
-            for task in self._callback_tasks
-            if task is current and not task.done()
-        }
         if self._transport is not None:
             try:
                 await self._transport.close()
             except Exception:
                 pass
             self._transport = None
+        if not preserve_reconnect:
+            await self._shutdown_callback_worker(drain=True)
         self._closed.set()
+        self._message_ready.set()

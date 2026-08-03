@@ -47,12 +47,8 @@ class NegotiatedSettings:
                 if "session_expiry_interval" in props
                 else requested_session_expiry
             ),
-            wildcard_subscription_available=bool(
-                props.get("wildcard_subscription_available", 1)
-            ),
-            shared_subscription_available=bool(
-                props.get("shared_subscription_available", 1)
-            ),
+            wildcard_subscription_available=bool(props.get("wildcard_subscription_available", 1)),
+            shared_subscription_available=bool(props.get("shared_subscription_available", 1)),
             subscription_identifier_available=bool(
                 props.get("subscription_identifier_available", 1)
             ),

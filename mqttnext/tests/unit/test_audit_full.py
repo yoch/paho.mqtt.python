@@ -21,6 +21,7 @@ from mqttnext.types import Properties
 
 # --- B1: PacketIdPool must not reissue reserved mids ------------------------
 
+
 def test_packet_id_pool_skips_reserved() -> None:
     pool = PacketIdPool()
     pool.reserve(1)
@@ -38,8 +39,12 @@ def test_engine_hydrated_store_no_mid_collision(tmp_path) -> None:
     store = SqliteInflightStore(tmp_path / "s.db")
     store.put_out(
         OutboundMessage(
-            mid=1, topic="t", payload=b"x", qos=QoS.AT_LEAST_ONCE,
-            retain=False, state=OutboundQoSState.WAIT_PUBACK,
+            mid=1,
+            topic="t",
+            payload=b"x",
+            qos=QoS.AT_LEAST_ONCE,
+            retain=False,
+            state=OutboundQoSState.WAIT_PUBACK,
         )
     )
     engine = ProtocolEngine(EngineConfig(client_id="c"), store=store)
@@ -47,6 +52,7 @@ def test_engine_hydrated_store_no_mid_collision(tmp_path) -> None:
 
 
 # --- H3/F5: SUBACK for unknown mid must not release foreign mids ------------
+
 
 def test_suback_unknown_mid_not_released() -> None:
     engine = ProtocolEngine(EngineConfig(client_id="c"))
@@ -76,6 +82,7 @@ def test_suback_known_mid_released() -> None:
 
 # --- F4/M4: duplicate CONNACK rejected --------------------------------------
 
+
 def test_duplicate_connack_rejected() -> None:
     engine = ProtocolEngine(EngineConfig(client_id="c"))
     engine.begin_connect()
@@ -91,10 +98,9 @@ def test_duplicate_connack_rejected() -> None:
 
 # --- B2: deferred replay keeps DUP=1 ----------------------------------------
 
+
 def test_replay_deferred_reencodes_dup() -> None:
-    engine = ProtocolEngine(
-        EngineConfig(client_id="c", clean_start=False, local_receive_maximum=1)
-    )
+    engine = ProtocolEngine(EngineConfig(client_id="c", clean_start=False, local_receive_maximum=1))
     engine.begin_connect()
     engine.take_effects()
     # CONNACK session_present=0, then publish 2 QoS1 (second queued).
@@ -122,10 +128,9 @@ def test_replay_deferred_reencodes_dup() -> None:
 
 # --- B3/F9: empty topic without alias rejected ------------------------------
 
+
 def test_empty_topic_no_alias_rejected_v5() -> None:
-    engine = ProtocolEngine(
-        EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5)
-    )
+    engine = ProtocolEngine(EngineConfig(client_id="c", protocol=MQTTProtocolVersion.MQTTv5))
     engine.state = ConnectionState.CONNECTED
     pkt = PublishPacket(topic="", payload=b"x", qos=QoS.AT_MOST_ONCE, retain=False, dup=False)
     wire = pkt.encode(MQTTProtocolVersion.MQTTv5)
@@ -140,6 +145,7 @@ def test_empty_topic_no_alias_rejected_v5() -> None:
 
 
 # --- C1: on_connect may await subscribe without deadlocking -----------------
+
 
 @pytest.mark.asyncio
 async def test_on_connect_await_subscribe_no_deadlock() -> None:
@@ -193,6 +199,7 @@ async def test_on_connect_await_subscribe_no_deadlock() -> None:
 
 # --- C4: _last_disconnect cleared on reconnect ------------------------------
 
+
 @pytest.mark.asyncio
 async def test_last_disconnect_cleared_on_connect() -> None:
     from mqttnext.protocol.engine import DisconnectInfo
@@ -235,6 +242,7 @@ async def test_last_disconnect_cleared_on_connect() -> None:
 
 # --- WebSocket bounds ---------------------------------------------------------
 
+
 def test_ws_frame_too_large_rejected() -> None:
     from mqttnext.transport.websocket import _parse_frame
 
@@ -259,6 +267,7 @@ def test_ws_control_payload_too_large_rejected() -> None:
 
 # --- Props 0/1 validation -----------------------------------------------------
 
+
 def test_property_zero_one_enforced() -> None:
     from mqttnext.codec.properties import PUBLISH, decode_properties, encode_properties
 
@@ -274,6 +283,7 @@ def test_property_zero_one_enforced() -> None:
 
 
 # --- Topic matcher deep topics (no recursion) ---------------------------------
+
 
 def test_matcher_deep_topic_no_recursion_error() -> None:
     from mqttnext.dispatch.matcher import TopicMatcher

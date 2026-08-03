@@ -51,14 +51,10 @@ def require_nonzero_mid(mid: int, what: str) -> None:
 def require_end(pos: int, length: int, what: str) -> None:
     """Require a typed decoder to consume the complete MQTT packet body."""
     if pos != length:
-        raise MalformedPacketError(
-            f"{what} has {length - pos} unexpected trailing byte(s)"
-        )
+        raise MalformedPacketError(f"{what} has {length - pos} unexpected trailing byte(s)")
 
 
 def require_reason_code(reason: int, allowed: Collection[int], what: str) -> None:
     """Reject reason codes that are not defined for the packet type."""
     if reason not in allowed:
-        raise MalformedPacketError(
-            f"{what} contains invalid reason code 0x{reason:02x}"
-        )
+        raise MalformedPacketError(f"{what} contains invalid reason code 0x{reason:02x}")

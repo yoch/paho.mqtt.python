@@ -125,9 +125,7 @@ def test_drain_packets_beyond_limit() -> None:
     from mqttnext.codec.buffer import IncrementalDecoder
 
     dec = IncrementalDecoder()
-    frame = PublishPacket(
-        topic="t", payload=b"x", qos=0, retain=False, dup=False
-    ).encode()
+    frame = PublishPacket(topic="t", payload=b"x", qos=0, retain=False, dup=False).encode()
     dec.feed(frame * 150)
     first = dec.drain_packets(limit=100)
     assert len(first) == 100

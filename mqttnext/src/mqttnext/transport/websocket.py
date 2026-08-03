@@ -108,9 +108,9 @@ class WebSocketTransport:
         for header_line_bytes in lines[1:]:
             if b":" in header_line_bytes:
                 raw_name, _, raw_value = header_line_bytes.partition(b":")
-                headers_map[raw_name.decode("latin1").strip().lower()] = (
-                    raw_value.decode("latin1").strip()
-                )
+                headers_map[raw_name.decode("latin1").strip().lower()] = raw_value.decode(
+                    "latin1"
+                ).strip()
         expected = base64.b64encode(
             hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
         ).decode("ascii")
