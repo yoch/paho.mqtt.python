@@ -46,8 +46,13 @@ def patch_core() -> None:
     replace_once(
         path,
         '''        from collections.abc import ContextManager, Iterator\n        from contextlib import nullcontext\n        from typing import Protocol\n''',
-        '''        from collections.abc import Iterator\n        from contextlib import nullcontext\n        from typing import ContextManager, Protocol\n''',
+        '''        from collections.abc import Iterator\n        from contextlib import AbstractContextManager, nullcontext\n        from typing import Protocol\n''',
     )
+    text = path.read_text()
+    expected = text.count("ContextManager[None]")
+    if expected != 2:
+        raise RuntimeError(f"unexpected ContextManager count: {expected}")
+    path.write_text(text.replace("ContextManager[None]", "AbstractContextManager[None]"))
 
 
 def patch_tests() -> None:
