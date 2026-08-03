@@ -18,6 +18,10 @@ jobs:
     if: github.head_ref == 'agent/mqttnext-publish-many'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      PYTHONHASHSEED: "0"
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
