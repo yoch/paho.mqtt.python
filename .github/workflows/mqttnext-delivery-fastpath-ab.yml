@@ -1,0 +1,91 @@
+name: mqttnext delivery queue fast path A B
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mqttnext-delivery-fastpath-ab.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  delivery:
+    if: github.head_ref == 'agent/mqttnext-profiler-audit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package and broker
+        working-directory: mqttnext
+        run: |
+          pip install -e ".[dev]"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto
+      - name: Start broker
+        run: |
+          mkdir -p /tmp/mqttnext-delivery-ab
+          cat > /tmp/mqttnext-delivery-ab/mosquitto.conf <<'EOF'
+          persistence false
+          allow_anonymous true
+          max_inflight_messages 2000
+          max_queued_messages 200000
+          max_queued_bytes 0
+          connection_messages false
+          log_type error
+          listener 11883 127.0.0.1
+          EOF
+          mosquitto -c /tmp/mqttnext-delivery-ab/mosquitto.conf > /tmp/mqttnext-delivery-ab/mosquitto.log 2>&1 &
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          exit 1
+      - name: Baseline
+        working-directory: mqttnext
+        run: |
+          for run in 1 2 3 4 5; do
+            python tools/profile_subscriber.py --delivery callback --qos 0 --count 100000 --payload-size 64 \
+              >> /tmp/mqttnext-delivery-ab/callback-baseline.ndjson
+            python tools/profile_subscriber.py --delivery iterator --qos 0 --count 100000 --payload-size 64 \
+              >> /tmp/mqttnext-delivery-ab/iterator-baseline.ndjson
+          done
+      - name: Apply queue fast paths
+        working-directory: mqttnext
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/mqttnext/api/async_client.py')
+          text = path.read_text()
+          old = '''    async def _put_message(self, message: Message) -> None:\n        try:\n            await asyncio.wait_for(self._messages.put(message), timeout=self._delivery_timeout)\n        except TimeoutError as exc:\n            raise MessageDeliveryError(\n                f"Iterator delivery queue remained full for {self._delivery_timeout:.3f}s"\n            ) from exc\n        self._message_ready.set()\n'''
+          new = '''    async def _put_message(self, message: Message) -> None:\n        try:\n            self._messages.put_nowait(message)\n        except asyncio.QueueFull:\n            try:\n                await asyncio.wait_for(\n                    self._messages.put(message), timeout=self._delivery_timeout\n                )\n            except TimeoutError as exc:\n                raise MessageDeliveryError(\n                    f"Iterator delivery queue remained full for {self._delivery_timeout:.3f}s"\n                ) from exc\n        self._message_ready.set()\n'''
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected iterator delivery implementation')
+          text = text.replace(old, new)
+          old = '''    async def _enqueue_callback(self, callback: Callable[..., Any], *args: Any) -> None:\n        self._ensure_callback_worker()\n        try:\n            await asyncio.wait_for(\n                self._callback_queue.put((callback, args)),\n                timeout=self._delivery_timeout,\n            )\n        except TimeoutError as exc:\n            raise MessageDeliveryError(\n                f"Callback delivery queue remained full for {self._delivery_timeout:.3f}s"\n            ) from exc\n'''
+          new = '''    async def _enqueue_callback(self, callback: Callable[..., Any], *args: Any) -> None:\n        self._ensure_callback_worker()\n        job = (callback, args)\n        try:\n            self._callback_queue.put_nowait(job)\n        except asyncio.QueueFull:\n            try:\n                await asyncio.wait_for(\n                    self._callback_queue.put(job),\n                    timeout=self._delivery_timeout,\n                )\n            except TimeoutError as exc:\n                raise MessageDeliveryError(\n                    f"Callback delivery queue remained full for {self._delivery_timeout:.3f}s"\n                ) from exc\n'''
+          if text.count(old) != 1:
+              raise RuntimeError('unexpected callback delivery implementation')
+          path.write_text(text.replace(old, new))
+          PY
+          python -m pytest -q tests/unit
+      - name: Optimized
+        working-directory: mqttnext
+        run: |
+          for run in 1 2 3 4 5; do
+            python tools/profile_subscriber.py --delivery callback --qos 0 --count 100000 --payload-size 64 \
+              >> /tmp/mqttnext-delivery-ab/callback-optimized.ndjson
+            python tools/profile_subscriber.py --delivery iterator --qos 0 --count 100000 --payload-size 64 \
+              >> /tmp/mqttnext-delivery-ab/iterator-optimized.ndjson
+          done
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqttnext-delivery-fastpath-${{ github.run_id }}
+          path: /tmp/mqttnext-delivery-ab
+          if-no-files-found: error
+          retention-days: 14
