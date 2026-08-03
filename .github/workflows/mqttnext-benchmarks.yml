@@ -51,6 +51,11 @@ jobs:
           user root
           persistence false
           allow_anonymous true
+          max_inflight_messages 1000
+          max_queued_messages 100000
+          max_queued_bytes 0
+          connection_messages false
+          log_type error
           listener 11883 127.0.0.1
           listener 18884 127.0.0.1
           cafile /tmp/mqttnext-bench/cert.pem
@@ -58,7 +63,7 @@ jobs:
           keyfile /tmp/mqttnext-bench/key.pem
           require_certificate false
           EOF
-          mosquitto -c /tmp/mqttnext-bench/mosquitto.conf -v \
+          mosquitto -c /tmp/mqttnext-bench/mosquitto.conf \
             > /tmp/mqttnext-bench/mosquitto.log 2>&1 &
           for i in $(seq 1 50); do
             (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && \
@@ -89,6 +94,11 @@ jobs:
             --profile local-tls \
             --count 1500 \
             --output /tmp/mqttnext-bench/realworld-tls.json
+      - name: Application delivery and persistence stress
+        working-directory: mqttnext
+        run: |
+          python benchmarks/application_stress.py \
+            --output /tmp/mqttnext-bench/application-stress.json
       - name: Confirmed WAN-profile delivery
         working-directory: mqttnext
         run: |
@@ -99,14 +109,10 @@ jobs:
             --port 11883 \
             --profile wan-20ms-jitter5ms-loss0.1pct \
             --count 1500 \
+            --subscriber-timeout 180 \
             --output /tmp/mqttnext-bench/realworld-wan.json
           sudo tc qdisc del dev lo root
           trap - EXIT
-      - name: Application delivery and persistence stress
-        working-directory: mqttnext
-        run: |
-          python benchmarks/application_stress.py \
-            --output /tmp/mqttnext-bench/application-stress.json
       - name: Upload measurements
         if: always()
         uses: actions/upload-artifact@v4
