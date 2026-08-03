@@ -1,0 +1,42 @@
+name: mqttnext publish many refinement
+
+on:
+  pull_request:
+    branches:
+      - agent/mqttnext-core-perf-optimizations
+    paths:
+      - mqttnext/tools/refine_publish_many.py
+      - .github/workflows/mqttnext-publish-many-refine.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    if: github.actor != 'github-actions[bot]' && github.head_ref == 'agent/mqttnext-publish-many'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/mqttnext-publish-many
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: mqttnext
+        run: pip install -e '.[dev]'
+      - run: python mqttnext/tools/refine_publish_many.py
+      - working-directory: mqttnext
+        run: |
+          ruff format src tests
+          ruff check src tests
+          mypy src
+          PYTHONPATH=. pytest tests/unit -q
+      - run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: index batch failures independently of packet ids'
+          git push origin HEAD:agent/mqttnext-publish-many
