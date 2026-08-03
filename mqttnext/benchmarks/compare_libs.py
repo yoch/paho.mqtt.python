@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
+import os
+import platform
 import statistics
 import threading
 import time
@@ -41,6 +44,29 @@ class Sample:
     ops_per_s: float | None
     unit: str
     notes: str = ""
+
+
+def package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def metadata() -> dict[str, object]:
+    return {
+        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "python": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "cpu_count": os.cpu_count(),
+        "versions": {
+            "mqttnext": package_version("mqttnext"),
+            "paho-mqtt": package_version("paho-mqtt"),
+            "gmqtt": package_version("gmqtt"),
+        },
+    }
 
 
 def median_ops(fn, iterations: int, runs: int = 7, warmup: int = 200) -> float:
@@ -271,6 +297,7 @@ async def main() -> None:
     samples = [*micro_encode(), *micro_decode(), *(await e2e(args.count))]
     table = markdown(samples)
     payload = {
+        "metadata": metadata(),
         "broker": list(BROKER),
         "window": WINDOW,
         "samples": [asdict(sample) for sample in samples],
