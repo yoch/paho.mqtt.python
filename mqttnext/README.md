@@ -45,6 +45,23 @@ Historical audit narratives and generated benchmark snapshots are intentionally
 kept in Git history and pull-request artefacts, not duplicated in the maintained
 documentation set.
 
+## Batch publishing
+
+`AsyncClient.publish_many()` accepts immutable `PublishMessage` entries and
+returns one `PublishBatchReceipt`. QoS 0 publications are queued in bounded
+chunks with one engine lock/effect flush per chunk. QoS 1/2 share one aggregate
+completion tracker; the negotiated inflight window is continuously refilled
+without spawning a task or event for each packet identifier.
+
+```python
+from mqttnext.api import PublishMessage
+
+receipt = await client.publish_many(
+    [PublishMessage("sensors/temperature", payload, qos=1) for payload in payloads]
+)
+await receipt.wait()
+```
+
 ## Development
 
 ```bash

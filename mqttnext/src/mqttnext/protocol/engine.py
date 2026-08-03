@@ -387,6 +387,44 @@ class ProtocolEngine:
         self._queued.append(msg)
         return PublishHandle(mid=mid, qos=qos)
 
+    def queue_publish_many(
+        self,
+        messages: Iterable[tuple[str, bytes, QoS | int, bool, Properties | None]],
+    ) -> list[PublishHandle]:
+        """Queue one bounded chunk atomically with respect to engine/store state."""
+        effect_start = len(self._effects)
+        queued_start = len(self._queued)
+        inflight_start = self.flow.inflight
+        handles: list[PublishHandle] = []
+        try:
+            with self.store.batch():
+                for topic, payload, qos, retain, properties in messages:
+                    handles.append(
+                        self.queue_publish(
+                            topic,
+                            payload,
+                            qos=qos,
+                            retain=retain,
+                            properties=properties,
+                        )
+                    )
+        except BaseException:
+            del self._effects[effect_start:]
+            while len(self._queued) > queued_start:
+                self._queued.pop()
+            while self.flow.inflight > inflight_start:
+                self.flow.release()
+            for handle in handles:
+                if handle.mid is None:
+                    continue
+                try:
+                    self.store.delete_out(handle.mid)
+                except Exception:
+                    pass
+                self.packet_ids.release(handle.mid)
+            raise
+        return handles
+
     def queue_subscribe(
         self,
         topics: str | Iterable[str | tuple[str, SubscribeOptions | int | QoS]],
