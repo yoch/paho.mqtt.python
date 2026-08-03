@@ -1,0 +1,85 @@
+name: mqttnext apply cleanup
+
+on:
+  pull_request:
+    paths:
+      - "mqttnext/tools/cleanup-focus.*"
+      - ".github/workflows/mqttnext-apply-cleanup.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/mqttnext-production-hardening'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore reviewed cleanup tree
+        shell: bash
+        run: |
+          cat mqttnext/tools/cleanup-focus.* | base64 -d > /tmp/mqttnext-cleanup.tgz
+          echo "2761e90c20eed8b70219cd029486814055de7895772d716ad990697a61cc4f0c  /tmp/mqttnext-cleanup.tgz" | sha256sum -c -
+          tar -xzf /tmp/mqttnext-cleanup.tgz -C mqttnext
+          rm -rf mqttnext/benchmarks/results
+          rm -f \
+            mqttnext/docs/AUDIT.md \
+            mqttnext/docs/AUDIT-CORRECTNESS.md \
+            mqttnext/docs/AUDIT-FINAL.md \
+            mqttnext/docs/AUDIT-REMEDIATION-PLAN.md \
+            mqttnext/docs/PERF-SPRINT.md
+          cat > MQTTNEXT.md <<'EOF'
+          # MQTTNext
+
+          The async-native MQTT rewrite lives under [`mqttnext/`](mqttnext/).
+
+          - architecture and constraints: `mqttnext/docs/DESIGN.md`;
+          - active roadmap: `mqttnext/docs/ROADMAP.md`;
+          - Paho compatibility and migration: `mqttnext/docs/COMPAT.md`, `mqttnext/docs/MIGRATION.md`;
+          - benchmark contract: `mqttnext/benchmarks/README.md`;
+          - standalone package: `mqttnext/src/mqttnext`.
+
+          Historical audits and generated benchmark snapshots remain available in Git history and GitHub Actions artifacts rather than in the maintained documentation tree.
+
+          The historical Eclipse Paho implementation under `src/paho/` is not modified by this initiative.
+          EOF
+      - name: Install package and quality tools
+        working-directory: mqttnext
+        run: pip install -e ".[dev]" paho-mqtt==2.1.0 gmqtt==0.7.0
+      - name: Format and static validation
+        working-directory: mqttnext
+        run: |
+          ruff format src tests benchmarks
+          ruff check src tests benchmarks
+          mypy src/mqttnext
+      - name: Unit tests and coverage
+        working-directory: mqttnext
+        run: python -m pytest -q tests/unit --cov=mqttnext --cov-report=term-missing --cov-fail-under=80
+      - name: Strict asyncio and warning validation
+        working-directory: mqttnext
+        env:
+          PYTHONASYNCIODEBUG: "1"
+          PYTHONTRACEMALLOC: "5"
+          PYTHONWARNINGS: "error::ResourceWarning,error::RuntimeWarning,error::DeprecationWarning:mqttnext"
+        run: python -X dev -m pytest -q tests/unit --strict-config --strict-markers
+      - name: Focused performance smoke
+        working-directory: mqttnext
+        run: |
+          python benchmarks/micro_baseline.py
+          python benchmarks/application_stress.py --output /tmp/application-stress.json
+      - name: Publish validated cleanup
+        shell: bash
+        run: |
+          git config user.name "mqttnext cleanup agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add MQTTNEXT.md mqttnext
+          git reset 'mqttnext/tools/cleanup-focus.*' mqttnext/tools/cleanup_audit.py
+          git commit -m "simplify transports, helpers, persistence, tests, and docs"
+          git push origin HEAD:${{ github.head_ref }}
