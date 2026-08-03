@@ -25,10 +25,12 @@ jobs:
       - name: Apply reviewed transformations
         run: |
           python mqttnext/tools/patch_hardening_scripts.py
+          python mqttnext/tools/patch_hardening_contracts.py
           python mqttnext/tools/apply_hardening_core.py
           python mqttnext/tools/apply_hardening_tests.py
           python mqttnext/tools/apply_hardening_bench.py
           rm mqttnext/tools/patch_hardening_scripts.py
+          rm mqttnext/tools/patch_hardening_contracts.py
           rm mqttnext/tools/apply_hardening_core.py
           rm mqttnext/tools/apply_hardening_tests.py
           rm mqttnext/tools/apply_hardening_bench.py
