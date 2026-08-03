@@ -1,0 +1,67 @@
+name: mqttnext publish many A B
+
+on:
+  pull_request:
+    branches:
+      - agent/mqttnext-core-perf-optimizations
+    paths:
+      - mqttnext/benchmarks/publish_many_ab.py
+      - mqttnext/src/mqttnext/api/**
+      - mqttnext/src/mqttnext/protocol/engine.py
+      - .github/workflows/mqttnext-publish-many-ab.yml
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    if: github.head_ref == 'agent/mqttnext-publish-many'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install mqttnext and Mosquitto
+        working-directory: mqttnext
+        run: |
+          pip install -e '.[dev]'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients
+      - name: Start isolated broker
+        run: |
+          mkdir -p /tmp/publish-many-ab
+          cat > /tmp/publish-many-ab/mosquitto.conf <<'EOF'
+          user root
+          persistence false
+          allow_anonymous true
+          max_inflight_messages 2000
+          max_queued_messages 200000
+          max_queued_bytes 0
+          connection_messages false
+          log_type error
+          listener 11883 127.0.0.1
+          EOF
+          mosquitto -c /tmp/publish-many-ab/mosquitto.conf > /tmp/publish-many-ab/mosquitto.log 2>&1 &
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          cat /tmp/publish-many-ab/mosquitto.log
+          exit 1
+      - name: Run paired confirmed-delivery benchmark
+        working-directory: mqttnext
+        run: |
+          python benchmarks/publish_many_ab.py \
+            --repeats 5 \
+            --output /tmp/publish-many-ab/results.json \
+            | tee /tmp/publish-many-ab/results.txt
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqttnext-publish-many-ab-${{ github.run_id }}
+          path: /tmp/publish-many-ab
+          if-no-files-found: error
+          retention-days: 30
