@@ -127,7 +127,9 @@ jobs:
           cat /tmp/mqttnext-audit/mosquitto.log
           exit 1
       - name: Validate audit harness
-        run: python -m py_compile mqttnext/tools/realworld_bench.py
+        run: |
+          python mqttnext/tools/patch_realworld_bench.py
+          python -m py_compile mqttnext/tools/realworld_bench.py
       - name: Run real-world benchmark
         env:
           PYTHONUNBUFFERED: "1"
