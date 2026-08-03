@@ -37,6 +37,19 @@ if text.count(old) != 1:
 text = text.replace(old, new, 1)
 text = text.replace("import select\n", "", 1)
 
+old = '''    command = [
+        "mosquitto_sub",
+        "-d",
+        "-h",
+'''
+new = '''    command = [
+        "mosquitto_sub",
+        "-h",
+'''
+if text.count(old) != 1:
+    raise RuntimeError(f"mosquitto_sub debug marker found {text.count(old)} times")
+text = text.replace(old, new, 1)
+
 old = '''    completed = subprocess.run(
         command,
         check=True,
