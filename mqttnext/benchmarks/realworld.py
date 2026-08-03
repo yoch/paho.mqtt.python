@@ -233,7 +233,7 @@ def child(args: argparse.Namespace) -> None:
             args.cafile,
         )
     try:
-        process.wait(timeout=120)
+        process.wait(timeout=args.subscriber_timeout)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
@@ -241,7 +241,10 @@ def child(args: argparse.Namespace) -> None:
     if len(arrivals) != args.count:
         assert process.stderr is not None
         detail = process.stderr.read().decode(errors="replace")
-        raise TimeoutError(f"subscriber incomplete {len(arrivals)}/{args.count}: {detail}")
+        raise TimeoutError(
+            f"subscriber incomplete {len(arrivals)}/{args.count} "
+            f"after {args.subscriber_timeout:.1f}s: {detail}"
+        )
     delivery_seconds = time.perf_counter() - delivery_started
     latencies = []
     sequences = []
@@ -275,8 +278,19 @@ def child(args: argparse.Namespace) -> None:
     print(json.dumps(asdict(result)))
 
 
+def write_results(
+    output: Path,
+    args: argparse.Namespace,
+    results: list[dict[str, object]],
+) -> None:
+    payload = {"metadata": environment(args), "results": results}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2))
+
+
 def parent(args: argparse.Namespace) -> None:
-    results = []
+    results: list[dict[str, object]] = []
+    write_results(args.output, args, results)
     scenarios = ((64, args.count), (4096, max(500, args.count // 3)))
     for payload_bytes, count in scenarios:
         for library in ("mqttnext", "paho"):
@@ -296,27 +310,42 @@ def parent(args: argparse.Namespace) -> None:
                 str(count),
                 "--profile",
                 args.profile,
+                "--subscriber-timeout",
+                str(args.subscriber_timeout),
             ]
             if args.cafile:
                 command.extend(["--cafile", args.cafile])
-            completed = subprocess.run(
-                command,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-            result = json.loads(completed.stdout.strip().splitlines()[-1])
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=args.subscriber_timeout + 60,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise TimeoutError(
+                    f"benchmark child process exceeded timeout: {command!r}"
+                ) from exc
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"benchmark child failed rc={completed.returncode}\n"
+                    f"command={command!r}\n"
+                    f"stdout:\n{completed.stdout}\n"
+                    f"stderr:\n{completed.stderr}"
+                )
+            lines = [line for line in completed.stdout.splitlines() if line.strip()]
+            if not lines:
+                raise RuntimeError("benchmark child returned no result")
+            result = json.loads(lines[-1])
             results.append(result)
+            write_results(args.output, args, results)
             print(
                 f"{library:8s} {payload_bytes:5d} B "
                 f"ack={result['publisher_ack_msg_s']:9.1f} msg/s "
                 f"delivered={result['delivered_msg_s']:9.1f} msg/s "
                 f"p95={result['latency_p95_ms']:8.2f} ms"
             )
-    payload = {"metadata": environment(args), "results": results}
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2))
 
 
 def parse() -> argparse.Namespace:
@@ -329,6 +358,7 @@ def parse() -> argparse.Namespace:
     parser.add_argument("--profile", default="local")
     parser.add_argument("--payload-bytes", type=int, default=64)
     parser.add_argument("--count", type=int, default=3_000)
+    parser.add_argument("--subscriber-timeout", type=float, default=120.0)
     parser.add_argument("--output", type=Path, default=Path("/tmp/realworld.json"))
     return parser.parse_args()
 
