@@ -154,6 +154,7 @@ class AsyncClient:
         )
         self._callback_worker_task: asyncio.Task[None] | None = None
         self._effect_flush_task: asyncio.Task[None] | None = None
+        self._effect_flush_requested = False
         self._delivery_timeout = delivery_timeout
         self._callback_shutdown_timeout = callback_shutdown_timeout
         self._outbound: asyncio.Queue[WriteItem] = asyncio.Queue()
@@ -309,10 +310,10 @@ class AsyncClient:
     ) -> ConnAckPacket:
         if self._engine.state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
             raise ProtocolError("Already connected or connecting")
-        # Wire effects belong to a transport epoch. QoS 1/2 replay is rebuilt
-        # from the engine/store after CONNACK; carrying old bytes into a new
-        # transport can publish a packet the engine has already failed.
-        self._discard_connection_sends()
+        # Effects belong to a protocol/transport epoch. QoS replay and
+        # inbound redelivery are rebuilt from the engine/store after
+        # CONNACK; no old effect may cross into the new connection.
+        self._discard_connection_effects()
         try:
             try:
                 transport = await asyncio.wait_for(
@@ -802,12 +803,26 @@ class AsyncClient:
         )
 
     def _schedule_effect_flush(self) -> None:
+        # A producer may request another flush while the current task is
+        # blocked on outbound backpressure. Record that wakeup rather than
+        # silently coalescing it away.
+        self._effect_flush_requested = True
         task = self._effect_flush_task
         if task is not None and not task.done():
             return
-        task = asyncio.create_task(self._flush_effects(), name="mqttnext-effect-flush")
+        task = asyncio.create_task(
+            self._run_scheduled_effect_flush(),
+            name="mqttnext-effect-flush",
+        )
         self._effect_flush_task = task
         task.add_done_callback(self._effect_flush_done)
+
+    async def _run_scheduled_effect_flush(self) -> None:
+        while True:
+            self._effect_flush_requested = False
+            await self._flush_effects()
+            if not self._effect_flush_requested:
+                return
 
     def _effect_flush_done(self, task: asyncio.Task[None]) -> None:
         if self._effect_flush_task is task:
@@ -1036,12 +1051,13 @@ class AsyncClient:
             else:
                 self._callback_queue.task_done()
 
-    def _discard_connection_sends(self) -> None:
-        if not self._pending_effects:
-            return
-        self._pending_effects = deque(
-            effect for effect in self._pending_effects if effect.kind is not EffectKind.SEND
-        )
+    def _discard_connection_effects(self) -> None:
+        # Every pending effect was derived from the old protocol/transport
+        # epoch. Session replay, failures and inbound redelivery are rebuilt
+        # from the engine/store after the next CONNACK; retaining an old
+        # MESSAGE or completion effect can duplicate delivery just as surely
+        # as retaining old wire bytes can duplicate a publish.
+        self._pending_effects.clear()
 
     def _fail_non_replayable(self, exc: BaseException) -> None:
         for sub_fut in self._sub_futs.values():
@@ -1106,7 +1122,7 @@ class AsyncClient:
                     await task
                 except (asyncio.CancelledError, Exception):
                     pass
-        self._discard_connection_sends()
+        self._discard_connection_effects()
         async with self._outbound_space:
             self._outbound_space.notify_all()
         if self._reader_task is not current:
@@ -1117,6 +1133,7 @@ class AsyncClient:
             self._keepalive_task = None
         if self._effect_flush_task is not current:
             self._effect_flush_task = None
+            self._effect_flush_requested = False
         if not preserve_reconnect and self._reconnect_task is not current:
             self._reconnect_task = None
         if self._transport is not None:

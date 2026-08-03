@@ -67,3 +67,18 @@ async def test_callback_worker_preserves_order() -> None:
 
     assert seen == list(range(8))
     await client._shutdown_callback_worker(drain=False)
+
+
+async def test_force_close_discards_all_old_connection_effects() -> None:
+    client = AsyncClient(message_delivery="iterator")
+    client._pending_effects.extend(
+        [
+            EngineEffect(
+                kind=EffectKind.MESSAGE,
+                data=Message(topic="old", payload=b"old"),
+            ),
+            EngineEffect(kind=EffectKind.PUBLISH_COMPLETE, data=7),
+        ]
+    )
+    await client._force_close()
+    assert not client._pending_effects

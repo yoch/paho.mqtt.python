@@ -83,3 +83,27 @@ async def test_force_close_stops_callback_worker() -> None:
 
     await client._force_close()
     assert client._callback_worker_task is None
+
+
+async def test_scheduled_flush_records_wakeup_while_active() -> None:
+    client = AsyncClient(client_id="flush-wakeup")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def controlled_flush(*, nowait: bool = False) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await release.wait()
+
+    client._flush_effects = controlled_flush  # type: ignore[method-assign]
+    client._schedule_effect_flush()
+    await started.wait()
+    client._schedule_effect_flush()
+    release.set()
+    task = client._effect_flush_task
+    assert task is not None
+    await task
+    assert calls == 2
