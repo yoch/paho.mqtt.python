@@ -1,0 +1,153 @@
+name: mqttnext sampling and allocation profiling
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mqttnext-profiler-sampling.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    if: github.head_ref == 'agent/mqttnext-profiler-audit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        working-directory: mqttnext
+        run: |
+          pip install -e ".[dev]" paho-mqtt==2.1.0 py-spy==0.4.1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients openssl iproute2 strace
+      - name: Start broker
+        run: |
+          mkdir -p /tmp/mqttnext-sampling
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /tmp/mqttnext-sampling/key.pem \
+            -out /tmp/mqttnext-sampling/cert.pem \
+            -days 1 -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          chmod 0644 /tmp/mqttnext-sampling/key.pem /tmp/mqttnext-sampling/cert.pem
+          cat > /tmp/mqttnext-sampling/mosquitto.conf <<'EOF'
+          user root
+          persistence false
+          allow_anonymous true
+          max_inflight_messages 2000
+          max_queued_messages 200000
+          max_queued_bytes 0
+          connection_messages false
+          log_type error
+          listener 11883 127.0.0.1
+          listener 18884 127.0.0.1
+          cafile /tmp/mqttnext-sampling/cert.pem
+          certfile /tmp/mqttnext-sampling/cert.pem
+          keyfile /tmp/mqttnext-sampling/key.pem
+          require_certificate false
+          EOF
+          mosquitto -c /tmp/mqttnext-sampling/mosquitto.conf \
+            > /tmp/mqttnext-sampling/mosquitto.log 2>&1 &
+          for i in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/11883) >/dev/null 2>&1 && \
+            (echo > /dev/tcp/127.0.0.1/18884) >/dev/null 2>&1 && exit 0
+            sleep 0.2
+          done
+          exit 1
+      - name: Sampling CPU profiles
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile() {
+            local name="$1"; shift
+            local output="/tmp/mqttnext-sampling/${name}-cpu.speedscope.json"
+            py-spy record --gil --rate 500 --format speedscope -o "$output" -- \
+              python tools/profile_scenarios.py "$@" || test -s "$output"
+          }
+          profile codec_encode codec_encode --seconds 8
+          profile codec_decode codec_decode --seconds 8
+          profile ingress_engine ingress_engine --seconds 8
+          profile matcher matcher --seconds 8
+          profile sqlite_batch sqlite_batch --seconds 8
+          profile broker_qos0 broker --seconds 10 --qos 0 --window 100 --payload-size 64
+          profile broker_qos1 broker --seconds 10 --qos 1 --window 100 --payload-size 64
+          profile broker_qos2 broker --seconds 10 --qos 2 --window 100 --payload-size 64
+          profile broker_qos1_4k broker --seconds 10 --qos 1 --window 100 --payload-size 4096
+          profile broker_tls_qos1 broker --seconds 10 --host localhost --port 18884 \
+            --cafile /tmp/mqttnext-sampling/cert.pem --qos 1 --window 100 --payload-size 64
+      - name: Flamegraphs and wall profile
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          out=/tmp/mqttnext-sampling/ingress-engine.svg
+          py-spy record --gil --rate 500 --format flamegraph -o "$out" -- \
+            python tools/profile_scenarios.py ingress_engine --seconds 8 || test -s "$out"
+          out=/tmp/mqttnext-sampling/broker-qos1.svg
+          py-spy record --gil --rate 500 --format flamegraph -o "$out" -- \
+            python tools/profile_scenarios.py broker --seconds 10 --qos 1 --window 100 --payload-size 64 || test -s "$out"
+          out=/tmp/mqttnext-sampling/broker-qos1-wall.speedscope.json
+          py-spy record --rate 250 --format speedscope -o "$out" -- \
+            python tools/profile_scenarios.py broker --seconds 10 --qos 1 --window 100 --payload-size 64 || test -s "$out"
+      - name: Confirmed delivery profiles
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          run_real() {
+            local name="$1"; shift
+            local output="/tmp/mqttnext-sampling/${name}.speedscope.json"
+            py-spy record --gil --rate 500 --format speedscope -o "$output" -- "$@" || test -s "$output"
+          }
+          run_real realworld-tcp-64b-cpu python benchmarks/realworld.py --child --library mqttnext \
+            --port 11883 --profile profiler-tcp --payload-bytes 64 --count 50000
+          run_real realworld-tcp-4k-cpu python benchmarks/realworld.py --child --library mqttnext \
+            --port 11883 --profile profiler-tcp-4k --payload-bytes 4096 --count 10000
+          run_real realworld-tls-64b-cpu python benchmarks/realworld.py --child --library mqttnext \
+            --host localhost --port 18884 --cafile /tmp/mqttnext-sampling/cert.pem \
+            --profile profiler-tls --payload-bytes 64 --count 20000
+      - name: WAN trace
+        working-directory: mqttnext
+        shell: bash
+        run: |
+          sudo tc qdisc replace dev lo root netem delay 20ms 5ms distribution normal loss 0.1%
+          trap 'sudo tc qdisc del dev lo root || true' EXIT
+          out=/tmp/mqttnext-sampling/realworld-wan-cpu.speedscope.json
+          py-spy record --gil --rate 500 --format speedscope -o "$out" -- \
+            python benchmarks/realworld.py --child --library mqttnext --port 11883 \
+              --profile profiler-wan --payload-bytes 64 --count 5000 --subscriber-timeout 180 \
+            || test -s "$out"
+          sudo tc qdisc del dev lo root
+          trap - EXIT
+      - name: Allocation and syscall profiles
+        working-directory: mqttnext
+        run: |
+          python tools/profile_scenarios.py ingress_engine --seconds 4 \
+            --tracemalloc-output /tmp/mqttnext-sampling/alloc-ingress.json \
+            > /tmp/mqttnext-sampling/alloc-ingress-run.json
+          python tools/profile_scenarios.py sqlite_batch --seconds 4 \
+            --tracemalloc-output /tmp/mqttnext-sampling/alloc-sqlite.json \
+            > /tmp/mqttnext-sampling/alloc-sqlite-run.json
+          python tools/profile_scenarios.py broker --seconds 5 --qos 1 --window 100 --payload-size 64 \
+            --tracemalloc-output /tmp/mqttnext-sampling/alloc-broker-qos1.json \
+            > /tmp/mqttnext-sampling/alloc-broker-qos1-run.json
+          strace -f -c -o /tmp/mqttnext-sampling/strace-broker-qos0.txt \
+            python tools/profile_scenarios.py broker --seconds 5 --qos 0 --window 100 --payload-size 64
+          strace -f -c -o /tmp/mqttnext-sampling/strace-broker-qos1.txt \
+            python tools/profile_scenarios.py broker --seconds 5 --qos 1 --window 100 --payload-size 64
+          strace -f -c -o /tmp/mqttnext-sampling/strace-broker-tls-qos1.txt \
+            python tools/profile_scenarios.py broker --seconds 5 --host localhost --port 18884 \
+              --cafile /tmp/mqttnext-sampling/cert.pem --qos 1 --window 100 --payload-size 64
+      - name: Upload profiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqttnext-sampling-${{ github.run_id }}
+          path: /tmp/mqttnext-sampling
+          if-no-files-found: error
+          retention-days: 14
